@@ -1,0 +1,3 @@
+# Copy to local.properties and edit. local.properties is gitignored.
+# sdk.dir is auto-written by Android Studio.
+sdk.dir=C\:\\Users\\YOU\\AppData\\Local\\Android\\Sdk

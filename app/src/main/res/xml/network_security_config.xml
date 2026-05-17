@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+      Default: HTTPS only, system + user-installed CAs.
+      Self-signed Frigate certs: user imports cert via Android Settings → Security → Encrypt & credentials → Install a certificate.
+      Cleartext per-host is opt-in via user setting (runtime override of OkHttp scheme), not in manifest.
+    -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
