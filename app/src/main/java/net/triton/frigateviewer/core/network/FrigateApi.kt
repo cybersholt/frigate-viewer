@@ -29,7 +29,7 @@ interface FrigateApi {
     suspend fun events(
         @Query("camera") camera: String? = null,
         @Query("label") label: String? = null,
-        @Query("after") after: Long? = null,
+        @Query("after") after: Double? = null,
         @Query("before") before: Long? = null,
         @Query("has_snapshot") hasSnapshot: Int? = null,
         @Query("has_clip") hasClip: Int? = null,

@@ -27,6 +27,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import dagger.hilt.android.AndroidEntryPoint
 import net.triton.frigateviewer.feature.cameras.CamerasScreen
+import net.triton.frigateviewer.feature.events.EventDetailScreen
 import net.triton.frigateviewer.feature.events.EventsScreen
 import net.triton.frigateviewer.feature.settings.SettingsScreen
 
@@ -56,24 +57,27 @@ private fun AppRoot() {
     val nav = rememberNavController()
     val backStack by nav.currentBackStackEntryAsState()
     val current = backStack?.destination
+    val onTab = current?.route in tabs.map { it.route }
 
     Scaffold(
         bottomBar = {
-            NavigationBar {
-                tabs.forEach { tab ->
-                    val selected = current?.hierarchy?.any { it.route == tab.route } == true
-                    NavigationBarItem(
-                        selected = selected,
-                        onClick = {
-                            nav.navigate(tab.route) {
-                                launchSingleTop = true
-                                restoreState = true
-                                popUpTo(nav.graph.startDestinationId) { saveState = true }
-                            }
-                        },
-                        icon = { Icon(tab.icon, contentDescription = null) },
-                        label = { Text(stringResource(tab.label)) },
-                    )
+            if (onTab) {
+                NavigationBar {
+                    tabs.forEach { tab ->
+                        val selected = current?.hierarchy?.any { it.route == tab.route } == true
+                        NavigationBarItem(
+                            selected = selected,
+                            onClick = {
+                                nav.navigate(tab.route) {
+                                    launchSingleTop = true
+                                    restoreState = true
+                                    popUpTo(nav.graph.startDestinationId) { saveState = true }
+                                }
+                            },
+                            icon = { Icon(tab.icon, contentDescription = null) },
+                            label = { Text(stringResource(tab.label)) },
+                        )
+                    }
                 }
             }
         }
@@ -84,8 +88,14 @@ private fun AppRoot() {
             modifier = Modifier.padding(padding),
         ) {
             composable(Dest.Cameras.route) { CamerasScreen() }
-            composable(Dest.Events.route) { EventsScreen() }
+            composable(Dest.Events.route) {
+                EventsScreen(onEventClick = { id -> nav.navigate("event/$id") })
+            }
             composable(Dest.Settings.route) { SettingsScreen() }
+            composable("event/{id}") { entry ->
+                val id = entry.arguments?.getString("id") ?: return@composable
+                EventDetailScreen(eventId = id)
+            }
         }
     }
 }
