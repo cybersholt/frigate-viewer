@@ -1,0 +1,18 @@
+# Force LF line endings on shell scripts so they run on Linux CI runners.
+gradlew text eol=lf
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Windows scripts stay CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Treat the wrapper jar as binary.
+*.jar binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.keystore binary
+*.jks binary

@@ -364,11 +364,23 @@ cp local.properties.example local.properties
 # Edit local.properties — set sdk.dir to your Android SDK path
 ```
 
-Open the project in Android Studio (which auto-generates `gradle/wrapper/gradle-wrapper.jar` on first import). Alternatively, with system Gradle installed:
+Gradle wrapper (`gradlew`, `gradlew.bat`, `gradle/wrapper/gradle-wrapper.jar`) is committed. No first-import dance required.
 
-```bash
-gradle wrapper --gradle-version=8.13
-```
+### Continuous integration
+
+Every push to `kotlin-rewrite` (and every PR targeting it) runs `.github/workflows/android-ci.yml`:
+- JDK 17 (Temurin) + Android SDK 35 set up on `ubuntu-latest`
+- `:app:lintDebug`, `:app:testDebugUnitTest`, `:app:assembleDebug`
+- Debug APK uploaded as a workflow artifact (`frigate-viewer-debug-<sha>`) — download from the Actions tab without needing a local Android toolchain
+- Lint + test reports uploaded on success or failure
+
+A manual release workflow (`workflow_dispatch`) builds a signed AAB when the repo has these secrets configured:
+- `KEYSTORE_BASE64` — base64-encoded JKS
+- `KEYSTORE_PASSWORD`
+- `KEY_ALIAS`
+- `KEY_PASSWORD`
+
+If the secrets are absent, the release job builds an unsigned APK instead and emits a workflow warning. The keystore file is wiped at the end of the run.
 
 ### Build
 
