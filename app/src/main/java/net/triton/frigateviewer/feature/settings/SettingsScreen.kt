@@ -123,37 +123,59 @@ private fun ServerFormSheet(
     onDismiss: () -> Unit,
     onSave: (ServerForm) -> Unit,
 ) {
-    var current by remember { mutableStateOf(form) }
+    // Protocol locked to https, port omitted from form. Users with non-standard
+    // ports include them in the host field (e.g. "host.example.com:8971").
+    var current by remember { mutableStateOf(form.copy(protocol = "https", port = "")) }
     val scroll = rememberScrollState()
     androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .verticalScroll(scroll)
-                .imePadding()
-                .navigationBarsPadding()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            OutlinedTextField(current.name, { current = current.copy(name = it) }, label = { Text("Name") })
-            OutlinedTextField(current.protocol, { current = current.copy(protocol = it) }, label = { Text("Protocol (http/https)") })
-            OutlinedTextField(current.host, { current = current.copy(host = it) }, label = { Text("Host") })
-            OutlinedTextField(current.port, { current = current.copy(port = it) }, label = { Text("Port") })
-            OutlinedTextField(current.basePath, { current = current.copy(basePath = it) }, label = { Text("Base path (optional)") })
-            AuthModeSelector(current.authMode) { current = current.copy(authMode = it) }
-            if (current.authMode != AuthMode.NONE) {
-                OutlinedTextField(current.username, { current = current.copy(username = it) }, label = { Text("Username") })
-                OutlinedTextField(
-                    current.password,
-                    { current = current.copy(password = it) },
-                    label = { Text("Password") },
-                    visualTransformation = PasswordVisualTransformation(),
-                )
-            }
-            HorizontalDivider()
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding()) {
+            // Sticky action bar at top — always reachable regardless of form length.
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Cancel") }
                 Button(onClick = { onSave(current) }, modifier = Modifier.weight(1f)) { Text("Save") }
+            }
+            HorizontalDivider()
+            Column(
+                Modifier.fillMaxWidth().verticalScroll(scroll).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedTextField(
+                    current.name,
+                    { current = current.copy(name = it) },
+                    label = { Text("Name") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    current.host,
+                    { current = current.copy(host = it) },
+                    label = { Text("Host (use host:port for non-443)") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    current.basePath,
+                    { current = current.copy(basePath = it) },
+                    label = { Text("Base path (optional)") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                AuthModeSelector(current.authMode) { current = current.copy(authMode = it) }
+                if (current.authMode != AuthMode.NONE) {
+                    OutlinedTextField(
+                        current.username,
+                        { current = current.copy(username = it) },
+                        label = { Text("Username") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        current.password,
+                        { current = current.copy(password = it) },
+                        label = { Text("Password") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
         }
     }
