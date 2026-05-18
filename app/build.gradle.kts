@@ -141,8 +141,12 @@ dependencies {
     implementation(libs.coil.network.okhttp)
 
     testImplementation(libs.junit.jupiter)
+    testRuntimeOnly(libs.junit.jupiter.engine)
     testImplementation(libs.mockk)
     testImplementation(libs.turbine)
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.retrofit.converter.scalars)
 }
+
+tasks.withType<Test>().configureEach { useJUnitPlatform() }

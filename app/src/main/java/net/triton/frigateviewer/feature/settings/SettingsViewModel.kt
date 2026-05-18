@@ -13,6 +13,8 @@ import net.triton.frigateviewer.core.data.FrigateRepository
 import net.triton.frigateviewer.core.data.Server
 import net.triton.frigateviewer.core.data.ServerRepository
 import net.triton.frigateviewer.core.network.AuthMode
+import net.triton.frigateviewer.core.network.FrigateClient
+import net.triton.frigateviewer.notification.ServiceController
 import java.util.UUID
 import javax.inject.Inject
 
@@ -39,12 +41,15 @@ class SettingsViewModel @Inject constructor(
     private val serverRepo: ServerRepository,
     private val credentialStore: CredentialStore,
     private val repo: FrigateRepository,
+    private val client: FrigateClient,
+    private val serviceController: ServiceController,
 ) : ViewModel() {
 
     val state: kotlinx.coroutines.flow.StateFlow<SettingsUiState> =
         combine(serverRepo.servers, serverRepo.activeServerId) { s, a -> SettingsUiState(s, a) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
+    @Suppress("unused")
     private val _testResult = MutableStateFlow<String?>(null)
 
     fun saveServer(form: ServerForm) {
@@ -61,8 +66,7 @@ class SettingsViewModel @Inject constructor(
                 username = form.username.ifBlank { null },
             )
             serverRepo.upsert(server)
-            // Stash password / basic secret as "user:pass" so Basic header builder works.
-            // For FRIGATE auth, login() call will replace with Bearer JWT.
+            client.invalidate(server.id)
             if (form.password.isNotBlank()) {
                 val raw = if (form.authMode == AuthMode.BASIC) "${form.username}:${form.password}"
                           else form.password
@@ -72,17 +76,30 @@ class SettingsViewModel @Inject constructor(
             if (form.authMode == AuthMode.FRIGATE) {
                 repo.login(server.id, form.username, form.password)
             }
+            serviceController.start()
         }
     }
 
     fun setActive(id: String) {
-        viewModelScope.launch { serverRepo.setActive(id) }
+        viewModelScope.launch {
+            serverRepo.setActive(id)
+            serviceController.stop()
+            serviceController.start()
+        }
     }
 
     fun delete(id: String) {
         viewModelScope.launch {
             serverRepo.delete(id)
             credentialStore.delete(id)
+            client.invalidate(id)
+        }
+    }
+
+    fun logout(id: String) {
+        viewModelScope.launch {
+            repo.logout(id)
+            serviceController.stop()
         }
     }
 }

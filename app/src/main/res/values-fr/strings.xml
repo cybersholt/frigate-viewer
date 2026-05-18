@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Visionneuse Frigate</string>
+    <string name="nav_cameras">Caméras</string>
+    <string name="nav_events">Événements</string>
+    <string name="nav_settings">Paramètres</string>
+    <string name="server_add">Ajouter un serveur</string>
+    <string name="server_name">Nom</string>
+    <string name="server_host">Hôte</string>
+    <string name="server_port">Port</string>
+    <string name="server_protocol">Protocole</string>
+    <string name="server_username">Utilisateur</string>
+    <string name="server_password">Mot de passe</string>
+    <string name="server_save">Enregistrer</string>
+    <string name="server_test">Tester la connexion</string>
+    <string name="error_unknown">Une erreur est survenue</string>
+    <string name="error_network">Erreur réseau</string>
+    <string name="error_auth">Échec d\'authentification</string>
+    <string name="error_http">HTTP %1$d : %2$s</string>
+    <string name="error_parse">Réponse serveur invalide</string>
+    <string name="notif_channel_events">Événements Frigate</string>
+    <string name="notif_channel_events_desc">Notifications d\'événements en direct</string>
+    <string name="notif_service_title">Visionneuse Frigate</string>
+    <string name="notif_service_text">À l\'écoute des événements</string>
+</resources>

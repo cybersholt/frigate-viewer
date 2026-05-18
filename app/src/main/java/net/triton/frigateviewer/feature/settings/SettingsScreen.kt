@@ -51,6 +51,7 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
                         active = srv.id == state.activeId,
                         onMakeActive = { vm.setActive(srv.id) },
                         onDelete = { vm.delete(srv.id) },
+                        onLogout = { vm.logout(srv.id) },
                         onEdit = {
                             editing = ServerForm(
                                 id = srv.id,
@@ -88,6 +89,7 @@ private fun ServerRow(
     active: Boolean,
     onMakeActive: () -> Unit,
     onEdit: () -> Unit,
+    onLogout: () -> Unit,
     onDelete: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
@@ -103,6 +105,7 @@ private fun ServerRow(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
                 if (!active) TextButton(onClick = onMakeActive) { Text("Make active") }
                 TextButton(onClick = onEdit) { Text("Edit") }
+                TextButton(onClick = onLogout) { Text("Logout") }
                 TextButton(onClick = onDelete) { Text("Delete") }
             }
         }

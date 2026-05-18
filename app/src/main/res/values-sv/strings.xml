@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Frigate Viewer</string>
+    <string name="nav_cameras">Kameror</string>
+    <string name="nav_events">Händelser</string>
+    <string name="nav_settings">Inställningar</string>
+    <string name="server_add">Lägg till server</string>
+    <string name="server_name">Namn</string>
+    <string name="server_host">Värd</string>
+    <string name="server_port">Port</string>
+    <string name="server_protocol">Protokoll</string>
+    <string name="server_username">Användarnamn</string>
+    <string name="server_password">Lösenord</string>
+    <string name="server_save">Spara</string>
+    <string name="server_test">Testa anslutning</string>
+    <string name="error_unknown">Något gick fel</string>
+    <string name="error_network">Nätverksfel</string>
+    <string name="error_auth">Autentisering misslyckades</string>
+    <string name="error_http">HTTP %1$d: %2$s</string>
+    <string name="error_parse">Ogiltigt serversvar</string>
+    <string name="notif_channel_events">Frigate-händelser</string>
+    <string name="notif_channel_events_desc">Realtidsnotiser om händelser</string>
+    <string name="notif_service_title">Frigate Viewer</string>
+    <string name="notif_service_text">Lyssnar efter händelser</string>
+</resources>

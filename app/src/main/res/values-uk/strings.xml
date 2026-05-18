@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Frigate Viewer</string>
+    <string name="nav_cameras">Камери</string>
+    <string name="nav_events">Події</string>
+    <string name="nav_settings">Налаштування</string>
+    <string name="server_add">Додати сервер</string>
+    <string name="server_name">Назва</string>
+    <string name="server_host">Хост</string>
+    <string name="server_port">Порт</string>
+    <string name="server_protocol">Протокол</string>
+    <string name="server_username">Користувач</string>
+    <string name="server_password">Пароль</string>
+    <string name="server_save">Зберегти</string>
+    <string name="server_test">Перевірити з\'єднання</string>
+    <string name="error_unknown">Щось пішло не так</string>
+    <string name="error_network">Помилка мережі</string>
+    <string name="error_auth">Помилка автентифікації</string>
+    <string name="error_http">HTTP %1$d: %2$s</string>
+    <string name="error_parse">Невірна відповідь сервера</string>
+    <string name="notif_channel_events">Події Frigate</string>
+    <string name="notif_channel_events_desc">Сповіщення про події у реальному часі</string>
+    <string name="notif_service_title">Frigate Viewer</string>
+    <string name="notif_service_text">Очікування подій</string>
+</resources>

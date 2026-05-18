@@ -27,27 +27,35 @@ Not affiliated with the Frigate project.
 
 ## Status
 
-**v0.1 — scaffold, buildable, not yet feature-complete.**
+**v0.2 — feature-complete trunk for the headline functionality.**
 
 | Feature | State |
 |---|---|
 | Server CRUD (HTTPS, basic auth, Frigate JWT login) | implemented |
-| Cameras list (`GET /api/config`) | implemented (with safe JSON handling) |
-| Events list (`GET /api/events`) | implemented |
+| Per-server Retrofit + OkHttp (no more placeholder base URL) | implemented |
+| In-memory cookie jar for Frigate JWT session | implemented |
+| Cameras grid w/ snapshot tiles (`/api/<cam>/latest.jpg`) | implemented |
+| Tap-to-focus full-screen tile | implemented |
+| Live WebRTC focused tile (go2rtc WS signaling, trickle ICE) | implemented |
+| Events list with thumbnails + tap-to-detail | implemented |
+| Event detail (snapshot + Media3 clip playback) | implemented |
 | Event delete / retain toggle | implemented |
 | Encrypted credential storage (Tink AEAD + Android Keystore) | implemented |
 | Self-signed certificate support (user-pinned PEM) | implemented |
-| MQTT foreground service | manifest + service stub only — no broker connect yet |
-| Live WebRTC tile (sub-second) | not yet — `LivePlayer.kt` placeholder for HLS via Media3 |
-| Snapshot/thumbnail rendering | not yet |
-| Event detail view + clip playback | not yet |
-| Recordings VOD playback | not yet |
-| Multi-server fast switch | data model supports it; UI is single-active |
-| i18n re-port from the RN app | not yet — English only |
-| Room cache for offline event browsing | deliberately deferred to v0.3 |
-| MockWebServer unit tests per `ApiResult` branch | not yet |
+| MQTT foreground service (HiveMQ MQTT5, subscribe `frigate/events` + `frigate/reviews`) | implemented |
+| Event notifications w/ deep-link to detail | implemented |
+| Service auto-start on server save / active switch | implemented |
+| Logout (clears JWT + invalidates per-server client) | implemented |
+| Room cache for offline event browsing (instant-load on screen open) | implemented |
+| i18n (en, es, fr, de, it, pt, pl, sv, uk) | implemented (core strings; full RN parity pending) |
+| Adaptive app icon (Material You monochrome supported) | implemented |
+| MockWebServer unit tests for every `ApiResult` branch | implemented |
+| Recordings VOD timeline playback | deferred to v0.3 |
+| Multi-server fast-switch UI | deferred to v0.3 |
+| Picture-in-Picture for focused tile | deferred to v0.3 |
+| Android Auto / Android TV layouts | deferred to v0.4 |
 
-This is a v0.1 floor, not a ceiling. The architecture is in place; the remaining features are mostly mechanical fills against the scaffolded layers.
+Architecture in place. Remaining work is feature additions, not foundational rework.
 
 ---
 
