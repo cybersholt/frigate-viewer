@@ -47,7 +47,7 @@ class TokenRefreshAuthenticator(
 ) : Authenticator {
 
     override fun authenticate(route: Route?, response: Response): Request? {
-        if (response.priorResponse() != null) return null  // already retried once
+        if (response.priorResponse != null) return null  // already retried once
         val server = runBlocking { serverRepo.activeServer() } ?: return null
         if (server.authMode != AuthMode.FRIGATE) return null
         val refreshed = runBlocking { loginFn(server.id) }

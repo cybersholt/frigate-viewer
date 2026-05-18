@@ -1,6 +1,7 @@
 package net.triton.frigateviewer.core.data
 
 import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
 import com.google.crypto.tink.Aead
 import com.google.crypto.tink.KeyTemplates
 import com.google.crypto.tink.aead.AeadConfig
@@ -28,7 +29,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class CredentialStore @Inject constructor(
-    private val context: Context,
+    @ApplicationContext private val context: Context,
 ) {
 
     init { AeadConfig.register() }

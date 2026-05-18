@@ -3,7 +3,6 @@ import java.io.FileInputStream
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
@@ -18,12 +17,12 @@ val keystoreProps = Properties().apply {
 
 android {
     namespace = "net.triton.frigateviewer"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "net.triton.frigateviewer"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
 
@@ -64,14 +63,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-        freeCompilerArgs += listOf(
-            "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi",
-            "-opt-in=kotlin.RequiresOptIn",
-        )
-    }
-
     buildFeatures {
         compose = true
         buildConfig = true
@@ -84,12 +75,26 @@ android {
                 "/META-INF/DEPENDENCIES",
                 "/META-INF/LICENSE*",
                 "/META-INF/NOTICE*",
+                "/META-INF/INDEX.LIST",
+                "/META-INF/io.netty.versions.properties",
+                "/META-INF/native-image/**",
+                "/META-INF/*.kotlin_module",
             )
         }
     }
 
     testOptions {
         unitTests.isIncludeAndroidResources = true
+    }
+
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+            freeCompilerArgs.addAll(
+                "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi",
+                "-opt-in=kotlin.RequiresOptIn",
+            )
+        }
     }
 
     lint {

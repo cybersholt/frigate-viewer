@@ -16,6 +16,7 @@ import coil3.ImageLoader
 import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
+import coil3.request.crossfade
 
 /**
  * Composable for Frigate-hosted images (snapshots, thumbnails, latest.jpg).

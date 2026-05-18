@@ -39,9 +39,9 @@ class FrigateClient @Inject constructor(
     private val credentialStore: CredentialStore,
     private val json: Json,
 ) {
-    private data class Entry(val server: Server, val api: FrigateApi, val client: OkHttpClient)
-
-    private val cache = ConcurrentHashMap<String, Entry>()
+    private val servers = ConcurrentHashMap<String, Server>()
+    private val apis = ConcurrentHashMap<String, FrigateApi>()
+    private val clients = ConcurrentHashMap<String, OkHttpClient>()
     private val mutex = Mutex()
 
     private val _activeServerFlow = MutableStateFlow<Server?>(null)
@@ -52,27 +52,33 @@ class FrigateClient @Inject constructor(
     }
 
     suspend fun apiFor(server: Server): FrigateApi = mutex.withLock {
-        val cached = cache[server.id]
-        if (cached != null && cached.server == server) return@withLock cached.api
+        ensureFor(server)
+        apis.getValue(server.id)
+    }
+
+    suspend fun clientFor(server: Server): OkHttpClient = mutex.withLock {
+        ensureFor(server)
+        clients.getValue(server.id)
+    }
+
+    suspend fun invalidate(serverId: String) = mutex.withLock {
+        servers.remove(serverId)
+        apis.remove(serverId)
+        clients.remove(serverId)
+    }
+
+    /** MUST be called while holding [mutex]. */
+    private fun ensureFor(server: Server) {
+        if (servers[server.id] == server && apis.containsKey(server.id)) return
         val client = buildClient(server)
         val retrofit = Retrofit.Builder()
             .baseUrl(server.baseUrl())
             .client(client)
             .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
             .build()
-        val api = retrofit.create(FrigateApi::class.java)
-        cache[server.id] = Entry(server, api, client)
-        api
-    }
-
-    suspend fun invalidate(serverId: String) = mutex.withLock {
-        cache.remove(serverId)
-    }
-
-    suspend fun clientFor(server: Server): OkHttpClient = mutex.withLock {
-        cache[server.id]?.let { if (it.server == server) return@withLock it.client }
-        apiFor(server)  // populates cache
-        cache.getValue(server.id).client
+        servers[server.id] = server
+        clients[server.id] = client
+        apis[server.id] = retrofit.create(FrigateApi::class.java)
     }
 
     private fun buildClient(server: Server): OkHttpClient {

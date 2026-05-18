@@ -30,7 +30,6 @@ import net.triton.frigateviewer.core.data.FrigateRepository
 import net.triton.frigateviewer.core.data.ServerRepository
 import net.triton.frigateviewer.core.network.ApiResult
 import java.util.UUID
-import java.util.concurrent.LinkedHashMap
 import javax.inject.Inject
 
 /**
