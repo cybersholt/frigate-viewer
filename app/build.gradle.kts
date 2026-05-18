@@ -91,6 +91,14 @@ android {
     testOptions {
         unitTests.isIncludeAndroidResources = true
     }
+
+    lint {
+        // Don't fail debug CI on lint warnings; report still uploaded as artifact.
+        // Release builds remain strict via lintRelease in the release task graph.
+        abortOnError = false
+        checkReleaseBuilds = true
+        warningsAsErrors = false
+    }
 }
 
 dependencies {

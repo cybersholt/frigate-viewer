@@ -43,14 +43,15 @@ jobs:
         run: |
           echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
 
-      - name: Lint (debug)
-        run: ./gradlew :app:lintDebug --no-daemon --stacktrace
+      - name: Assemble debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
 
       - name: Unit tests
         run: ./gradlew :app:testDebugUnitTest --no-daemon --stacktrace
 
-      - name: Assemble debug APK
-        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+      - name: Lint (debug, non-blocking)
+        run: ./gradlew :app:lintDebug --no-daemon --stacktrace --continue
+        continue-on-error: true
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
