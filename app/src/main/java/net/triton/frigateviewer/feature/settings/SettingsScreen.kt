@@ -6,7 +6,11 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
@@ -120,9 +124,15 @@ private fun ServerFormSheet(
     onSave: (ServerForm) -> Unit,
 ) {
     var current by remember { mutableStateOf(form) }
+    val scroll = rememberScrollState()
     androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
-            Modifier.padding(16.dp).fillMaxWidth(),
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(scroll)
+                .imePadding()
+                .navigationBarsPadding()
+                .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             OutlinedTextField(current.name, { current = current.copy(name = it) }, label = { Text("Name") })
