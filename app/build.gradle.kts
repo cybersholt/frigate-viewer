@@ -145,6 +145,7 @@ dependencies {
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.exoplayer.hls)
     implementation(libs.media3.exoplayer.rtsp)
+    implementation(libs.media3.datasource.okhttp)
     implementation(libs.media3.ui)
 
     implementation(libs.stream.webrtc.android)
@@ -152,6 +153,7 @@ dependencies {
 
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
+    implementation(libs.materialkolor)
 
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly(libs.junit.jupiter.engine)

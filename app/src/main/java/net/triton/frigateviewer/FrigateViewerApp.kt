@@ -7,7 +7,6 @@ import dagger.hilt.android.HiltAndroidApp
 
 @HiltAndroidApp
 class FrigateViewerApp : Application() {
-
     override fun onCreate() {
         super.onCreate()
         createNotificationChannels()
@@ -15,18 +14,20 @@ class FrigateViewerApp : Application() {
 
     private fun createNotificationChannels() {
         val nm = getSystemService(NotificationManager::class.java) ?: return
-        val eventsChannel = NotificationChannel(
-            CHANNEL_EVENTS,
-            getString(R.string.notif_channel_events),
-            NotificationManager.IMPORTANCE_HIGH,
-        ).apply {
-            description = getString(R.string.notif_channel_events_desc)
-        }
-        val serviceChannel = NotificationChannel(
-            CHANNEL_SERVICE,
-            getString(R.string.notif_service_title),
-            NotificationManager.IMPORTANCE_LOW,
-        )
+        val eventsChannel =
+            NotificationChannel(
+                CHANNEL_EVENTS,
+                getString(R.string.notif_channel_events),
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = getString(R.string.notif_channel_events_desc)
+            }
+        val serviceChannel =
+            NotificationChannel(
+                CHANNEL_SERVICE,
+                getString(R.string.notif_service_title),
+                NotificationManager.IMPORTANCE_LOW,
+            )
         nm.createNotificationChannels(listOf(eventsChannel, serviceChannel))
     }
 

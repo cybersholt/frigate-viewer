@@ -17,17 +17,19 @@ private val Context.serverDataStore: DataStore<Preferences> by preferencesDataSt
 @Module
 @InstallIn(SingletonComponent::class)
 object AppModule {
+    @Provides
+    @Singleton
+    fun providePrefs(
+        @ApplicationContext ctx: Context,
+    ): DataStore<Preferences> = ctx.serverDataStore
 
     @Provides
     @Singleton
-    fun providePrefs(@ApplicationContext ctx: Context): DataStore<Preferences> = ctx.serverDataStore
-
-    @Provides
-    @Singleton
-    fun provideJson(): Json = Json {
-        ignoreUnknownKeys = true
-        isLenient = true
-        explicitNulls = false
-        coerceInputValues = true
-    }
+    fun provideJson(): Json =
+        Json {
+            ignoreUnknownKeys = true
+            isLenient = true
+            explicitNulls = false
+            coerceInputValues = true
+        }
 }

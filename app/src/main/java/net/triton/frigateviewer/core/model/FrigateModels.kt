@@ -5,7 +5,10 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 
 @Serializable
-data class LoginRequest(val user: String, val password: String)
+data class LoginRequest(
+    val user: String,
+    val password: String,
+)
 
 @Serializable
 data class LoginResponse(

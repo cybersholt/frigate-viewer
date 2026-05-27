@@ -58,3 +58,58 @@ Native Android client for Frigate NVR. Rewritten in Kotlin to fix the JSON-parse
 
 ## When in doubt
 Read `ARCHITECTURE.md` for the why. Read the nearest local `CLAUDE.md` for the gotchas. Read the relevant ADR in `docs/adr/` for prior decisions before reversing one.
+
+## Documentation discipline
+**Keep docs current as code changes** — don't batch at the end. After any session that ships a feature:
+1. Update this `CLAUDE.md` if device info, commands, or key rules changed.
+2. Update `memory/project_state.md` with what's now working and what's next.
+3. If a new architectural decision was made, add an ADR in `docs/adr/`.
+Do this before the context gets too long to remember what changed.
+
+## Device / Deployment
+
+Pixel 8 connected via wireless ADB.
+
+# Connect if session dropped
+adb connect 192.168.88.XXX:5555
+
+# Verify
+adb devices
+
+# Deploy debug build
+./gradlew installDebug
+
+# Screenshot a screen (run from project root; screenshots/ dir exists in repo)
+adb shell input keyevent KEYCODE_WAKEUP && adb shell wm dismiss-keyguard
+adb exec-out screencap -p > screenshots/filename.png
+
+# Nav tab tap coordinates (Pixel 8)
+# Cameras: adb shell input tap 173 2274
+# Events:  adb shell input tap 540 2274
+# Settings: adb shell input tap 907 2274
+
+# Logcat filtered to app
+adb logcat -s OkHttp,FrigateViewer,AndroidRuntime
+
+Device: Pixel 8, Android CinnamonBun (API 36)
+Package: net.triton.frigateviewer.debug
+Activity: net.triton.frigateviewer.MainActivity
+Launch: adb shell am start -n "net.triton.frigateviewer.debug/net.triton.frigateviewer.MainActivity"
+
+## Development Rules
+1. No destructive migrations in Room
+2. No `.catch {}` empty bodies
+3. Use `safeApiCall()` for all network calls
+4. Store credentials in `CredentialStore`
+5. Secrets stay local, never commit them
+6. Pin dependency versions in `libs.versions.toml`
+
+## UI / UX Rules
+1. All screens must have a light and dark mode toggle
+2. No hardcoded colors, use theme attributes
+3. All buttons must have a ripple effect
+4. All lists must support pull to refresh
+5. All forms must support keyboard navigation
+6. All screens must support landscape and portrait mode
+7. All screens must support 1x1 aspect ratio, 2x2 aspect ratio, 3x3 aspect ratio
+

@@ -1,5 +1,19 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(./gradlew :app:compileDebugKotlin --quiet)",
+      "Bash(adb devices *)",
+      "PowerShell(Test-Path *)",
+      "Bash(./gradlew :app:assembleDebug)",
+      "mcp__codegraph__codegraph_files",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Sean\\\\Projects\\\\frigate-viewer\\\\app\\\\src\\\\main\\\\java\\\\net\\\\triton\\\\frigateviewer\\\\ui\" -Recurse -File)",
+      "Bash(Select-Object FullName)",
+      "Bash(xargs grep -l \"Shimmer\\\\|shimmer\\\\|Skeleton\\\\|skeleton\")",
+      "Bash(adb *)",
+      "Bash(./gradlew :app:compileDebugKotlin)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {

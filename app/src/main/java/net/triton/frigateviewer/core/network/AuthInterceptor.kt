@@ -22,11 +22,15 @@ class AuthInterceptor(
     private val serverRepo: ServerRepository,
     private val credentialStore: CredentialStore,
 ) : Interceptor {
-
     @Throws(IOException::class)
     override fun intercept(chain: Interceptor.Chain): Response {
         val server = runBlocking { serverRepo.activeServer() } ?: return chain.proceed(chain.request())
-        val req = chain.request().newBuilder().applyAuth(server.id).build()
+        val req =
+            chain
+                .request()
+                .newBuilder()
+                .applyAuth(server.id)
+                .build()
         return chain.proceed(req)
     }
 
@@ -45,15 +49,20 @@ class TokenRefreshAuthenticator(
     private val credentialStore: CredentialStore,
     private val loginFn: suspend (String) -> Boolean,
 ) : Authenticator {
-
-    override fun authenticate(route: Route?, response: Response): Request? {
-        if (response.priorResponse != null) return null  // already retried once
+    override fun authenticate(
+        route: Route?,
+        response: Response,
+    ): Request? {
+        if (response.priorResponse != null) return null // already retried once
         val server = runBlocking { serverRepo.activeServer() } ?: return null
         if (server.authMode != AuthMode.FRIGATE) return null
         val refreshed = runBlocking { loginFn(server.id) }
         if (!refreshed) return null
         val newHeader = runBlocking { credentialStore.authHeader(server.id) } ?: return null
-        return response.request.newBuilder().header("Authorization", newHeader).build()
+        return response.request
+            .newBuilder()
+            .header("Authorization", newHeader)
+            .build()
     }
 }
 

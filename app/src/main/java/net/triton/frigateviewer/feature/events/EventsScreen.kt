@@ -1,37 +1,65 @@
 package net.triton.frigateviewer.feature.events
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.ImageLoader
 import dagger.hilt.android.EntryPointAccessors
+import kotlinx.datetime.Clock
+import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.minus
 import kotlinx.datetime.toLocalDateTime
 import net.triton.frigateviewer.core.image.FrigateImage
 import net.triton.frigateviewer.core.model.FrigateEvent
+import net.triton.frigateviewer.ui.components.CameraPill
+import net.triton.frigateviewer.ui.components.SegmentedEventPill
+import java.util.Locale
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EventsScreen(
     onEventClick: (String) -> Unit = {},
@@ -39,54 +67,331 @@ fun EventsScreen(
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val imageLoader = remember {
-        EntryPointAccessors.fromApplication(context, EventDetailEntryPoint::class.java).imageLoader()
-    }
-    Box(Modifier.fillMaxSize()) {
-        when {
-            state.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
-            state.error != null -> Text(
-                "Couldn't load events: ${state.error}",
-                modifier = Modifier.align(Alignment.Center).padding(24.dp),
-            )
-            state.events.isEmpty() -> Text("No events", Modifier.align(Alignment.Center))
-            else -> LazyColumn(Modifier.fillMaxSize()) {
-                items(state.events, key = { it.id }) { ev ->
-                    EventRow(ev, state.baseUrl, imageLoader) { onEventClick(ev.id) }
-                    HorizontalDivider()
+    val imageLoader =
+        remember {
+            EntryPointAccessors.fromApplication(context, EventDetailEntryPoint::class.java).imageLoader()
+        }
+    var showFilter by remember { mutableStateOf(false) }
+
+    val activeFilterCount =
+        state.selectedCameras.size +
+            state.selectedLabels.size +
+            state.selectedZones.size +
+            (if (state.retainedOnly) 1 else 0)
+
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().padding(end = 8.dp),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BadgedBox(
+                badge = {
+                    if (activeFilterCount > 0) {
+                        Badge { Text("$activeFilterCount") }
+                    }
+                },
+            ) {
+                IconButton(onClick = { showFilter = true }) {
+                    Icon(Icons.Filled.Tune, contentDescription = "Filters")
                 }
             }
+        }
+
+        Box(Modifier.weight(1f)) {
+            when {
+                state.loading && state.events.isEmpty() -> {
+                    CircularProgressIndicator(Modifier.align(Alignment.Center))
+                }
+
+                state.error != null && state.events.isEmpty() -> {
+                    Text(
+                        "Couldn't load events: ${state.error}",
+                        modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                    )
+                }
+
+                state.events.isEmpty() -> {
+                    Text("No events", Modifier.align(Alignment.Center))
+                }
+
+                else -> {
+                    PullToRefreshBox(
+                        isRefreshing = state.loading,
+                        onRefresh = { vm.refresh() },
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(state.eventGridColumns),
+                            contentPadding = PaddingValues(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxSize(),
+                        ) {
+                            items(state.events, key = { it.id }) { ev ->
+                                EventCard(ev, state.baseUrl, imageLoader, state.dateFormat) { onEventClick(ev.id) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showFilter) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { showFilter = false },
+            sheetState = sheetState,
+        ) {
+            FilterSheet(
+                state = state,
+                onToggleCamera = vm::toggleCamera,
+                onToggleLabel = vm::toggleLabel,
+                onToggleZone = vm::toggleZone,
+                onSetRetainedOnly = vm::setRetainedOnly,
+                onClearAll = {
+                    vm.clearAllFilters()
+                    showFilter = false
+                },
+                onDismiss = { showFilter = false },
+            )
         }
     }
 }
 
 @Composable
-private fun EventRow(
+private fun EventCard(
     ev: FrigateEvent,
     baseUrl: String?,
     imageLoader: ImageLoader,
+    dateFormat: String,
     onClick: () -> Unit,
 ) {
-    Row(
-        Modifier.fillMaxWidth().clickable { onClick() }.padding(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    Card(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
     ) {
-        if (ev.hasSnapshot && baseUrl != null) {
-            FrigateImage(
-                relativePath = "api/events/${ev.id}/thumbnail.jpg",
-                contentDescription = null,
-                baseUrl = baseUrl,
-                imageLoader = imageLoader,
-                modifier = Modifier.size(72.dp, 54.dp),
+        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
+            if (ev.hasSnapshot && baseUrl != null) {
+                FrigateImage(
+                    relativePath = "api/events/${ev.id}/snapshot.jpg",
+                    contentDescription = "${ev.camera} ${ev.label}",
+                    baseUrl = baseUrl,
+                    imageLoader = imageLoader,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant))
+            }
+
+            // Camera name pill — top-left corner
+            CameraPill(
+                camera = ev.camera,
+                modifier =
+                    Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp),
+            )
+
+            // Datetime pill — top-right corner
+            Box(
+                modifier =
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(6.dp)
+                        .background(Color(0xBB000000), shape = MaterialTheme.shapes.small)
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+            ) {
+                Text(
+                    text = formatEventTime(ev, dateFormat),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                )
+            }
+
+            // Combined label/score/zone pill — bottom-right corner
+            SegmentedEventPill(
+                label = ev.label,
+                score = (ev.topScore ?: ev.score)?.let { String.format(Locale.US, "%d%%", (it * 100).toInt()) },
+                zone = ev.zones.firstOrNull(),
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(6.dp),
             )
         }
-        Column(Modifier.weight(1f)) {
-            val ts = Instant.fromEpochMilliseconds((ev.startTime * 1000).toLong())
+    }
+}
+
+private fun formatEventTime(
+    ev: FrigateEvent,
+    dateFormat: String,
+): String {
+    val ldt =
+        Instant
+            .fromEpochMilliseconds((ev.startTime * 1000).toLong())
+            .toLocalDateTime(TimeZone.currentSystemDefault())
+    val hour12 = ldt.hour % 12
+    val displayHour = if (hour12 == 0) 12 else hour12
+    val amPm = if (ldt.hour < 12) "AM" else "PM"
+    val timeStr = String.format(Locale.US, "%d:%02d %s", displayHour, ldt.minute, amPm)
+    val durationSecs = ev.endTime?.let { (it - ev.startTime).toInt().coerceAtLeast(0) }
+    val durationStr = durationSecs?.let { String.format(Locale.US, "%d:%02d", it / 60, it % 60) }
+
+    return if (dateFormat == "numeric") {
+        val numeric =
+            String.format(
+                Locale.US,
+                "%02d/%02d/%04d, %s",
+                ldt.monthNumber,
+                ldt.dayOfMonth,
+                ldt.year,
+                timeStr,
+            )
+        if (durationStr != null) "$numeric ($durationStr)" else numeric
+    } else {
+        val today =
+            Clock.System
+                .now()
                 .toLocalDateTime(TimeZone.currentSystemDefault())
-            Text("${ev.camera} • ${ev.label}", style = MaterialTheme.typography.bodyMedium)
-            Text("$ts", style = MaterialTheme.typography.bodySmall)
+                .date
+        val eventDate = ldt.date
+        val datePart =
+            when (eventDate) {
+                today -> {
+                    "Today at $timeStr"
+                }
+
+                today.minus(1, DateTimeUnit.DAY) -> {
+                    "Yesterday at $timeStr"
+                }
+
+                else -> {
+                    val monthAbbr =
+                        ldt.month.name
+                            .take(3)
+                            .lowercase()
+                            .replaceFirstChar { it.uppercase() }
+                    "$monthAbbr ${ldt.dayOfMonth} at $timeStr"
+                }
+            }
+        if (durationStr != null) "$datePart · $durationStr" else datePart
+    }
+}
+
+@Composable
+private fun FilterSheet(
+    state: EventsUiState,
+    onToggleCamera: (String) -> Unit,
+    onToggleLabel: (String) -> Unit,
+    onToggleZone: (String) -> Unit,
+    onSetRetainedOnly: (Boolean) -> Unit,
+    onClearAll: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val scroll = rememberScrollState()
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .verticalScroll(scroll)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(0.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Filters",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onClearAll) { Text("Clear all") }
+            TextButton(onClick = onDismiss) { Text("Done") }
         }
-        if (ev.retained) Text("★", style = MaterialTheme.typography.titleMedium)
+
+        if (state.availableCameras.isNotEmpty()) {
+            FilterSectionHeader("Cameras")
+            state.availableCameras.forEach { cam ->
+                FilterCheckboxRow(
+                    label = cam,
+                    checked = cam in state.selectedCameras,
+                    onToggle = { onToggleCamera(cam) },
+                )
+            }
+        }
+
+        if (state.availableLabels.isNotEmpty()) {
+            FilterSectionHeader("Labels")
+            state.availableLabels.forEach { label ->
+                FilterCheckboxRow(
+                    label = label,
+                    checked = label in state.selectedLabels,
+                    onToggle = { onToggleLabel(label) },
+                )
+            }
+        }
+
+        if (state.availableZones.isNotEmpty()) {
+            FilterSectionHeader("Zones")
+            state.availableZones.forEach { zone ->
+                FilterCheckboxRow(
+                    label = zone,
+                    checked = zone in state.selectedZones,
+                    onToggle = { onToggleZone(zone) },
+                )
+            }
+        }
+
+        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Retained only",
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.weight(1f),
+            )
+            Switch(
+                checked = state.retainedOnly,
+                onCheckedChange = onSetRetainedOnly,
+            )
+        }
+    }
+}
+
+@Composable
+private fun FilterSectionHeader(title: String) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp, bottom = 4.dp),
+    )
+    HorizontalDivider()
+}
+
+@Composable
+private fun FilterCheckboxRow(
+    label: String,
+    checked: Boolean,
+    onToggle: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(checked = checked, onCheckedChange = { onToggle() })
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
     }
 }

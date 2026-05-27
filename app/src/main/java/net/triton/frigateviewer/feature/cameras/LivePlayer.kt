@@ -18,7 +18,10 @@ import androidx.media3.ui.PlayerView
  * devices. Strategy: WebRTC for the focused tile, ExoPlayer HLS for grid tiles.
  */
 @Composable
-fun LivePlayer(streamUrl: String, modifier: Modifier = Modifier) {
+fun LivePlayer(
+    streamUrl: String,
+    modifier: Modifier = Modifier,
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val player = remember(streamUrl) { buildPlayer(context, streamUrl) }
     DisposableEffect(player) {
@@ -35,7 +38,10 @@ fun LivePlayer(streamUrl: String, modifier: Modifier = Modifier) {
     )
 }
 
-private fun buildPlayer(context: Context, url: String): ExoPlayer {
+private fun buildPlayer(
+    context: Context,
+    url: String,
+): ExoPlayer {
     val player = ExoPlayer.Builder(context).build()
     player.setMediaItem(MediaItem.fromUri(url))
     player.prepare()

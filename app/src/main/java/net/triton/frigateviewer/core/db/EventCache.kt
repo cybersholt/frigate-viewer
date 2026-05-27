@@ -1,5 +1,6 @@
 package net.triton.frigateviewer.core.db
 
+import android.content.Context
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -9,7 +10,6 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
-import android.content.Context
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -42,16 +42,25 @@ data class CachedEvent(
 @Dao
 interface EventDao {
     @Query("SELECT * FROM CachedEvent WHERE serverId = :serverId ORDER BY startTime DESC LIMIT :limit")
-    fun observe(serverId: String, limit: Int = 200): Flow<List<CachedEvent>>
+    fun observe(
+        serverId: String,
+        limit: Int = 200,
+    ): Flow<List<CachedEvent>>
 
     @Query("SELECT * FROM CachedEvent WHERE serverId = :serverId ORDER BY startTime DESC LIMIT :limit")
-    suspend fun list(serverId: String, limit: Int = 200): List<CachedEvent>
+    suspend fun list(
+        serverId: String,
+        limit: Int = 200,
+    ): List<CachedEvent>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(rows: List<CachedEvent>)
 
     @Query("DELETE FROM CachedEvent WHERE serverId = :serverId AND eventId = :eventId")
-    suspend fun delete(serverId: String, eventId: String)
+    suspend fun delete(
+        serverId: String,
+        eventId: String,
+    )
 
     @Query("DELETE FROM CachedEvent WHERE serverId = :serverId")
     suspend fun clearServer(serverId: String)
@@ -67,8 +76,11 @@ abstract class FrigateDb : RoomDatabase() {
 object DbModule {
     @Provides
     @Singleton
-    fun provideDb(@ApplicationContext ctx: Context): FrigateDb =
-        Room.databaseBuilder(ctx, FrigateDb::class.java, "frigate.db")
+    fun provideDb(
+        @ApplicationContext ctx: Context,
+    ): FrigateDb =
+        Room
+            .databaseBuilder(ctx, FrigateDb::class.java, "frigate.db")
             // No fallbackToDestructiveMigration — explicit migrations only.
             .build()
 

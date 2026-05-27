@@ -14,17 +14,31 @@ package net.triton.frigateviewer.core.network
  * UI never calls `.getOrThrow()`. It pattern-matches the sealed type.
  */
 sealed interface ApiResult<out T> {
-    data class Success<T>(val data: T) : ApiResult<T>
-    data class HttpError(val code: Int, val message: String, val rawBody: String? = null) : ApiResult<Nothing>
-    data class NetworkError(val cause: Throwable) : ApiResult<Nothing>
-    data class ParseError(val cause: Throwable) : ApiResult<Nothing>
+    data class Success<T>(
+        val data: T,
+    ) : ApiResult<T>
 
-    fun <R> map(transform: (T) -> R): ApiResult<R> = when (this) {
-        is Success -> Success(transform(data))
-        is HttpError -> this
-        is NetworkError -> this
-        is ParseError -> this
-    }
+    data class HttpError(
+        val code: Int,
+        val message: String,
+        val rawBody: String? = null,
+    ) : ApiResult<Nothing>
+
+    data class NetworkError(
+        val cause: Throwable,
+    ) : ApiResult<Nothing>
+
+    data class ParseError(
+        val cause: Throwable,
+    ) : ApiResult<Nothing>
+
+    fun <R> map(transform: (T) -> R): ApiResult<R> =
+        when (this) {
+            is Success -> Success(transform(data))
+            is HttpError -> this
+            is NetworkError -> this
+            is ParseError -> this
+        }
 
     fun getOrNull(): T? = (this as? Success)?.data
 }

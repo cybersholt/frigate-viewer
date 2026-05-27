@@ -12,19 +12,21 @@ import javax.inject.Singleton
  * Centralizes the Build.VERSION check.
  */
 @Singleton
-class ServiceController @Inject constructor(
-    @ApplicationContext private val context: Context,
-) {
-    fun start() {
-        val intent = Intent(context, MqttForegroundService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(intent)
-        } else {
-            context.startService(intent)
+class ServiceController
+    @Inject
+    constructor(
+        @ApplicationContext private val context: Context,
+    ) {
+        fun start() {
+            val intent = Intent(context, MqttForegroundService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
+
+        fun stop() {
+            context.stopService(Intent(context, MqttForegroundService::class.java))
         }
     }
-
-    fun stop() {
-        context.stopService(Intent(context, MqttForegroundService::class.java))
-    }
-}

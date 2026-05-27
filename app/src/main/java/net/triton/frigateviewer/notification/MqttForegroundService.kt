@@ -20,9 +20,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.contentOrNull
 import net.triton.frigateviewer.FrigateViewerApp
 import net.triton.frigateviewer.MainActivity
 import net.triton.frigateviewer.R
@@ -46,20 +46,26 @@ import javax.inject.Inject
  */
 @AndroidEntryPoint
 class MqttForegroundService : Service() {
-
     @Inject lateinit var serverRepo: ServerRepository
+
     @Inject lateinit var repo: FrigateRepository
+
     @Inject lateinit var json: Json
 
     private val scope = CoroutineScope(Dispatchers.IO + Job())
     private var mqtt: Mqtt5AsyncClient? = null
-    private val seenIds = object : LinkedHashMap<String, Long>(256, 0.75f, true) {
-        override fun removeEldestEntry(eldest: Map.Entry<String, Long>?) = size > 256
-    }
+    private val seenIds =
+        object : LinkedHashMap<String, Long>(256, 0.75f, true) {
+            override fun removeEldestEntry(eldest: Map.Entry<String, Long>?) = size > 256
+        }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    override fun onStartCommand(
+        intent: Intent?,
+        flags: Int,
+        startId: Int,
+    ): Int {
         startForegroundCompat()
         scope.launch { connectAndSubscribe() }
         return START_STICKY
@@ -70,31 +76,37 @@ class MqttForegroundService : Service() {
         val cfg = (repo.config() as? ApiResult.Success)?.data?.mqtt ?: return
         if (!cfg.enabled || cfg.host.isNullOrBlank()) return
 
-        val client = MqttClient.builder()
-            .useMqttVersion5()
-            .identifier("frigate-viewer-${UUID.randomUUID()}")
-            .serverHost(cfg.host)
-            .serverPort(cfg.port)
-            .automaticReconnectWithDefaultConfig()
-            .buildAsync()
+        val client =
+            MqttClient
+                .builder()
+                .useMqttVersion5()
+                .identifier("frigate-viewer-${UUID.randomUUID()}")
+                .serverHost(cfg.host)
+                .serverPort(cfg.port)
+                .automaticReconnectWithDefaultConfig()
+                .buildAsync()
 
         mqtt = client
         client.connect().whenComplete { _, err ->
             if (err != null) return@whenComplete
             listOf("${cfg.topicPrefix}/events", "${cfg.topicPrefix}/reviews").forEach { topic ->
-                client.subscribeWith()
+                client
+                    .subscribeWith()
                     .topicFilter(topic)
                     .qos(MqttQos.AT_LEAST_ONCE)
                     .callback { publish ->
                         val payload = publish.payloadAsBytes.toString(Charsets.UTF_8)
                         handleMessage(topic, payload, server.baseUrl())
-                    }
-                    .send()
+                    }.send()
             }
         }
     }
 
-    private fun handleMessage(topic: String, payload: String, baseUrl: String) {
+    private fun handleMessage(
+        topic: String,
+        payload: String,
+        baseUrl: String,
+    ) {
         val root = runCatching { json.parseToJsonElement(payload).jsonObject }.getOrNull() ?: return
         // Frigate events envelope: { type: "new"|"update"|"end", after: {...event...} }
         val after = (root["after"] as? JsonObject) ?: root
@@ -102,7 +114,7 @@ class MqttForegroundService : Service() {
         val camera = after["camera"]?.jsonPrimitive?.contentOrNull ?: "camera"
         val label = after["label"]?.jsonPrimitive?.contentOrNull ?: "object"
         val type = root["type"]?.jsonPrimitive?.contentOrNull ?: "event"
-        if (type != "new") return  // post only on first appearance
+        if (type != "new") return // post only on first appearance
         synchronized(seenIds) {
             if (seenIds.containsKey(id)) return
             seenIds[id] = System.currentTimeMillis()
@@ -110,23 +122,32 @@ class MqttForegroundService : Service() {
         postEventNotification(id, camera, label, baseUrl)
     }
 
-    private fun postEventNotification(id: String, camera: String, label: String, baseUrl: String) {
-        val pi = PendingIntent.getActivity(
-            this, id.hashCode(),
-            Intent(this, MainActivity::class.java).apply {
-                action = Intent.ACTION_VIEW
-                putExtra("event_id", id)
-            },
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        val notif = NotificationCompat.Builder(this, FrigateViewerApp.CHANNEL_EVENTS)
-            .setSmallIcon(android.R.drawable.stat_sys_warning)
-            .setContentTitle("$camera • $label")
-            .setContentText("New event detected")
-            .setAutoCancel(true)
-            .setContentIntent(pi)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .build()
+    private fun postEventNotification(
+        id: String,
+        camera: String,
+        label: String,
+        baseUrl: String,
+    ) {
+        val pi =
+            PendingIntent.getActivity(
+                this,
+                id.hashCode(),
+                Intent(this, MainActivity::class.java).apply {
+                    action = Intent.ACTION_VIEW
+                    putExtra("event_id", id)
+                },
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+        val notif =
+            NotificationCompat
+                .Builder(this, FrigateViewerApp.CHANNEL_EVENTS)
+                .setSmallIcon(android.R.drawable.stat_sys_warning)
+                .setContentTitle("$camera • $label")
+                .setContentText("New event detected")
+                .setAutoCancel(true)
+                .setContentIntent(pi)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .build()
         NotificationManagerCompat.from(this).also { nm ->
             if (nm.areNotificationsEnabled()) nm.notify(id.hashCode(), notif)
         }
@@ -140,17 +161,22 @@ class MqttForegroundService : Service() {
     }
 
     private fun startForegroundCompat() {
-        val pi = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        val notif: Notification = NotificationCompat.Builder(this, FrigateViewerApp.CHANNEL_SERVICE)
-            .setContentTitle(getString(R.string.notif_service_title))
-            .setContentText(getString(R.string.notif_service_text))
-            .setSmallIcon(android.R.drawable.stat_notify_chat)
-            .setOngoing(true)
-            .setContentIntent(pi)
-            .build()
+        val pi =
+            PendingIntent.getActivity(
+                this,
+                0,
+                Intent(this, MainActivity::class.java),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+        val notif: Notification =
+            NotificationCompat
+                .Builder(this, FrigateViewerApp.CHANNEL_SERVICE)
+                .setContentTitle(getString(R.string.notif_service_title))
+                .setContentText(getString(R.string.notif_service_text))
+                .setSmallIcon(android.R.drawable.stat_notify_chat)
+                .setOngoing(true)
+                .setContentIntent(pi)
+                .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)

@@ -1,5 +1,6 @@
 package net.triton.frigateviewer.core.network
 
+import kotlinx.serialization.json.JsonElement
 import net.triton.frigateviewer.core.model.FrigateConfig
 import net.triton.frigateviewer.core.model.FrigateEvent
 import net.triton.frigateviewer.core.model.LoginRequest
@@ -18,9 +19,10 @@ import retrofit2.http.Query
  * Never expose this interface directly to ViewModels — wrap via FrigateRepository.
  */
 interface FrigateApi {
-
     @POST("api/login")
-    suspend fun login(@Body body: LoginRequest): Response<LoginResponse>
+    suspend fun login(
+        @Body body: LoginRequest,
+    ): Response<LoginResponse>
 
     @GET("api/config")
     suspend fun config(): Response<FrigateConfig>
@@ -37,14 +39,25 @@ interface FrigateApi {
     ): Response<List<FrigateEvent>>
 
     @GET("api/events/{id}")
-    suspend fun event(@Path("id") id: String): Response<FrigateEvent>
+    suspend fun event(
+        @Path("id") id: String,
+    ): Response<FrigateEvent>
 
     @DELETE("api/events/{id}")
-    suspend fun deleteEvent(@Path("id") id: String): Response<Unit>
+    suspend fun deleteEvent(
+        @Path("id") id: String,
+    ): Response<Unit>
 
     @POST("api/events/{id}/retain")
-    suspend fun retainEvent(@Path("id") id: String): Response<Unit>
+    suspend fun retainEvent(
+        @Path("id") id: String,
+    ): Response<Unit>
 
     @DELETE("api/events/{id}/retain")
-    suspend fun unretainEvent(@Path("id") id: String): Response<Unit>
+    suspend fun unretainEvent(
+        @Path("id") id: String,
+    ): Response<Unit>
+
+    @GET("api/go2rtc/streams")
+    suspend fun go2rtcStreams(): Response<Map<String, JsonElement>>
 }

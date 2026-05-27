@@ -17,13 +17,16 @@ import java.io.IOException
  *  - SerializationException: ParseError (logged, never thrown to UI)
  *  - HttpException (defensive, in case of mis-wired callers): mapped to HttpError
  */
-suspend fun <T> safeApiCall(block: suspend () -> Response<T>): ApiResult<T> {
-    return try {
+suspend fun <T> safeApiCall(block: suspend () -> Response<T>): ApiResult<T> =
+    try {
         val response = block()
         if (response.isSuccessful) {
             val body = response.body()
-            if (body != null) ApiResult.Success(body)
-            else ApiResult.ParseError(IllegalStateException("Empty body on ${response.raw().request.url}"))
+            if (body != null) {
+                ApiResult.Success(body)
+            } else {
+                ApiResult.ParseError(IllegalStateException("Empty body on ${response.raw().request.url}"))
+            }
         } else {
             val raw = runCatching { response.errorBody()?.string() }.getOrNull()
             ApiResult.HttpError(code = response.code(), message = response.message(), rawBody = raw)
@@ -39,4 +42,3 @@ suspend fun <T> safeApiCall(block: suspend () -> Response<T>): ApiResult<T> {
     } catch (e: Throwable) {
         ApiResult.NetworkError(e)
     }
-}

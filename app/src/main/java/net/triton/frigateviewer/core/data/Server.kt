@@ -15,10 +15,31 @@ data class Server(
     val username: String? = null,
     /** Whether the user has pinned a custom certificate for this host (stored separately). */
     val hasPinnedCert: Boolean = false,
+    /** Whether to allow untrusted (self-signed) certificates for this server. */
+    val allowUntrusted: Boolean = false,
+    /** The RTSP port for this server (default is 8554). */
+    val rtspPort: Int = 8554,
+    /**
+     * Optional host override for RTSP/go2rtc. Set this to the LAN IP when the HTTP
+     * server is accessed via a domain that doesn't forward port 8554.
+     * Falls back to [host] when blank/null.
+     */
+    val rtspHost: String? = null,
+    /** When on one of [localNetworkSsids], use this URL instead of the main server URL. */
+    val localNetworkUrl: String? = null,
+    /** Wi-Fi SSIDs on which [localNetworkUrl] should be used. */
+    val localNetworkSsids: List<String> = emptyList(),
 ) {
     fun baseUrl(): String {
         val portPart = port?.let { ":$it" }.orEmpty()
         val path = basePath.trim('/').let { if (it.isEmpty()) "" else "/$it" }
         return "$protocol://$host$portPart$path/"
+    }
+
+    fun effectiveBaseUrl(currentSsid: String?): String {
+        if (localNetworkUrl != null && currentSsid != null && currentSsid in localNetworkSsids) {
+            return if (localNetworkUrl.endsWith("/")) localNetworkUrl else "$localNetworkUrl/"
+        }
+        return baseUrl()
     }
 }

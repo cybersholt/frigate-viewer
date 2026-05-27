@@ -22,53 +22,55 @@ import javax.inject.Singleton
  * NEVER mutate persisted JSON shape in place — bug class from prior RN app.
  */
 @Singleton
-class ServerRepository @Inject constructor(
-    private val store: DataStore<Preferences>,
-    private val json: Json,
-) {
+class ServerRepository
+    @Inject
+    constructor(
+        private val store: DataStore<Preferences>,
+        private val json: Json,
+    ) {
+        private val serversKey = stringPreferencesKey(KEY_SERVERS)
+        private val activeKey = stringPreferencesKey(KEY_ACTIVE)
 
-    private val serversKey = stringPreferencesKey(KEY_SERVERS)
-    private val activeKey = stringPreferencesKey(KEY_ACTIVE)
+        val servers: Flow<List<Server>> =
+            store.data.map { prefs ->
+                val raw = prefs[serversKey] ?: return@map emptyList()
+                runCatching { json.decodeFromString(ListSerializer(Server.serializer()), raw) }
+                    .getOrDefault(emptyList())
+            }
 
-    val servers: Flow<List<Server>> = store.data.map { prefs ->
-        val raw = prefs[serversKey] ?: return@map emptyList()
-        runCatching { json.decodeFromString(ListSerializer(Server.serializer()), raw) }
-            .getOrDefault(emptyList())
-    }
+        val activeServerId: Flow<String?> = store.data.map { it[activeKey] }
 
-    val activeServerId: Flow<String?> = store.data.map { it[activeKey] }
+        suspend fun all(): List<Server> = servers.first()
 
-    suspend fun all(): List<Server> = servers.first()
+        suspend fun activeServer(): Server? {
+            val id = activeServerId.first() ?: return null
+            return all().firstOrNull { it.id == id }
+        }
 
-    suspend fun activeServer(): Server? {
-        val id = activeServerId.first() ?: return null
-        return all().firstOrNull { it.id == id }
-    }
+        suspend fun upsert(server: Server) {
+            val current = all().toMutableList()
+            val idx = current.indexOfFirst { it.id == server.id }
+            if (idx >= 0) current[idx] = server else current += server
+            persist(current)
+        }
 
-    suspend fun upsert(server: Server) {
-        val current = all().toMutableList()
-        val idx = current.indexOfFirst { it.id == server.id }
-        if (idx >= 0) current[idx] = server else current += server
-        persist(current)
-    }
+        suspend fun delete(id: String) {
+            persist(all().filterNot { it.id == id })
+        }
 
-    suspend fun delete(id: String) {
-        persist(all().filterNot { it.id == id })
-    }
+        suspend fun setActive(id: String?) {
+            store.edit { prefs ->
+                if (id == null) prefs.remove(activeKey) else prefs[activeKey] = id
+            }
+        }
 
-    suspend fun setActive(id: String?) {
-        store.edit { prefs ->
-            if (id == null) prefs.remove(activeKey) else prefs[activeKey] = id
+        private suspend fun persist(list: List<Server>) {
+            val encoded = json.encodeToString(ListSerializer(Server.serializer()), list)
+            store.edit { it[serversKey] = encoded }
+        }
+
+        companion object {
+            private const val KEY_SERVERS = "servers_json_v1"
+            private const val KEY_ACTIVE = "active_server_id_v1"
         }
     }
-
-    private suspend fun persist(list: List<Server>) {
-        val encoded = json.encodeToString(ListSerializer(Server.serializer()), list)
-        store.edit { it[serversKey] = encoded }
-    }
-
-    companion object {
-        private const val KEY_SERVERS = "servers_json_v1"
-        private const val KEY_ACTIVE = "active_server_id_v1"
-    }
-}

@@ -18,9 +18,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
@@ -30,7 +31,6 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.components.SingletonComponent
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -48,6 +48,10 @@ import javax.inject.Inject
 @InstallIn(SingletonComponent::class)
 interface EventDetailEntryPoint {
     fun imageLoader(): ImageLoader
+
+    fun frigateClient(): net.triton.frigateviewer.core.network.FrigateClient
+
+    fun serverRepository(): ServerRepository
 }
 
 data class EventDetailUiState(
@@ -58,27 +62,28 @@ data class EventDetailUiState(
 )
 
 @HiltViewModel
-class EventDetailViewModel @Inject constructor(
-    private val repo: FrigateRepository,
-    private val serverRepo: ServerRepository,
-) : ViewModel() {
+class EventDetailViewModel
+    @Inject
+    constructor(
+        private val repo: FrigateRepository,
+        private val serverRepo: ServerRepository,
+    ) : ViewModel() {
+        private val _state = MutableStateFlow(EventDetailUiState())
+        val state = _state.asStateFlow()
 
-    private val _state = MutableStateFlow(EventDetailUiState())
-    val state = _state.asStateFlow()
-
-    fun load(id: String) {
-        viewModelScope.launch {
-            val server = serverRepo.activeServer()
-            val baseUrl = server?.baseUrl()
-            when (val r = repo.event(id)) {
-                is ApiResult.Success -> _state.value = EventDetailUiState(false, r.data, baseUrl)
-                is ApiResult.HttpError -> _state.value = EventDetailUiState(false, null, baseUrl, "HTTP ${r.code}")
-                is ApiResult.NetworkError -> _state.value = EventDetailUiState(false, null, baseUrl, r.cause.message)
-                is ApiResult.ParseError -> _state.value = EventDetailUiState(false, null, baseUrl, "Bad response")
+        fun load(id: String) {
+            viewModelScope.launch {
+                val server = serverRepo.activeServer()
+                val baseUrl = server?.baseUrl()
+                when (val r = repo.event(id)) {
+                    is ApiResult.Success -> _state.value = EventDetailUiState(false, r.data, baseUrl)
+                    is ApiResult.HttpError -> _state.value = EventDetailUiState(false, null, baseUrl, "HTTP ${r.code}")
+                    is ApiResult.NetworkError -> _state.value = EventDetailUiState(false, null, baseUrl, r.cause.message)
+                    is ApiResult.ParseError -> _state.value = EventDetailUiState(false, null, baseUrl, "Bad response")
+                }
             }
         }
     }
-}
 
 @Composable
 fun EventDetailScreen(
@@ -87,20 +92,38 @@ fun EventDetailScreen(
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val imageLoader = remember {
-        EntryPointAccessors.fromApplication(context, EventDetailEntryPoint::class.java).imageLoader()
+    val entryPoint =
+        remember {
+            EntryPointAccessors.fromApplication(context, EventDetailEntryPoint::class.java)
+        }
+    val imageLoader = entryPoint.imageLoader()
+    val frigateClient = entryPoint.frigateClient()
+    val serverRepo = entryPoint.serverRepository()
+
+    val okHttpClient by androidx.compose.runtime.produceState<okhttp3.OkHttpClient?>(initialValue = null) {
+        val server = serverRepo.activeServer()
+        value = if (server != null) frigateClient.clientFor(server) else null
     }
+
     LaunchedEffect(eventId) { vm.load(eventId) }
 
     Column(Modifier.fillMaxSize().padding(12.dp)) {
         when {
-            state.loading -> Text("Loading...")
-            state.error != null -> Text("Error: ${state.error}")
+            state.loading -> {
+                Text("Loading...")
+            }
+
+            state.error != null -> {
+                Text("Error: ${state.error}")
+            }
+
             state.event != null -> {
                 val ev = state.event!!
                 Text("${ev.camera} • ${ev.label}", style = MaterialTheme.typography.titleLarge)
-                val ts = Instant.fromEpochMilliseconds((ev.startTime * 1000).toLong())
-                    .toLocalDateTime(TimeZone.currentSystemDefault())
+                val ts =
+                    Instant
+                        .fromEpochMilliseconds((ev.startTime * 1000).toLong())
+                        .toLocalDateTime(TimeZone.currentSystemDefault())
                 Text("$ts", style = MaterialTheme.typography.bodySmall)
                 if (ev.hasSnapshot) {
                     FrigateImage(
@@ -111,9 +134,10 @@ fun EventDetailScreen(
                         modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).padding(top = 12.dp),
                     )
                 }
-                if (ev.hasClip && state.baseUrl != null) {
+                if (ev.hasClip && state.baseUrl != null && okHttpClient != null) {
                     ClipPlayer(
                         url = state.baseUrl!!.trimEnd('/') + "/api/events/${ev.id}/clip.mp4",
+                        okHttpClient = okHttpClient!!,
                         modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).padding(top = 12.dp),
                     )
                 }
@@ -122,20 +146,33 @@ fun EventDetailScreen(
     }
 }
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-private fun ClipPlayer(url: String, modifier: Modifier = Modifier) {
+private fun ClipPlayer(
+    url: String,
+    okHttpClient: okhttp3.OkHttpClient,
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
-    val player = remember(url) {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(url))
-            prepare()
-            playWhenReady = true
+    val player =
+        remember(url) {
+            val dataSourceFactory =
+                androidx.media3.datasource.okhttp.OkHttpDataSource
+                    .Factory(okHttpClient)
+            val mediaSource =
+                androidx.media3.exoplayer.source.ProgressiveMediaSource
+                    .Factory(dataSourceFactory)
+                    .createMediaSource(MediaItem.fromUri(url))
+
+            ExoPlayer.Builder(context).build().apply {
+                setMediaSource(mediaSource)
+                prepare()
+                playWhenReady = true
+            }
         }
-    }
     DisposableEffect(player) { onDispose { player.release() } }
     AndroidView(
         modifier = modifier,
         factory = { ctx -> PlayerView(ctx).apply { this.player = player } },
     )
 }
-
