@@ -38,6 +38,10 @@ data class EventsUiState(
     val availableZones: List<String> = emptyList(),
     val eventGridColumns: Int = 1,
     val dateFormat: String = "descriptive",
+    /** Current position of the timeline scrubber (ms since epoch). Defaults to now. */
+    val scrubberTimeMs: Long = System.currentTimeMillis(),
+    /** How many hours the timeline displays (zoom level). Range 1–168h. */
+    val timeRangeHours: Float = 24f,
 )
 
 @HiltViewModel
@@ -149,6 +153,33 @@ class EventsViewModel
             applyFilters()
         }
 
+        /** Apply pre-set filters from deep-link / camera-tile swipe navigation. */
+        fun initFilters(
+            camera: String?,
+            label: String?,
+            zone: String?,
+        ) {
+            if (camera == null && label == null && zone == null) return
+            _state.value =
+                _state.value.copy(
+                    selectedCameras = if (camera != null) setOf(camera) else emptySet(),
+                    selectedLabels = if (label != null) setOf(label) else emptySet(),
+                    selectedZones = if (zone != null) setOf(zone) else emptySet(),
+                )
+            applyFilters()
+        }
+
+        /** Move the timeline scrubber to [timeMs]. */
+        fun setScrubberTime(timeMs: Long) {
+            _state.value = _state.value.copy(scrubberTimeMs = timeMs)
+        }
+
+        /** Zoom the timeline in (factor < 1) or out (factor > 1). */
+        fun zoomTimeline(factor: Float) {
+            val newRange = (_state.value.timeRangeHours * factor).coerceIn(1f, 168f)
+            _state.value = _state.value.copy(timeRangeHours = newRange)
+        }
+
         private fun applyFilters() {
             _state.value = _state.value.copy(events = filterEvents(allEvents))
         }
@@ -173,7 +204,8 @@ class EventsViewModel
                 }
                 if (!isSilent) _state.value = _state.value.copy(loading = true, error = null, baseUrl = baseUrl)
 
-                when (val r = repo.events(limit = 100)) {
+                val sevenDaysAgo = (System.currentTimeMillis() / 1000.0) - 7 * 24 * 3600
+                when (val r = repo.events(limit = 2000, after = sevenDaysAgo)) {
                     is ApiResult.Success -> {
                         allEvents = r.data
                         updateAvailableFilters(r.data)

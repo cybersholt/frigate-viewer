@@ -34,6 +34,10 @@ class UserSettingsRepository
         private val showBoundingBoxesKey = booleanPreferencesKey(KEY_SHOW_BOUNDING_BOXES)
         private val eventGridColumnsKey = intPreferencesKey(KEY_EVENT_GRID_COLUMNS)
         private val dateFormatKey = stringPreferencesKey(KEY_DATE_FORMAT)
+        private val cameraOrderKey = stringPreferencesKey(KEY_CAMERA_ORDER)
+        private val hiddenCamerasKey = stringPreferencesKey(KEY_HIDDEN_CAMERAS)
+        private val showCameraSwipeActionsKey = booleanPreferencesKey(KEY_SHOW_CAMERA_SWIPE_ACTIONS)
+        private val lastKnownCameraNameListKey = stringPreferencesKey(KEY_LAST_KNOWN_CAMERA_NAMES)
 
         val preferSubStream: Flow<Boolean> = store.data.map { it[preferSubStreamKey] ?: false }
         val themeMode: Flow<String> = store.data.map { it[themeModeKey] ?: "SYSTEM" }
@@ -51,6 +55,27 @@ class UserSettingsRepository
         val showBoundingBoxes: Flow<Boolean> = store.data.map { it[showBoundingBoxesKey] ?: true }
         val eventGridColumns: Flow<Int> = store.data.map { it[eventGridColumnsKey] ?: 1 }
         val dateFormat: Flow<String> = store.data.map { it[dateFormatKey] ?: "descriptive" }
+
+        /** Ordered list of camera names; empty = use API order. */
+        val cameraOrder: Flow<List<String>> =
+            store.data.map { prefs ->
+                prefs[cameraOrderKey]?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
+            }
+
+        /** Set of camera names that are hidden from the grid. */
+        val hiddenCameras: Flow<Set<String>> =
+            store.data.map { prefs ->
+                prefs[hiddenCamerasKey]?.split(",")?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
+            }
+
+        /** Whether swipe gestures are active on camera tiles. Default ON. */
+        val showCameraSwipeActions: Flow<Boolean> = store.data.map { it[showCameraSwipeActionsKey] ?: true }
+
+        /** Camera names from last successful load, for skeleton background images. */
+        val lastKnownCameraNames: Flow<List<String>> =
+            store.data.map { prefs ->
+                prefs[lastKnownCameraNameListKey]?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
+            }
 
         suspend fun setPreferSubStream(prefer: Boolean) = store.edit { it[preferSubStreamKey] = prefer }
 
@@ -84,6 +109,14 @@ class UserSettingsRepository
 
         suspend fun setDateFormat(fmt: String) = store.edit { it[dateFormatKey] = fmt }
 
+        suspend fun setCameraOrder(names: List<String>) = store.edit { it[cameraOrderKey] = names.joinToString(",") }
+
+        suspend fun setHiddenCameras(cameras: Set<String>) = store.edit { it[hiddenCamerasKey] = cameras.joinToString(",") }
+
+        suspend fun setShowCameraSwipeActions(show: Boolean) = store.edit { it[showCameraSwipeActionsKey] = show }
+
+        suspend fun setLastKnownCameraNames(names: List<String>) = store.edit { it[lastKnownCameraNameListKey] = names.joinToString(",") }
+
         companion object {
             private const val KEY_PREFER_SUB_STREAM = "prefer_sub_stream_v1"
             private const val KEY_THEME_MODE = "theme_mode_v1"
@@ -101,5 +134,9 @@ class UserSettingsRepository
             private const val KEY_SHOW_BOUNDING_BOXES = "show_bounding_boxes_v1"
             private const val KEY_EVENT_GRID_COLUMNS = "event_grid_columns_v1"
             private const val KEY_DATE_FORMAT = "date_format_v1"
+            private const val KEY_CAMERA_ORDER = "camera_order_v1"
+            private const val KEY_HIDDEN_CAMERAS = "hidden_cameras_v1"
+            private const val KEY_SHOW_CAMERA_SWIPE_ACTIONS = "show_camera_swipe_actions_v1"
+            private const val KEY_LAST_KNOWN_CAMERA_NAMES = "last_known_camera_names_v1"
         }
     }

@@ -4,18 +4,19 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.MutableState
@@ -27,11 +28,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavDestination.Companion.hierarchy
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.materialkolor.PaletteStyle
 import dagger.hilt.android.AndroidEntryPoint
 import net.triton.frigateviewer.core.data.UserSettingsRepository
@@ -102,21 +107,40 @@ private sealed class Dest(
 
 private val tabs = listOf(Dest.Cameras, Dest.Events, Dest.Settings)
 
+// Route for events with optional filter query params
+private const val EVENTS_ROUTE = "events?camera={camera}&label={label}&zone={zone}"
+
+private fun eventsRouteWith(
+    camera: String? = null,
+    label: String? = null,
+    zone: String? = null,
+): String {
+    val params =
+        buildList {
+            if (camera != null) add("camera=$camera")
+            if (label != null) add("label=$label")
+            if (zone != null) add("zone=$zone")
+        }
+    return if (params.isEmpty()) "events" else "events?${params.joinToString("&")}"
+}
+
 @Composable
 private fun AppRoot() {
     val nav = rememberNavController()
     val backStack by nav.currentBackStackEntryAsState()
     val current = backStack?.destination
-    val onTab = current?.route in tabs.map { it.route }
+    // A destination is "on tab" if its route starts with a tab's base route
+    val onTab = tabs.any { tab -> current?.route?.startsWith(tab.route) == true }
     val fullScreen = remember { mutableStateOf(false) }
 
     CompositionLocalProvider(LocalFullScreenMode provides fullScreen) {
         Scaffold(
             bottomBar = {
                 if (onTab && !fullScreen.value) {
-                    NavigationBar {
+                    NavigationBar(modifier = Modifier.height(68.dp), windowInsets = WindowInsets(0)) {
                         tabs.forEach { tab ->
-                            val selected = current?.hierarchy?.any { it.route == tab.route } == true
+                            val selected =
+                                current?.hierarchy?.any { it.route?.startsWith(tab.route) == true } == true
                             NavigationBarItem(
                                 selected = selected,
                                 onClick = {
@@ -126,8 +150,19 @@ private fun AppRoot() {
                                         popUpTo(nav.graph.startDestinationId) { saveState = true }
                                     }
                                 },
-                                icon = { Icon(tab.icon, contentDescription = null) },
-                                label = { Text(stringResource(tab.label)) },
+                                icon = {
+                                    Icon(
+                                        tab.icon,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(22.dp),
+                                    )
+                                },
+                                label = {
+                                    Text(
+                                        stringResource(tab.label),
+                                        fontSize = 10.sp,
+                                    )
+                                },
                             )
                         }
                     }
@@ -139,14 +174,64 @@ private fun AppRoot() {
                 startDestination = Dest.Cameras.route,
                 modifier = Modifier.padding(padding),
             ) {
-                composable(Dest.Cameras.route) { CamerasScreen() }
-                composable(Dest.Events.route) {
-                    EventsScreen(onEventClick = { id -> nav.navigate("event/$id") })
+                composable(Dest.Cameras.route) {
+                    CamerasScreen(
+                        onNavigateToEvents = { camera, label, zone ->
+                            nav.navigate(eventsRouteWith(camera, label, zone)) {
+                                launchSingleTop = true
+                                restoreState = true
+                                popUpTo(nav.graph.startDestinationId) { saveState = true }
+                            }
+                        },
+                    )
+                }
+                composable(
+                    route = EVENTS_ROUTE,
+                    arguments =
+                        listOf(
+                            navArgument("camera") {
+                                type = NavType.StringType
+                                nullable = true
+                                defaultValue = null
+                            },
+                            navArgument("label") {
+                                type = NavType.StringType
+                                nullable = true
+                                defaultValue = null
+                            },
+                            navArgument("zone") {
+                                type = NavType.StringType
+                                nullable = true
+                                defaultValue = null
+                            },
+                        ),
+                ) { entry ->
+                    EventsScreen(
+                        onEventClick = { id -> nav.navigate("event/$id") },
+                        initialCamera = entry.arguments?.getString("camera"),
+                        initialLabel = entry.arguments?.getString("label"),
+                        initialZone = entry.arguments?.getString("zone"),
+                    )
                 }
                 composable(Dest.Settings.route) { SettingsScreen() }
                 composable("event/{id}") { entry ->
                     val id = entry.arguments?.getString("id") ?: return@composable
-                    EventDetailScreen(eventId = id)
+                    EventDetailScreen(
+                        eventId = id,
+                        onNavigateToEvents = { camera, label, zone ->
+                            nav.navigate(eventsRouteWith(camera, label, zone)) {
+                                launchSingleTop = true
+                                restoreState = true
+                                popUpTo(nav.graph.startDestinationId) { saveState = true }
+                            }
+                        },
+                        onNavigateToEvent = { newId ->
+                            nav.navigate("event/$newId") {
+                                popUpTo("event/{id}") { inclusive = true }
+                            }
+                        },
+                        onBack = { nav.popBackStack() },
+                    )
                 }
             }
         }

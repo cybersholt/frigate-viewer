@@ -69,11 +69,13 @@ class FrigateRepository
         suspend fun events(
             camera: String? = null,
             label: String? = null,
+            zone: String? = null,
+            after: Double? = null,
             before: Long? = null,
             limit: Int = 50,
         ): ApiResult<List<FrigateEvent>> {
             val api = api() ?: return ApiResult.NetworkError(IllegalStateException("No active server"))
-            return safeApiCall { api.events(camera = camera, label = label, before = before, limit = limit) }
+            return safeApiCall { api.events(camera = camera, label = label, zone = zone, after = after, before = before, limit = limit) }
         }
 
         suspend fun event(id: String): ApiResult<FrigateEvent> {

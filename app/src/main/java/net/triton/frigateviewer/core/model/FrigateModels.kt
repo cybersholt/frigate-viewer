@@ -27,6 +27,13 @@ data class FrigateConfig(
     val cameras: Map<String, CameraConfig> = emptyMap(),
     @SerialName("mqtt") val mqtt: MqttConfig? = null,
     @SerialName("ui") val ui: JsonElement? = null,
+    @SerialName("objects") val objects: GlobalObjectsConfig? = null,
+)
+
+@Serializable
+data class GlobalObjectsConfig(
+    val track: List<String> = emptyList(),
+    val filters: JsonElement? = null,
 )
 
 @Serializable
@@ -37,6 +44,16 @@ data class CameraConfig(
     @SerialName("snapshots") val snapshots: JsonElement? = null,
     @SerialName("record") val record: JsonElement? = null,
     @SerialName("live") val live: LiveConfig? = null,
+    /** Zone name → zone config (we only need the names for UI). */
+    @SerialName("zones") val zones: Map<String, JsonElement> = emptyMap(),
+    /** Per-camera object filter; falls back to global objects.track when absent. */
+    @SerialName("objects") val objects: CameraObjectsConfig? = null,
+)
+
+@Serializable
+data class CameraObjectsConfig(
+    val track: List<String> = emptyList(),
+    val filters: JsonElement? = null,
 )
 
 @Serializable

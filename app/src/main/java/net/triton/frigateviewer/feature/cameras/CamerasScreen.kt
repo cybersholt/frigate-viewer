@@ -1,36 +1,54 @@
 package net.triton.frigateviewer.feature.cameras
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -39,11 +57,15 @@ import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.launch
 import net.triton.frigateviewer.LocalFullScreenMode
 import net.triton.frigateviewer.core.data.CredentialStore
 import net.triton.frigateviewer.core.image.FrigateImage
+import net.triton.frigateviewer.core.model.FrigateEvent
 import net.triton.frigateviewer.ui.components.CameraPill
 import net.triton.frigateviewer.ui.components.CameraSkeletonTile
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @EntryPoint
 @InstallIn(SingletonComponent::class)
@@ -57,9 +79,12 @@ interface CamerasEntryPoint {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CamerasScreen(vm: CamerasViewModel = hiltViewModel()) {
+fun CamerasScreen(
+    onNavigateToEvents: (camera: String?, label: String?, zone: String?) -> Unit = { _, _, _ -> },
+    vm: CamerasViewModel = hiltViewModel(),
+) {
     val state by vm.state.collectAsStateWithLifecycle()
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     val entryPoint =
         remember {
             EntryPointAccessors.fromApplication(context, CamerasEntryPoint::class.java)
@@ -67,10 +92,26 @@ fun CamerasScreen(vm: CamerasViewModel = hiltViewModel()) {
     val imageLoader = entryPoint.imageLoader()
     val frigateClient = entryPoint.frigateClient()
     var focused by remember { mutableStateOf<String?>(null) }
+    var showEditSheet by remember { mutableStateOf(false) }
+
+    // Full ordered list for edit sheet (visible + hidden, in persisted order)
+    val allCamerasOrdered =
+        remember(state.cameras, state.cameraOrder) {
+            val inOrder = state.cameraOrder.filter { it in state.cameras }
+            val notInOrder =
+                state.cameras.keys
+                    .filter { it !in state.cameraOrder }
+                    .sorted()
+            inOrder + notInOrder
+        }
 
     Box(Modifier.fillMaxSize()) {
         when {
             state.loading && state.cameras.isEmpty() -> {
+                // Skeleton tiles — show last-known camera backgrounds where available
+                val knownNames = state.knownCameraNames
+                val skeletonCount =
+                    if (knownNames.isEmpty()) 6 else knownNames.size.coerceAtMost(9)
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(state.gridColumns),
                     contentPadding = PaddingValues(12.dp),
@@ -78,10 +119,21 @@ fun CamerasScreen(vm: CamerasViewModel = hiltViewModel()) {
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
-                    items(6) { CameraSkeletonTile(Modifier.fillMaxWidth()) }
+                    items(skeletonCount) { i ->
+                        val name = knownNames.getOrNull(i)
+                        CameraSkeletonTile(
+                            modifier = Modifier.fillMaxWidth(),
+                            cameraName = name,
+                            baseUrl = state.effectiveBaseUrl ?: state.activeServer?.baseUrl(),
+                            imageLoader = if (name != null) imageLoader else null,
+                        )
+                    }
                 }
                 CircularProgressIndicator(
-                    modifier = Modifier.align(Alignment.Center).size(64.dp),
+                    modifier =
+                        Modifier
+                            .align(Alignment.Center)
+                            .size(64.dp),
                     strokeWidth = 6.dp,
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -117,26 +169,56 @@ fun CamerasScreen(vm: CamerasViewModel = hiltViewModel()) {
                         onClose = { focused = null },
                     )
                 } else {
-                    PullToRefreshBox(
-                        isRefreshing = state.loading,
-                        onRefresh = { vm.refresh(forceCacheRefresh = true) },
-                        modifier = Modifier.fillMaxSize(),
-                    ) {
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(state.gridColumns),
-                            contentPadding = PaddingValues(12.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                    Column(Modifier.fillMaxSize()) {
+                        // Header bar with hamburger
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(end = 4.dp),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            items(state.cameras.entries.toList(), key = { it.key }) { (name, _) ->
-                                CameraTile(
-                                    name = name,
-                                    baseUrl = state.effectiveBaseUrl,
-                                    imageLoader = imageLoader,
-                                    refreshTimestamp = state.refreshTimestamp,
-                                    showBoundingBoxes = state.showBoundingBoxes,
-                                    onClick = { focused = name },
-                                )
+                            IconButton(onClick = { showEditSheet = true }) {
+                                Icon(Icons.Filled.Menu, contentDescription = "Edit cameras")
+                            }
+                        }
+                        PullToRefreshBox(
+                            isRefreshing = state.loading,
+                            onRefresh = { vm.refresh(forceCacheRefresh = true) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(state.gridColumns),
+                                contentPadding = PaddingValues(12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxSize(),
+                            ) {
+                                items(state.displayedCameras, key = { it }) { name ->
+                                    val labels =
+                                        remember(name, state.cameras, state.globalTrackedObjects) {
+                                            vm.labelsForCamera(name)
+                                        }
+                                    val zones =
+                                        remember(name, state.cameras) {
+                                            vm.zonesForCamera(name)
+                                        }
+                                    SwipeableCameraTile(
+                                        name = name,
+                                        baseUrl = state.effectiveBaseUrl,
+                                        imageLoader = imageLoader,
+                                        refreshTimestamp = state.refreshTimestamp,
+                                        showBoundingBoxes = state.showBoundingBoxes,
+                                        swipeEnabled = state.showSwipeActions,
+                                        labels = labels,
+                                        zones = zones,
+                                        recentEvent = state.recentEvents[name],
+                                        recentEventFetched = state.recentEvents.containsKey(name),
+                                        onOpenCamera = { focused = name },
+                                        onFetchRecentEvent = { vm.fetchRecentEvent(name) },
+                                        onNavigateToEvents = onNavigateToEvents,
+                                    )
+                                }
                             }
                         }
                     }
@@ -144,37 +226,304 @@ fun CamerasScreen(vm: CamerasViewModel = hiltViewModel()) {
             }
         }
     }
+
+    if (showEditSheet && allCamerasOrdered.isNotEmpty()) {
+        CameraEditSheet(
+            allCameraNames = allCamerasOrdered,
+            hiddenCameras = state.hiddenCameras,
+            serverUrl = state.activeServer?.baseUrl(),
+            onReorder = { vm.saveCameraOrder(it) },
+            onToggleHide = { vm.toggleHideCamera(it) },
+            onDismiss = { showEditSheet = false },
+        )
+    }
 }
 
 @Composable
-private fun CameraTile(
+private fun SwipeableCameraTile(
     name: String,
     baseUrl: String?,
     imageLoader: ImageLoader,
     refreshTimestamp: Long,
     showBoundingBoxes: Boolean,
-    onClick: () -> Unit,
+    swipeEnabled: Boolean,
+    labels: List<String>,
+    zones: List<String>,
+    recentEvent: FrigateEvent?,
+    recentEventFetched: Boolean,
+    onOpenCamera: () -> Unit,
+    onFetchRecentEvent: () -> Unit,
+    onNavigateToEvents: (camera: String?, label: String?, zone: String?) -> Unit,
 ) {
-    Card(Modifier.aspectRatio(16f / 9f).clickable { onClick() }) {
-        Box(Modifier.fillMaxSize()) {
-            val bboxParam = if (showBoundingBoxes) "&bbox=1" else ""
-            FrigateImage(
-                relativePath = "api/$name/latest.jpg?h=360&quality=60&t=$refreshTimestamp$bboxParam",
-                contentDescription = name,
-                baseUrl = baseUrl,
-                imageLoader = imageLoader,
-                crossfade = false,
-                diskCache = false,
-                modifier = Modifier.fillMaxSize(),
-            )
-            CameraPill(
-                camera = name,
-                modifier =
-                    Modifier
-                        .align(Alignment.TopStart)
-                        .padding(4.dp),
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+    val maxOffsetPx = with(density) { 120.dp.toPx() }
+    val offsetX = remember { Animatable(0f) }
+
+    val leftPanelOpen by remember { derivedStateOf { offsetX.value < -maxOffsetPx * 0.35f } }
+
+    // Trigger recent-event fetch when the user swipes to open the left panel
+    LaunchedEffect(leftPanelOpen) {
+        if (leftPanelOpen && swipeEnabled) onFetchRecentEvent()
+    }
+
+    val cs = MaterialTheme.colorScheme
+
+    fun closePanel() {
+        scope.launch { offsetX.animateTo(0f, spring()) }
+    }
+
+    val swipeModifier =
+        if (swipeEnabled) {
+            Modifier.pointerInput(name) {
+                awaitPointerEventScope {
+                    while (true) {
+                        // Wait for a finger down
+                        val down = awaitPointerEvent().changes.firstOrNull { it.pressed } ?: continue
+                        val downPos = down.position
+                        var upPos = downPos
+                        var totalDx = 0f
+                        var totalDy = 0f
+                        var decidedHorizontal: Boolean? = null
+
+                        // Track the gesture
+                        var active = true
+                        while (active) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.find { it.id == down.id }
+                            if (change == null || !change.pressed) {
+                                upPos = change?.position ?: upPos
+                                active = false
+                            } else {
+                                val dx = change.position.x - change.previousPosition.x
+                                val dy = change.position.y - change.previousPosition.y
+                                totalDx += dx
+                                totalDy += dy
+                                upPos = change.position
+
+                                if (decidedHorizontal == null) {
+                                    if (abs(totalDx) > viewConfiguration.touchSlop ||
+                                        abs(totalDy) > viewConfiguration.touchSlop
+                                    ) {
+                                        decidedHorizontal = abs(totalDx) >= abs(totalDy)
+                                    }
+                                }
+
+                                if (decidedHorizontal == true) {
+                                    change.consume()
+                                    scope.launch {
+                                        offsetX.snapTo(
+                                            (offsetX.value + dx).coerceIn(-maxOffsetPx, maxOffsetPx),
+                                        )
+                                    }
+                                } else if (decidedHorizontal == false) {
+                                    active = false // let the scroll handle vertical drags
+                                }
+                            }
+                        }
+
+                        // Resolve gesture end
+                        // Net displacement guards against LazyGrid stealing MOVE events:
+                        // if the grid scrolled while the finger was down, upPos drifts from
+                        // downPos in local space even though the finger didn't move globally.
+                        val netDy = abs(upPos.y - downPos.y)
+                        val isScroll = netDy > viewConfiguration.touchSlop
+                        when {
+                            decidedHorizontal == true -> {
+                                scope.launch {
+                                    val target =
+                                        when {
+                                            offsetX.value > maxOffsetPx * 0.35f -> maxOffsetPx
+                                            offsetX.value < -maxOffsetPx * 0.35f -> -maxOffsetPx
+                                            else -> 0f
+                                        }
+                                    offsetX.animateTo(target, spring())
+                                }
+                            }
+
+                            decidedHorizontal == null && !isScroll -> {
+                                // True tap: finger barely moved
+                                if (abs(offsetX.value) > 1f) {
+                                    closePanel()
+                                } else {
+                                    onOpenCamera()
+                                }
+                            }
+                            // decidedHorizontal == false OR isScroll → vertical scroll, do nothing
+                        }
+                    }
+                }
+            }
+        } else {
+            Modifier.clickable { onOpenCamera() }
+        }
+
+    Box(
+        Modifier
+            .aspectRatio(16f / 9f)
+            .clip(MaterialTheme.shapes.medium)
+            .then(swipeModifier),
+    ) {
+        // ── Right-swipe panel (labels/zones) — left edge, revealed by swiping right ──
+        Column(
+            Modifier
+                .fillMaxHeight()
+                .width(120.dp)
+                .align(Alignment.CenterStart)
+                .background(cs.primaryContainer)
+                .padding(6.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically),
+        ) {
+            val labelItems = labels.take(3)
+            val zoneItems = zones.take(2)
+            labelItems.forEach { label ->
+                ActionChip(
+                    text = label,
+                    containerColor = cs.primaryContainer,
+                    onClick = {
+                        closePanel()
+                        onNavigateToEvents(name, label, null)
+                    },
+                )
+            }
+            if (labelItems.isNotEmpty() && zoneItems.isNotEmpty()) {
+                HorizontalDivider(Modifier.padding(vertical = 1.dp))
+            }
+            zoneItems.forEach { zone ->
+                ActionChip(
+                    text = zone,
+                    containerColor = cs.tertiaryContainer,
+                    onClick = {
+                        closePanel()
+                        onNavigateToEvents(name, null, zone)
+                    },
+                )
+            }
+            ActionChip(
+                text = "All events",
+                containerColor = cs.surfaceVariant,
+                onClick = {
+                    closePanel()
+                    onNavigateToEvents(name, null, null)
+                },
             )
         }
+
+        // ── Left-swipe panel (recent event) — right edge, revealed by swiping left ──
+        Box(
+            Modifier
+                .fillMaxHeight()
+                .width(120.dp)
+                .align(Alignment.CenterEnd)
+                .background(cs.secondaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            when {
+                !recentEventFetched -> {
+                    // Still fetching
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.dp,
+                        color = cs.onSecondaryContainer,
+                    )
+                }
+
+                recentEvent != null -> {
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .clickable {
+                                closePanel()
+                                onNavigateToEvents(name, null, null)
+                            }.padding(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
+                    ) {
+                        if (recentEvent.hasSnapshot) {
+                            FrigateImage(
+                                relativePath = "api/events/${recentEvent.id}/snapshot.jpg",
+                                contentDescription = null,
+                                baseUrl = baseUrl,
+                                imageLoader = imageLoader,
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(16f / 9f),
+                            )
+                        }
+                        Text(
+                            recentEvent.label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = cs.onSecondaryContainer,
+                        )
+                        if (recentEvent.topScore != null || recentEvent.score != null) {
+                            val score = (recentEvent.topScore ?: recentEvent.score)!!
+                            Text(
+                                "${(score * 100).toInt()}%",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = cs.onSecondaryContainer,
+                            )
+                        }
+                    }
+                }
+
+                else -> {
+                    Text(
+                        "No events",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = cs.onSecondaryContainer,
+                    )
+                }
+            }
+        }
+
+        // ── Main tile (slides over panels) ──
+        Card(
+            Modifier
+                .fillMaxSize()
+                .offset { IntOffset(offsetX.value.roundToInt(), 0) },
+        ) {
+            Box(Modifier.fillMaxSize()) {
+                val bboxParam = if (showBoundingBoxes) "&bbox=1" else ""
+                FrigateImage(
+                    relativePath = "api/$name/latest.jpg?h=360&quality=60&t=$refreshTimestamp$bboxParam",
+                    contentDescription = name,
+                    baseUrl = baseUrl,
+                    imageLoader = imageLoader,
+                    crossfade = false,
+                    diskCache = true,
+                    diskCacheKey = "snap_${name}_$refreshTimestamp",
+                    modifier = Modifier.fillMaxSize(),
+                )
+                CameraPill(
+                    camera = name,
+                    modifier =
+                        Modifier
+                            .align(Alignment.TopStart)
+                            .padding(4.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActionChip(
+    text: String,
+    containerColor: androidx.compose.ui.graphics.Color,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        shape = MaterialTheme.shapes.small,
+        color = containerColor,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+        )
     }
 }
 
@@ -195,7 +544,7 @@ private fun FocusedTile(
     onClose: () -> Unit,
 ) {
     val baseUrl = effectiveBaseUrl ?: server?.baseUrl()
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     val entryPoint =
         remember {
             EntryPointAccessors.fromApplication(context, CamerasEntryPoint::class.java)
@@ -248,12 +597,6 @@ private fun FocusedTile(
         }
     }
 
-    // StreamContent must stay at ONE stable tree position so the tile is never
-    // disposed/recreated when isFullScreen toggles. Branching the outer layout
-    // would move StreamContent between two source positions → tile restarts →
-    // LaunchedEffect(Unit) fires again → auto-fullscreen re-triggers → back
-    // gesture trapped forever. Keep the Column structure constant; only
-    // show/hide the header and footer around the fixed stream slot.
     Column(Modifier.fillMaxSize().padding(if (isFullScreen) 0.dp else 8.dp)) {
         if (!isFullScreen) {
             Box(Modifier.fillMaxWidth().clickable { onClose() }.padding(bottom = 8.dp)) {
@@ -284,6 +627,8 @@ private fun FocusedTile(
                     baseUrl = baseUrl,
                     imageLoader = imageLoader,
                     crossfade = false,
+                    diskCache = true,
+                    diskCacheKey = "snap_${cameraName}_$refreshTimestamp",
                     modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
                 )
             }
@@ -306,7 +651,7 @@ private fun StreamContent(
     autoLandscapeOnStream: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
+    Box(modifier.background(androidx.compose.ui.graphics.Color.Black), contentAlignment = Alignment.Center) {
         if (server != null && okHttpClient != null) {
             when (liveStreamOption) {
                 "rtsp" -> {
@@ -320,9 +665,9 @@ private fun StreamContent(
                         )
                     } else {
                         Box(
-                            Modifier.fillMaxSize().background(Color.Black),
+                            Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black),
                             contentAlignment = Alignment.Center,
-                        ) { CircularProgressIndicator(color = Color.White) }
+                        ) { CircularProgressIndicator(color = androidx.compose.ui.graphics.Color.White) }
                     }
                 }
 

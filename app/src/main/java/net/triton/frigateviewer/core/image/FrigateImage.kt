@@ -27,6 +27,9 @@ import coil3.request.crossfade
  * @param diskCache Set false for rapidly-changing URLs (camera grid tiles) so they
  *   don't generate junk entries in the 256 MB disk cache. Defaults true so event
  *   images are cached across app restarts.
+ * @param diskCacheKey When set, uses this stable key for the disk cache entry instead
+ *   of the full URL. Lets callers share a cache entry across URLs that differ only by
+ *   a timestamp query param (e.g. `?t=...`).
  */
 @Composable
 fun FrigateImage(
@@ -37,6 +40,7 @@ fun FrigateImage(
     imageLoader: ImageLoader,
     crossfade: Boolean = true,
     diskCache: Boolean = true,
+    diskCacheKey: String? = null,
 ) {
     if (baseUrl.isNullOrBlank()) {
         Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -58,6 +62,7 @@ fun FrigateImage(
                 .data(url)
                 .crossfade(crossfade)
                 .diskCachePolicy(diskPolicy)
+                .apply { if (diskCacheKey != null) diskCacheKey(diskCacheKey) }
                 .build(),
         imageLoader = imageLoader,
         contentDescription = contentDescription,

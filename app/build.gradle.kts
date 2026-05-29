@@ -1,5 +1,5 @@
-import java.util.Properties
 import java.io.FileInputStream
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -10,10 +10,11 @@ plugins {
 }
 
 // Signing config loaded from keystore.properties (gitignored).
-val keystoreProps = Properties().apply {
-    val f = rootProject.file("keystore.properties")
-    if (f.exists()) load(FileInputStream(f))
-}
+val keystoreProps =
+    Properties().apply {
+        val f = rootProject.file("keystore.properties")
+        if (f.exists()) load(FileInputStream(f))
+    }
 
 android {
     namespace = "net.triton.frigateviewer"
@@ -70,16 +71,17 @@ android {
 
     packaging {
         resources {
-            excludes += setOf(
-                "/META-INF/{AL2.0,LGPL2.1}",
-                "/META-INF/DEPENDENCIES",
-                "/META-INF/LICENSE*",
-                "/META-INF/NOTICE*",
-                "/META-INF/INDEX.LIST",
-                "/META-INF/io.netty.versions.properties",
-                "/META-INF/native-image/**",
-                "/META-INF/*.kotlin_module",
-            )
+            excludes +=
+                setOf(
+                    "/META-INF/{AL2.0,LGPL2.1}",
+                    "/META-INF/DEPENDENCIES",
+                    "/META-INF/LICENSE*",
+                    "/META-INF/NOTICE*",
+                    "/META-INF/INDEX.LIST",
+                    "/META-INF/io.netty.versions.properties",
+                    "/META-INF/native-image/**",
+                    "/META-INF/*.kotlin_module",
+                )
         }
     }
 
@@ -157,6 +159,7 @@ dependencies {
 
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly(libs.junit.jupiter.engine)
+    testRuntimeOnly(libs.junit.platform.launcher)
     testImplementation(libs.mockk)
     testImplementation(libs.turbine)
     testImplementation(libs.okhttp.mockwebserver)

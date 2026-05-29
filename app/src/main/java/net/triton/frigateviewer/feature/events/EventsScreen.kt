@@ -7,12 +7,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -34,6 +37,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,6 +67,9 @@ import java.util.Locale
 @Composable
 fun EventsScreen(
     onEventClick: (String) -> Unit = {},
+    initialCamera: String? = null,
+    initialLabel: String? = null,
+    initialZone: String? = null,
     vm: EventsViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -72,6 +79,11 @@ fun EventsScreen(
             EntryPointAccessors.fromApplication(context, EventDetailEntryPoint::class.java).imageLoader()
         }
     var showFilter by remember { mutableStateOf(false) }
+    val gridState = rememberLazyGridState()
+
+    LaunchedEffect(initialCamera, initialLabel, initialZone) {
+        vm.initFilters(initialCamera, initialLabel, initialZone)
+    }
 
     val activeFilterCount =
         state.selectedCameras.size +
@@ -98,43 +110,57 @@ fun EventsScreen(
             }
         }
 
-        Box(Modifier.weight(1f)) {
-            when {
-                state.loading && state.events.isEmpty() -> {
-                    CircularProgressIndicator(Modifier.align(Alignment.Center))
-                }
+        Row(Modifier.weight(1f).fillMaxWidth()) {
+            Box(Modifier.weight(1f).fillMaxHeight()) {
+                when {
+                    state.loading && state.events.isEmpty() -> {
+                        CircularProgressIndicator(Modifier.align(Alignment.Center))
+                    }
 
-                state.error != null && state.events.isEmpty() -> {
-                    Text(
-                        "Couldn't load events: ${state.error}",
-                        modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                    )
-                }
+                    state.error != null && state.events.isEmpty() -> {
+                        Text(
+                            "Couldn't load events: ${state.error}",
+                            modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                        )
+                    }
 
-                state.events.isEmpty() -> {
-                    Text("No events", Modifier.align(Alignment.Center))
-                }
+                    state.events.isEmpty() -> {
+                        Text("No events", Modifier.align(Alignment.Center))
+                    }
 
-                else -> {
-                    PullToRefreshBox(
-                        isRefreshing = state.loading,
-                        onRefresh = { vm.refresh() },
-                        modifier = Modifier.fillMaxSize(),
-                    ) {
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(state.eventGridColumns),
-                            contentPadding = PaddingValues(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    else -> {
+                        PullToRefreshBox(
+                            isRefreshing = state.loading,
+                            onRefresh = { vm.refresh() },
                             modifier = Modifier.fillMaxSize(),
                         ) {
-                            items(state.events, key = { it.id }) { ev ->
-                                EventCard(ev, state.baseUrl, imageLoader, state.dateFormat) { onEventClick(ev.id) }
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(state.eventGridColumns),
+                                state = gridState,
+                                contentPadding = PaddingValues(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxSize(),
+                            ) {
+                                items(state.events, key = { it.id }) { ev ->
+                                    EventCard(ev, state.baseUrl, imageLoader, state.dateFormat) { onEventClick(ev.id) }
+                                }
                             }
                         }
                     }
                 }
             }
+
+            TimelinePanel(
+                events = state.events,
+                scrubberTimeMs = state.scrubberTimeMs,
+                timeRangeHours = state.timeRangeHours,
+                gridState = gridState,
+                onScrub = vm::setScrubberTime,
+                onZoomIn = { vm.zoomTimeline(0.5f) },
+                onZoomOut = { vm.zoomTimeline(2f) },
+                modifier = Modifier.width(48.dp).fillMaxHeight(),
+            )
         }
     }
 

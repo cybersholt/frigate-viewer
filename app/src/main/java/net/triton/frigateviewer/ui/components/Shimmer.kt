@@ -16,6 +16,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import coil3.ImageLoader
+import net.triton.frigateviewer.core.image.FrigateImage
 
 @Composable
 fun ShimmerBox(modifier: Modifier = Modifier) {
@@ -47,9 +49,41 @@ fun ShimmerBox(modifier: Modifier = Modifier) {
     )
 }
 
+/**
+ * Skeleton placeholder for a camera tile during initial load.
+ *
+ * When [cameraName] and [baseUrl] are provided (camera names known from a prior
+ * session), the tile shows the cached/live snapshot at 50% opacity so the user
+ * has visual context while the grid loads. The shimmer gradient is layered on top.
+ *
+ * Falls back to a pure shimmer when no camera context is available (very first run).
+ */
 @Composable
-fun CameraSkeletonTile(modifier: Modifier = Modifier) {
+fun CameraSkeletonTile(
+    modifier: Modifier = Modifier,
+    cameraName: String? = null,
+    baseUrl: String? = null,
+    imageLoader: ImageLoader? = null,
+) {
     Card(modifier = modifier.aspectRatio(16f / 9f)) {
-        ShimmerBox(Modifier.fillMaxSize())
+        Box(Modifier.fillMaxSize()) {
+            // If we know the camera name, show a dimmed snapshot underneath the shimmer
+            // so the user sees something meaningful during load.
+            if (cameraName != null && baseUrl != null && imageLoader != null) {
+                FrigateImage(
+                    relativePath = "api/$cameraName/latest.jpg?h=360&quality=60",
+                    contentDescription = null,
+                    baseUrl = baseUrl,
+                    imageLoader = imageLoader,
+                    crossfade = false,
+                    diskCache = true,
+                    diskCacheKey = "snap_$cameraName",
+                    modifier = Modifier.fillMaxSize(),
+                )
+                // Semi-transparent scrim so the snapshot reads as "loading" state
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)))
+            }
+            ShimmerBox(Modifier.fillMaxSize())
+        }
     }
 }

@@ -71,13 +71,22 @@ Do this before the context gets too long to remember what changed.
 Pixel 8 connected via wireless ADB.
 
 # Connect if session dropped
-adb connect 192.168.88.XXX:5555
+adb connect 192.168.88.32:5555
 
 # Verify
 adb devices
 
 # Deploy debug build
 ./gradlew installDebug
+
+## Build Environment
+
+JDK: Android Studio bundled JBR at `C:/Program Files/Android/Android Studio/jbr`
+- Pinned in `gradle.properties` via `org.gradle.java.home`
+- Required because Cursor IDE's embedded JRE (`.antigravity-ide`) lacks `jlink.exe`, which AGP 9.2.1 needs for the `androidJdkImage` transform
+- Do NOT remove `org.gradle.java.home` from `gradle.properties` or builds will break in Cursor
+
+ANDROID_HOME: `C:/Users/Sean/AppData/Local/Android/Sdk`
 
 # Screenshot a screen (run from project root; screenshots/ dir exists in repo)
 adb shell input keyevent KEYCODE_WAKEUP && adb shell wm dismiss-keyguard
