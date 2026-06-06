@@ -5,6 +5,8 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -66,6 +68,7 @@ import net.triton.frigateviewer.ui.components.CameraPill
 import net.triton.frigateviewer.ui.components.CameraSkeletonTile
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.sign
 
 @EntryPoint
 @InstallIn(SingletonComponent::class)
@@ -273,87 +276,48 @@ private fun SwipeableCameraTile(
         scope.launch { offsetX.animateTo(0f, spring()) }
     }
 
+    // detectHorizontalDragGestures plays nicely with LazyVerticalGrid vertical scroll:
+    // it only claims the gesture once horizontal slop is crossed, leaving vertical
+    // drags entirely to the parent grid. detectTapGestures handles open/close taps.
     val swipeModifier =
         if (swipeEnabled) {
-            Modifier.pointerInput(name) {
-                awaitPointerEventScope {
-                    while (true) {
-                        // Wait for a finger down
-                        val down = awaitPointerEvent().changes.firstOrNull { it.pressed } ?: continue
-                        val downPos = down.position
-                        var upPos = downPos
-                        var totalDx = 0f
-                        var totalDy = 0f
-                        var decidedHorizontal: Boolean? = null
-
-                        // Track the gesture
-                        var active = true
-                        while (active) {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.find { it.id == down.id }
-                            if (change == null || !change.pressed) {
-                                upPos = change?.position ?: upPos
-                                active = false
-                            } else {
-                                val dx = change.position.x - change.previousPosition.x
-                                val dy = change.position.y - change.previousPosition.y
-                                totalDx += dx
-                                totalDy += dy
-                                upPos = change.position
-
-                                if (decidedHorizontal == null) {
-                                    if (abs(totalDx) > viewConfiguration.touchSlop ||
-                                        abs(totalDy) > viewConfiguration.touchSlop
-                                    ) {
-                                        decidedHorizontal = abs(totalDx) >= abs(totalDy)
-                                    }
-                                }
-
-                                if (decidedHorizontal == true) {
-                                    change.consume()
-                                    scope.launch {
-                                        offsetX.snapTo(
-                                            (offsetX.value + dx).coerceIn(-maxOffsetPx, maxOffsetPx),
-                                        )
-                                    }
-                                } else if (decidedHorizontal == false) {
-                                    active = false // let the scroll handle vertical drags
-                                }
-                            }
-                        }
-
-                        // Resolve gesture end
-                        // Net displacement guards against LazyGrid stealing MOVE events:
-                        // if the grid scrolled while the finger was down, upPos drifts from
-                        // downPos in local space even though the finger didn't move globally.
-                        val netDy = abs(upPos.y - downPos.y)
-                        val isScroll = netDy > viewConfiguration.touchSlop
-                        when {
-                            decidedHorizontal == true -> {
-                                scope.launch {
-                                    val target =
-                                        when {
-                                            offsetX.value > maxOffsetPx * 0.35f -> maxOffsetPx
-                                            offsetX.value < -maxOffsetPx * 0.35f -> -maxOffsetPx
-                                            else -> 0f
+            Modifier
+                .pointerInput(name) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            scope.launch {
+                                val target =
+                                    when {
+                                        offsetX.value * sign(offsetX.value) > maxOffsetPx * 0.35f -> {
+                                            maxOffsetPx * sign(offsetX.value)
                                         }
-                                    offsetX.animateTo(target, spring())
-                                }
-                            }
 
-                            decidedHorizontal == null && !isScroll -> {
-                                // True tap: finger barely moved
-                                if (abs(offsetX.value) > 1f) {
-                                    closePanel()
-                                } else {
-                                    onOpenCamera()
-                                }
+                                        else -> {
+                                            0f
+                                        }
+                                    }
+                                offsetX.animateTo(target, spring())
                             }
-                            // decidedHorizontal == false OR isScroll → vertical scroll, do nothing
+                        },
+                        onDragCancel = { scope.launch { offsetX.animateTo(0f, spring()) } },
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            scope.launch {
+                                offsetX.snapTo(
+                                    (offsetX.value + dragAmount).coerceIn(-maxOffsetPx, maxOffsetPx),
+                                )
+                            }
+                        },
+                    )
+                }.pointerInput(name) {
+                    detectTapGestures {
+                        if (abs(offsetX.value) > 1f) {
+                            closePanel()
+                        } else {
+                            onOpenCamera()
                         }
                     }
                 }
-            }
         } else {
             Modifier.clickable { onOpenCamera() }
         }
@@ -490,8 +454,8 @@ private fun SwipeableCameraTile(
                     baseUrl = baseUrl,
                     imageLoader = imageLoader,
                     crossfade = false,
-                    diskCache = true,
-                    diskCacheKey = "snap_${name}_$refreshTimestamp",
+                    diskWriteOnly = true,
+                    diskCacheKey = "snap_$name",
                     modifier = Modifier.fillMaxSize(),
                 )
                 CameraPill(

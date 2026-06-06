@@ -40,7 +40,7 @@ data class EventsUiState(
     val dateFormat: String = "descriptive",
     /** Current position of the timeline scrubber (ms since epoch). Defaults to now. */
     val scrubberTimeMs: Long = System.currentTimeMillis(),
-    /** How many hours the timeline displays (zoom level). Range 1–168h. */
+    /** How many hours the timeline displays (zoom level). Range 1–720h (30 days). */
     val timeRangeHours: Float = 24f,
 )
 
@@ -59,6 +59,7 @@ class EventsViewModel
 
         private var allEvents: List<FrigateEvent> = emptyList()
         private var refreshJob: Job? = null
+        private var fetchedWindowDays = 7
 
         init {
             viewModelScope.launch {
@@ -176,8 +177,13 @@ class EventsViewModel
 
         /** Zoom the timeline in (factor < 1) or out (factor > 1). */
         fun zoomTimeline(factor: Float) {
-            val newRange = (_state.value.timeRangeHours * factor).coerceIn(1f, 168f)
+            val newRange = (_state.value.timeRangeHours * factor).coerceIn(1f, 720f) // up to 30 days
             _state.value = _state.value.copy(timeRangeHours = newRange)
+            val neededDays = (newRange / 24).toInt().coerceAtLeast(7)
+            if (neededDays > fetchedWindowDays) {
+                fetchedWindowDays = neededDays.coerceAtMost(30)
+                refresh(isSilent = true)
+            }
         }
 
         private fun applyFilters() {
@@ -204,8 +210,8 @@ class EventsViewModel
                 }
                 if (!isSilent) _state.value = _state.value.copy(loading = true, error = null, baseUrl = baseUrl)
 
-                val sevenDaysAgo = (System.currentTimeMillis() / 1000.0) - 7 * 24 * 3600
-                when (val r = repo.events(limit = 2000, after = sevenDaysAgo)) {
+                val windowSecs = (System.currentTimeMillis() / 1000.0) - fetchedWindowDays * 24 * 3600
+                when (val r = repo.events(limit = 3000, after = windowSecs)) {
                     is ApiResult.Success -> {
                         allEvents = r.data
                         updateAvailableFilters(r.data)

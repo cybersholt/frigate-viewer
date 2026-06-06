@@ -32,14 +32,14 @@ net.triton.frigateviewer
 │   │   ├── TokenRefreshAuth  OkHttp Authenticator for 401 → re-login retry
 │   │   └── TrustConfig       Per-host pinned cert from user-imported PEM
 │   └── data/
-│       ├── Server            Persistent server config
-│       ├── ServerRepository  DataStore-backed CRUD + active selection
-│       ├── CredentialStore   Tink AEAD secrets, Android Keystore-wrapped
-│       └── FrigateRepository Single entry point for ViewModels
-├── feature/
-│   ├── cameras/              CamerasScreen + ViewModel + LivePlayer
-│   ├── events/               EventsScreen + ViewModel
-│   └── settings/             SettingsScreen + ViewModel + ServerFormSheet
+│       ├── Server            Persistent server configxcdf
+│       ├── ServerRepository  DataStore-backed CRUD + active selectionxcdf
+│       ├── CredentialStore   Tink AEAD secrets, Android Keystore-wrappedxcdf
+│       └── FrigateRepository Single entry point for ViewModelsxcdf
+├── feature/xcdf
+│   ├── cameras/              CamerasScreen + ViewModel + LivePlayerxcdf
+│   ├── events/               EventsScreen + ViewModelxcdf
+│   └── settings/             SettingsScreen + ViewModel + ServerFormSheetxcdf
 └── notification/             MqttForegroundService
 ```
 

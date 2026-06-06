@@ -24,12 +24,13 @@ import coil3.request.crossfade
  * Frigate-hosted image. Holds the previous frame while loading the next one so
  * auto-refresh never causes a blank flash between frames.
  *
- * @param diskCache Set false for rapidly-changing URLs (camera grid tiles) so they
- *   don't generate junk entries in the 256 MB disk cache. Defaults true so event
- *   images are cached across app restarts.
- * @param diskCacheKey When set, uses this stable key for the disk cache entry instead
- *   of the full URL. Lets callers share a cache entry across URLs that differ only by
- *   a timestamp query param (e.g. `?t=...`).
+ * @param diskCache Set false for rapidly-changing URLs so they don't generate junk
+ *   entries in the 256 MB disk cache. Defaults true so event images are cached.
+ * @param diskWriteOnly When true, always fetches from network but writes result to
+ *   disk under [diskCacheKey]. Use for live snapshot tiles: always fresh, but persists
+ *   the latest frame so skeleton tiles can read it back on next cold start.
+ * @param diskCacheKey Stable key for the disk cache entry. Overrides the URL-based
+ *   key. Lets callers share a cache entry across URLs that differ only by timestamp.
  */
 @Composable
 fun FrigateImage(
@@ -40,6 +41,7 @@ fun FrigateImage(
     imageLoader: ImageLoader,
     crossfade: Boolean = true,
     diskCache: Boolean = true,
+    diskWriteOnly: Boolean = false,
     diskCacheKey: String? = null,
 ) {
     if (baseUrl.isNullOrBlank()) {
@@ -54,7 +56,12 @@ fun FrigateImage(
     // frame is shown as placeholder while the next loads (no blink on refresh).
     var lastPainter by remember { mutableStateOf<Painter?>(null) }
 
-    val diskPolicy = if (diskCache) CachePolicy.ENABLED else CachePolicy.DISABLED
+    val diskPolicy =
+        when {
+            diskWriteOnly -> CachePolicy.WRITE_ONLY
+            diskCache -> CachePolicy.ENABLED
+            else -> CachePolicy.DISABLED
+        }
     AsyncImage(
         model =
             ImageRequest

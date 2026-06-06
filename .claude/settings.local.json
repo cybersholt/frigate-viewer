@@ -17,7 +17,8 @@
       "Bash(rm -rf .gradle/configuration-cache)",
       "Bash(JAVA_HOME='C:/Program Files/Android/Android Studio/jbr' PATH='C:/Program Files/Android/Android Studio/jbr/bin:__TRACKED_VAR__' ./gradlew :app:assembleDebug '-Dorg.gradle.java.home=C:/Program Files/Android/Android Studio/jbr')",
       "Bash(./gradlew --stop)",
-      "Bash(./gradlew installDebug)"
+      "Bash(./gradlew installDebug)",
+      "Bash(python3 -c ' *)"
     ]
   },
   "hooks": {

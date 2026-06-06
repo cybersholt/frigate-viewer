@@ -71,6 +71,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -87,6 +88,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -193,13 +195,15 @@ class EventDetailViewModel
             }
         }
 
-        fun loadCameraEvents() {
+        private var fetchedWindowDays = 7
+
+        fun loadCameraEvents(force: Boolean = false) {
             val camera = _state.value.event?.camera ?: return
-            if (_state.value.loadingCameraEvents || _state.value.cameraEvents.isNotEmpty()) return
+            if (!force && (_state.value.loadingCameraEvents || _state.value.cameraEvents.isNotEmpty())) return
             _state.value = _state.value.copy(loadingCameraEvents = true)
             viewModelScope.launch {
-                val sevenDaysAgo = (System.currentTimeMillis() / 1000.0) - 7 * 24 * 3600
-                when (val r = repo.events(camera = camera, limit = 2000, after = sevenDaysAgo)) {
+                val windowSecs = (System.currentTimeMillis() / 1000.0) - fetchedWindowDays * 24 * 3600
+                when (val r = repo.events(camera = camera, limit = 3000, after = windowSecs)) {
                     is ApiResult.Success -> {
                         _state.value =
                             _state.value.copy(
@@ -225,8 +229,13 @@ class EventDetailViewModel
         }
 
         fun zoomTimeline(factor: Float) {
-            val newRange = (_state.value.timeRangeHours * factor).coerceIn(1f, 168f)
+            val newRange = (_state.value.timeRangeHours * factor).coerceIn(1f, 720f)
             _state.value = _state.value.copy(timeRangeHours = newRange)
+            val neededDays = (newRange / 24).toInt().coerceAtLeast(7)
+            if (neededDays > fetchedWindowDays) {
+                fetchedWindowDays = neededDays.coerceAtMost(30)
+                loadCameraEvents(force = true)
+            }
         }
     }
 
@@ -260,6 +269,9 @@ fun EventDetailScreen(
     var showViewSheet by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
+    // "vod" = HLS hour-long VOD (scrubable), "clip" = direct MP4 clip (fast start)
+    var playbackMode by remember { mutableStateOf("vod") }
+    var useSubstream by remember { mutableStateOf(false) }
 
     // ── Date picker ──
     if (showDatePicker) {
@@ -347,17 +359,22 @@ fun EventDetailScreen(
             val clipUrl = state.baseUrl?.trimEnd('/')?.let { "$it/api/events/${ev.id}/clip.mp4" }
             // VOD URL uses UTC — Frigate (Docker) stores recordings by UTC hour, not device local time
             val scrubLdt = Instant.fromEpochMilliseconds(state.scrubberTimeMs).toLocalDateTime(TimeZone.UTC)
+            val vodCamera = if (useSubstream) "${ev.camera}_sub" else ev.camera
             val vodUrl =
                 state.baseUrl?.trimEnd('/')?.let { base ->
                     val y = scrubLdt.year
                     val mo = scrubLdt.monthNumber.toString().padStart(2, '0')
                     val d = scrubLdt.dayOfMonth.toString().padStart(2, '0')
                     val h = scrubLdt.hour.toString().padStart(2, '0')
-                    "$base/vod/$y-$mo/$d/$h/${ev.camera}/index.m3u8"
+                    "$base/vod/$y-$mo/$d/$h/$vodCamera/index.m3u8"
                 }
             // Seek offset = ms elapsed since the start of the scrubber's current hour
-            val vodHourStartMs = state.scrubberTimeMs - (scrubLdt.minute * 60L + scrubLdt.second) * 1000L - scrubLdt.nanosecond / 1_000_000L
+            val vodHourStartMs =
+                state.scrubberTimeMs - (scrubLdt.minute * 60L + scrubLdt.second) * 1000L - scrubLdt.nanosecond / 1_000_000L
             val vodSeekMs = (state.scrubberTimeMs - vodHourStartMs).coerceAtLeast(0L)
+            // Active URL and seek based on current playback mode
+            val activePlayerUrl = if (playbackMode == "clip") clipUrl else vodUrl
+            val activeSeekMs = if (playbackMode == "clip") 0L else vodSeekMs
 
             Column(
                 Modifier
@@ -445,6 +462,56 @@ fun EventDetailScreen(
                     HorizontalDivider()
                 }
 
+                // ── Stream type controls ──
+                if (!fullScreen.value) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        listOf("vod" to "VOD", "clip" to "Clip").forEach { (mode, label) ->
+                            if (playbackMode == mode) {
+                                Button(
+                                    onClick = {},
+                                    modifier = Modifier.height(28.dp),
+                                    contentPadding =
+                                        androidx.compose.foundation.layout
+                                            .PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                                ) { Text(label, style = MaterialTheme.typography.labelMedium) }
+                            } else {
+                                OutlinedButton(
+                                    onClick = { playbackMode = mode },
+                                    modifier = Modifier.height(28.dp),
+                                    contentPadding =
+                                        androidx.compose.foundation.layout
+                                            .PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                                ) { Text(label, style = MaterialTheme.typography.labelMedium) }
+                            }
+                        }
+                        if (playbackMode == "vod") {
+                            if (useSubstream) {
+                                Button(
+                                    onClick = { useSubstream = false },
+                                    modifier = Modifier.height(28.dp),
+                                    contentPadding =
+                                        androidx.compose.foundation.layout
+                                            .PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                                ) { Text("Sub", style = MaterialTheme.typography.labelMedium) }
+                            } else {
+                                OutlinedButton(
+                                    onClick = { useSubstream = true },
+                                    modifier = Modifier.height(28.dp),
+                                    contentPadding =
+                                        androidx.compose.foundation.layout
+                                            .PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                                ) { Text("Sub", style = MaterialTheme.typography.labelMedium) }
+                            }
+                        }
+                    }
+                }
+
                 // ── Player / Snapshot ──
                 Box(
                     Modifier
@@ -453,11 +520,11 @@ fun EventDetailScreen(
                             if (fullScreen.value) Modifier.weight(1f) else Modifier.aspectRatio(16f / 9f),
                         ),
                 ) {
-                    if (vodUrl != null && okHttpClient != null) {
+                    if (activePlayerUrl != null && okHttpClient != null) {
                         ClipPlayer(
-                            url = vodUrl,
+                            url = activePlayerUrl,
                             okHttpClient = okHttpClient!!,
-                            seekPositionMs = vodSeekMs,
+                            seekPositionMs = activeSeekMs,
                             modifier = Modifier.fillMaxSize(),
                         )
                     } else if (ev.hasSnapshot) {
@@ -829,6 +896,8 @@ private fun EventDetailTimeline(
 
 // ── Clip player ──
 
+private enum class ClipPlayerState { BUFFERING, READY, ERROR }
+
 @androidx.annotation.OptIn(UnstableApi::class)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -845,6 +914,14 @@ private fun ClipPlayer(
     var isMuted by remember { mutableStateOf(true) }
     var playbackSpeed by remember { mutableFloatStateOf(1f) }
     var showSpeedMenu by remember { mutableStateOf(false) }
+    var clipState by remember(url) { mutableStateOf(ClipPlayerState.BUFFERING) }
+    var errorMsg by remember(url) { mutableStateOf<String?>(null) }
+    // Pending seek applied by the listener once player reaches STATE_READY
+    val seekRef =
+        remember {
+            java.util.concurrent.atomic
+                .AtomicLong(seekPositionMs)
+        }
 
     val player =
         remember(url) {
@@ -861,7 +938,6 @@ private fun ClipPlayer(
                 }
         }
 
-    // Auto-rotate to landscape when entering fullscreen, portrait on exit
     LaunchedEffect(fullScreen.value) {
         val activity = context as? Activity
         activity?.requestedOrientation =
@@ -886,6 +962,27 @@ private fun ClipPlayer(
                 override fun onPlaybackParametersChanged(params: PlaybackParameters) {
                     playbackSpeed = params.speed
                 }
+
+                override fun onPlaybackStateChanged(state: Int) {
+                    when (state) {
+                        Player.STATE_BUFFERING -> {
+                            clipState = ClipPlayerState.BUFFERING
+                        }
+
+                        Player.STATE_READY -> {
+                            clipState = ClipPlayerState.READY
+                            val pending = seekRef.get()
+                            if (pending > 0L) player.seekTo(pending)
+                        }
+
+                        else -> {}
+                    }
+                }
+
+                override fun onPlayerError(error: PlaybackException) {
+                    clipState = ClipPlayerState.ERROR
+                    errorMsg = error.localizedMessage ?: "Playback error"
+                }
             }
         player.addListener(listener)
         onDispose {
@@ -896,20 +993,16 @@ private fun ClipPlayer(
         }
     }
 
-    // Seek immediately when a new stream URL loads (new player instance)
-    LaunchedEffect(player) {
-        player.seekTo(seekPositionMs)
-    }
-    // Debounce scrubber drags so rapid finger movement doesn't hammer the HLS stream
+    // Update seekRef and debounce scrubber drags; if already READY, seek directly
     LaunchedEffect(seekPositionMs) {
+        seekRef.set(seekPositionMs)
         delay(300)
-        player.seekTo(seekPositionMs)
+        if (player.playbackState == Player.STATE_READY) {
+            player.seekTo(seekPositionMs)
+        }
     }
 
-    // Back exits fullscreen before leaving the screen
-    BackHandler(enabled = fullScreen.value) {
-        fullScreen.value = false
-    }
+    BackHandler(enabled = fullScreen.value) { fullScreen.value = false }
 
     Box(modifier.background(Color.Black)) {
         androidx.compose.ui.viewinterop.AndroidView(
@@ -922,6 +1015,46 @@ private fun ClipPlayer(
             modifier = Modifier.fillMaxSize(),
         )
 
+        // ── Buffering indicator ──
+        if (clipState == ClipPlayerState.BUFFERING) {
+            CircularProgressIndicator(
+                modifier = Modifier.align(Alignment.Center),
+                color = Color.White,
+                strokeWidth = 3.dp,
+            )
+        }
+
+        // ── Error overlay ──
+        if (clipState == ClipPlayerState.ERROR) {
+            Column(
+                modifier =
+                    Modifier
+                        .align(Alignment.Center)
+                        .background(Color.Black.copy(alpha = 0.75f), RoundedCornerShape(8.dp))
+                        .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("Playback failed", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                if (errorMsg != null) {
+                    Text(
+                        errorMsg!!,
+                        color = Color.White.copy(alpha = 0.7f),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+                OutlinedButton(
+                    onClick = {
+                        clipState = ClipPlayerState.BUFFERING
+                        errorMsg = null
+                        player.prepare()
+                        player.play()
+                    },
+                ) { Text("Retry", color = Color.White) }
+            }
+        }
+
+        // ── Playback controls ──
         Column(
             Modifier
                 .fillMaxWidth()

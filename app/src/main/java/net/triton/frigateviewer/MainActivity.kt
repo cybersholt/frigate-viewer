@@ -226,9 +226,7 @@ private fun AppRoot() {
                             }
                         },
                         onNavigateToEvent = { newId ->
-                            nav.navigate("event/$newId") {
-                                popUpTo("event/{id}") { inclusive = true }
-                            }
+                            nav.navigate("event/$newId")
                         },
                         onBack = { nav.popBackStack() },
                     )
