@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -66,6 +67,7 @@ import net.triton.frigateviewer.core.image.FrigateImage
 import net.triton.frigateviewer.core.model.FrigateEvent
 import net.triton.frigateviewer.ui.components.CameraPill
 import net.triton.frigateviewer.ui.components.CameraSkeletonTile
+import net.triton.frigateviewer.ui.theme.LocalCardBorderWidth
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sign
@@ -441,10 +443,18 @@ private fun SwipeableCameraTile(
         }
 
         // ── Main tile (slides over panels) ──
+        val borderWidth = LocalCardBorderWidth.current
         Card(
             Modifier
                 .fillMaxSize()
-                .offset { IntOffset(offsetX.value.roundToInt(), 0) },
+                .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+                .then(
+                    if (borderWidth.value > 0) {
+                        Modifier.border(borderWidth, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.medium)
+                    } else {
+                        Modifier
+                    },
+                ),
         ) {
             Box(Modifier.fillMaxSize()) {
                 val bboxParam = if (showBoundingBoxes) "&bbox=1" else ""

@@ -38,6 +38,10 @@ class UserSettingsRepository
         private val hiddenCamerasKey = stringPreferencesKey(KEY_HIDDEN_CAMERAS)
         private val showCameraSwipeActionsKey = booleanPreferencesKey(KEY_SHOW_CAMERA_SWIPE_ACTIONS)
         private val lastKnownCameraNameListKey = stringPreferencesKey(KEY_LAST_KNOWN_CAMERA_NAMES)
+        private val contrastLevelKey = intPreferencesKey(KEY_CONTRAST_LEVEL)
+        private val cardCornerRadiusKey = intPreferencesKey(KEY_CARD_CORNER_RADIUS)
+        private val cardBorderWidthKey = intPreferencesKey(KEY_CARD_BORDER_WIDTH)
+        private val customAccentColorsKey = stringPreferencesKey(KEY_CUSTOM_ACCENT_COLORS)
 
         val preferSubStream: Flow<Boolean> = store.data.map { it[preferSubStreamKey] ?: false }
         val themeMode: Flow<String> = store.data.map { it[themeModeKey] ?: "SYSTEM" }
@@ -75,6 +79,17 @@ class UserSettingsRepository
         val lastKnownCameraNames: Flow<List<String>> =
             store.data.map { prefs ->
                 prefs[lastKnownCameraNameListKey]?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
+            }
+
+        val contrastLevel: Flow<Int> = store.data.map { it[contrastLevelKey] ?: 0 }
+        val cardCornerRadius: Flow<Int> = store.data.map { it[cardCornerRadiusKey] ?: 12 }
+        val cardBorderWidth: Flow<Int> = store.data.map { it[cardBorderWidthKey] ?: 0 }
+        val customAccentColors: Flow<List<Long>> =
+            store.data.map { prefs ->
+                prefs[customAccentColorsKey]
+                    ?.split(",")
+                    ?.filter { it.isNotBlank() }
+                    ?.mapNotNull { it.toLongOrNull() } ?: emptyList()
             }
 
         suspend fun setPreferSubStream(prefer: Boolean) = store.edit { it[preferSubStreamKey] = prefer }
@@ -117,6 +132,14 @@ class UserSettingsRepository
 
         suspend fun setLastKnownCameraNames(names: List<String>) = store.edit { it[lastKnownCameraNameListKey] = names.joinToString(",") }
 
+        suspend fun setContrastLevel(level: Int) = store.edit { it[contrastLevelKey] = level }
+
+        suspend fun setCardCornerRadius(radius: Int) = store.edit { it[cardCornerRadiusKey] = radius }
+
+        suspend fun setCardBorderWidth(width: Int) = store.edit { it[cardBorderWidthKey] = width }
+
+        suspend fun setCustomAccentColors(colors: List<Long>) = store.edit { it[customAccentColorsKey] = colors.joinToString(",") }
+
         companion object {
             private const val KEY_PREFER_SUB_STREAM = "prefer_sub_stream_v1"
             private const val KEY_THEME_MODE = "theme_mode_v1"
@@ -138,5 +161,9 @@ class UserSettingsRepository
             private const val KEY_HIDDEN_CAMERAS = "hidden_cameras_v1"
             private const val KEY_SHOW_CAMERA_SWIPE_ACTIONS = "show_camera_swipe_actions_v1"
             private const val KEY_LAST_KNOWN_CAMERA_NAMES = "last_known_camera_names_v1"
+            private const val KEY_CONTRAST_LEVEL = "contrast_level_v1"
+            private const val KEY_CARD_CORNER_RADIUS = "card_corner_radius_v1"
+            private const val KEY_CARD_BORDER_WIDTH = "card_border_width_v1"
+            private const val KEY_CUSTOM_ACCENT_COLORS = "custom_accent_colors_v1"
         }
     }

@@ -18,7 +18,12 @@
       "Bash(JAVA_HOME='C:/Program Files/Android/Android Studio/jbr' PATH='C:/Program Files/Android/Android Studio/jbr/bin:__TRACKED_VAR__' ./gradlew :app:assembleDebug '-Dorg.gradle.java.home=C:/Program Files/Android/Android Studio/jbr')",
       "Bash(./gradlew --stop)",
       "Bash(./gradlew installDebug)",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(javap -classpath \"C:/Users/Sean/AppData/Local/Android/Sdk/platforms/android-36/android.jar\" android.media.AudioTrack)",
+      "Bash(findstr /i \"offload static\")",
+      "Bash(javap -classpath \"C:/Users/Sean/AppData/Local/Android/Sdk/platforms/android-36/android.jar\" android.media.AudioManager)",
+      "Bash(findstr /i \"offload\")",
+      "Bash(./gradlew dependencies *)"
     ]
   },
   "hooks": {

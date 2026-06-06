@@ -1,7 +1,12 @@
 package net.triton.frigateviewer.feature.settings
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
+import android.media.MediaCodecList
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -11,9 +16,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -26,6 +33,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material.icons.filled.Speaker
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
@@ -34,10 +44,12 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -56,6 +68,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.media3.common.MediaLibraryInfo
 import com.materialkolor.PaletteStyle
 import net.triton.frigateviewer.core.data.Server
 import net.triton.frigateviewer.core.network.AuthMode
@@ -67,6 +80,9 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     val currentSsid by vm.currentSsid.collectAsStateWithLifecycle()
     var editing by remember { mutableStateOf<ServerForm?>(null) }
+    var showPaletteSheet by remember { mutableStateOf(false) }
+    var showShapeSheet by remember { mutableStateOf(false) }
+    var showCustomColorPicker by remember { mutableStateOf(false) }
     val scroll = rememberScrollState()
 
     Scaffold { padding ->
@@ -128,30 +144,13 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
                 }
             }
 
-            // Accent Color
-            SettingRow(title = "Accent color") {
-                val colors = listOf(0xFF6750A4, 0xFF006494, 0xFF006B5B, 0xFF7D5260, 0xFFB52700, 0xFF3D6635)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    colors.forEach { color ->
-                        Box(
-                            Modifier
-                                .size(32.dp)
-                                .clip(CircleShape)
-                                .background(Color(color))
-                                .clickable { vm.setAccentColor(color) }
-                                .let {
-                                    if (state.accentColor ==
-                                        color
-                                    ) {
-                                        it.padding(2.dp).background(MaterialTheme.colorScheme.primary, CircleShape)
-                                    } else {
-                                        it
-                                    }
-                                },
-                        )
-                    }
-                }
-            }
+            AccentColorRow(
+                currentColor = state.accentColor,
+                customColors = state.customAccentColors,
+                onSelectColor = { vm.setAccentColor(it) },
+                onAddCustom = { showCustomColorPicker = true },
+                onRemoveCustom = { vm.removeCustomAccentColor(it) },
+            )
 
             // Wallpaper toggle
             SwitchSetting(
@@ -162,19 +161,7 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
 
             // Palette Style
             SettingRow(title = "Palette style") {
-                var expanded by remember { mutableStateOf(false) }
-                TextButton(onClick = { expanded = true }) { Text(state.paletteStyle) }
-                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                    PaletteStyle.entries.forEach { style ->
-                        DropdownMenuItem(
-                            text = { Text(style.name) },
-                            onClick = {
-                                vm.setPaletteStyle(style.name)
-                                expanded = false
-                            },
-                        )
-                    }
-                }
+                TextButton(onClick = { showPaletteSheet = true }) { Text(state.paletteStyle) }
             }
 
             // AMOLED Black
@@ -183,6 +170,58 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
                 checked = state.amoledBlack,
                 onCheckedChange = vm::setAmoledBlack,
             )
+
+            // Contrast
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Contrast", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        if (state.contrastLevel >= 0) "+${state.contrastLevel}" else "${state.contrastLevel}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Slider(
+                    value = state.contrastLevel.toFloat(),
+                    onValueChange = { vm.setContrastLevel(it.toInt()) },
+                    valueRange = -100f..100f,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
+            // Card shape
+            SettingRow(title = "Card shape") {
+                TextButton(onClick = { showShapeSheet = true }) {
+                    Text(cardShapeOptions.find { it.radiusDp == state.cardCornerRadius }?.label ?: "Medium")
+                }
+            }
+
+            // Border width
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Border width", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        if (state.cardBorderWidth == 0) "Off" else "${state.cardBorderWidth}dp",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Slider(
+                    value = state.cardBorderWidth.toFloat(),
+                    onValueChange = { vm.setCardBorderWidth(it.toInt()) },
+                    valueRange = 0f..8f,
+                    steps = 7,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
 
             HorizontalDivider()
             Text("Cameras View", style = MaterialTheme.typography.titleLarge)
@@ -322,6 +361,10 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
                     }
                 }
             }
+
+            HorizontalDivider()
+            Text("Device Capabilities", style = MaterialTheme.typography.titleLarge)
+            DeviceCapabilitiesSection()
         }
     }
 
@@ -334,6 +377,29 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
                 vm.saveServer(it)
                 editing = null
             },
+        )
+    }
+
+    if (showPaletteSheet) {
+        PaletteStyleSheet(
+            current = state.paletteStyle,
+            onSelect = vm::setPaletteStyle,
+            onDismiss = { showPaletteSheet = false },
+        )
+    }
+
+    if (showShapeSheet) {
+        CardShapeSheet(
+            current = state.cardCornerRadius,
+            onSelect = vm::setCardCornerRadius,
+            onDismiss = { showShapeSheet = false },
+        )
+    }
+
+    if (showCustomColorPicker) {
+        AddCustomColorSheet(
+            onAdd = vm::addCustomAccentColor,
+            onDismiss = { showCustomColorPicker = false },
         )
     }
 }
@@ -600,3 +666,104 @@ private fun AuthModeSelector(
         }
     }
 }
+
+@Suppress("NewApi")
+@Composable
+private fun DeviceCapabilitiesSection() {
+    val context = LocalContext.current
+    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+
+    val sampleRate =
+        remember {
+            audioManager.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)?.toIntOrNull() ?: 48000
+        }
+    val framesPerBuffer =
+        remember {
+            audioManager.getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER)?.toIntOrNull() ?: 0
+        }
+    val isLowLatency =
+        remember {
+            context.packageManager.hasSystemFeature(PackageManager.FEATURE_AUDIO_LOW_LATENCY)
+        }
+    val isProAudio =
+        remember {
+            context.packageManager.hasSystemFeature(PackageManager.FEATURE_AUDIO_PRO)
+        }
+    val maxMemMb = remember { Runtime.getRuntime().maxMemory() / 1024 / 1024 }
+    val freeMemMb = remember { Runtime.getRuntime().freeMemory() / 1024 / 1024 }
+    val outputDevices = remember { audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS) }
+    val h265ok =
+        remember {
+            MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos.any { codec ->
+                !codec.isEncoder && codec.supportedTypes.any { it.contains("hevc", ignoreCase = true) }
+            }
+        }
+
+    val capabilityItems =
+        listOf(
+            "Sample Rate" to "${sampleRate / 1000} kHz ($framesPerBuffer f/buf)",
+            "Outputs" to "${outputDevices.size} detected",
+            "Low Latency" to if (isLowLatency) "Yes (Pro Audio: $isProAudio)" else "No",
+            "JVM Memory" to "${freeMemMb}MB free / ${maxMemMb}MB max",
+        )
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        capabilityItems.chunked(2).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                row.forEach { (label, value) ->
+                    Card(Modifier.weight(1f)) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text(
+                                label,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(value, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+
+    Spacer(Modifier.height(8.dp))
+    Text("Detected outputs", style = MaterialTheme.typography.labelLarge)
+    outputDevices.forEach { device ->
+        ListItem(
+            headlineContent = { Text(device.productName.toString()) },
+            supportingContent = { Text(device.typeLabel()) },
+            leadingContent = {
+                Icon(
+                    if (device.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP) {
+                        Icons.Filled.Headphones
+                    } else {
+                        Icons.Filled.Speaker
+                    },
+                    contentDescription = null,
+                )
+            },
+        )
+    }
+
+    Spacer(Modifier.height(8.dp))
+    Text("Media3 ${MediaLibraryInfo.VERSION}", style = MaterialTheme.typography.labelMedium)
+    Text(
+        "H264: supported | H265: ${if (h265ok) "supported" else "not supported"}",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+private fun AudioDeviceInfo.typeLabel() =
+    when (type) {
+        AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "Built-in speaker"
+        AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> "Built-in earpiece"
+        AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> "Wired headphones"
+        AudioDeviceInfo.TYPE_WIRED_HEADSET -> "Wired headset"
+        AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "Bluetooth audio"
+        AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth SCO"
+        AudioDeviceInfo.TYPE_USB_DEVICE -> "USB audio"
+        AudioDeviceInfo.TYPE_HDMI -> "HDMI"
+        else -> "Other"
+    }

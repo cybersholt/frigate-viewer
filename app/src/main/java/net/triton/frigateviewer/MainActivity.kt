@@ -4,16 +4,23 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarDefaults
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -66,6 +73,9 @@ class MainActivity : ComponentActivity() {
             val useWallpaper by userSettingsRepo.useWallpaperColor.collectAsState(false)
             val paletteStyleStr by userSettingsRepo.paletteStyle.collectAsState("TonalSpot")
             val amoledBlack by userSettingsRepo.amoledBlack.collectAsState(false)
+            val contrastLevel by userSettingsRepo.contrastLevel.collectAsState(0)
+            val cardCornerRadius by userSettingsRepo.cardCornerRadius.collectAsState(12)
+            val cardBorderWidth by userSettingsRepo.cardBorderWidth.collectAsState(0)
 
             val themeMode =
                 try {
@@ -86,6 +96,9 @@ class MainActivity : ComponentActivity() {
                 useWallpaperColor = useWallpaper,
                 paletteStyle = paletteStyle,
                 amoledBlack = amoledBlack,
+                contrastLevel = contrastLevel,
+                cardCornerRadius = cardCornerRadius,
+                cardBorderWidth = cardBorderWidth,
             ) {
                 AppRoot()
             }
@@ -137,34 +150,42 @@ private fun AppRoot() {
         Scaffold(
             bottomBar = {
                 if (onTab && !fullScreen.value) {
-                    NavigationBar(modifier = Modifier.height(68.dp), windowInsets = WindowInsets(0)) {
-                        tabs.forEach { tab ->
-                            val selected =
-                                current?.hierarchy?.any { it.route?.startsWith(tab.route) == true } == true
-                            NavigationBarItem(
-                                selected = selected,
-                                onClick = {
-                                    nav.navigate(tab.route) {
-                                        launchSingleTop = true
-                                        restoreState = true
-                                        popUpTo(nav.graph.startDestinationId) { saveState = true }
-                                    }
-                                },
-                                icon = {
-                                    Icon(
-                                        tab.icon,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(22.dp),
-                                    )
-                                },
-                                label = {
-                                    Text(
-                                        stringResource(tab.label),
-                                        fontSize = 10.sp,
-                                    )
-                                },
-                            )
+                    Column {
+                        NavigationBar(modifier = Modifier.height(68.dp), windowInsets = WindowInsets(0)) {
+                            tabs.forEach { tab ->
+                                val selected =
+                                    current?.hierarchy?.any { it.route?.startsWith(tab.route) == true } == true
+                                NavigationBarItem(
+                                    selected = selected,
+                                    onClick = {
+                                        nav.navigate(tab.route) {
+                                            launchSingleTop = true
+                                            restoreState = true
+                                            popUpTo(nav.graph.startDestinationId) { saveState = true }
+                                        }
+                                    },
+                                    icon = {
+                                        Icon(
+                                            tab.icon,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(22.dp),
+                                        )
+                                    },
+                                    label = {
+                                        Text(
+                                            stringResource(tab.label),
+                                            fontSize = 10.sp,
+                                        )
+                                    },
+                                )
+                            }
                         }
+                        Spacer(
+                            Modifier
+                                .fillMaxWidth()
+                                .windowInsetsPadding(WindowInsets.navigationBars)
+                                .background(NavigationBarDefaults.containerColor),
+                        )
                     }
                 }
             },

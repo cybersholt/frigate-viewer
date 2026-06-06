@@ -57,6 +57,10 @@ data class SettingsUiState(
     val showBoundingBoxes: Boolean = true,
     val eventGridColumns: Int = 1,
     val dateFormat: String = "descriptive",
+    val contrastLevel: Int = 0,
+    val cardCornerRadius: Int = 12,
+    val cardBorderWidth: Int = 0,
+    val customAccentColors: List<Long> = emptyList(),
 )
 
 @HiltViewModel
@@ -93,6 +97,10 @@ class SettingsViewModel
                 userSettingsRepo.showBoundingBoxes,
                 userSettingsRepo.eventGridColumns,
                 userSettingsRepo.dateFormat,
+                userSettingsRepo.contrastLevel,
+                userSettingsRepo.cardCornerRadius,
+                userSettingsRepo.cardBorderWidth,
+                userSettingsRepo.customAccentColors,
             ) { args ->
                 @Suppress("UNCHECKED_CAST")
                 SettingsUiState(
@@ -114,6 +122,10 @@ class SettingsViewModel
                     showBoundingBoxes = args[15] as Boolean,
                     eventGridColumns = args[16] as Int,
                     dateFormat = args[17] as String,
+                    contrastLevel = args[18] as Int,
+                    cardCornerRadius = args[19] as Int,
+                    cardBorderWidth = args[20] as Int,
+                    customAccentColors = args[21] as List<Long>,
                 )
             }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
@@ -212,6 +224,23 @@ class SettingsViewModel
         fun setEventGridColumns(columns: Int) = viewModelScope.launch { userSettingsRepo.setEventGridColumns(columns) }
 
         fun setDateFormat(fmt: String) = viewModelScope.launch { userSettingsRepo.setDateFormat(fmt) }
+
+        fun setContrastLevel(level: Int) = viewModelScope.launch { userSettingsRepo.setContrastLevel(level) }
+
+        fun setCardCornerRadius(radius: Int) = viewModelScope.launch { userSettingsRepo.setCardCornerRadius(radius) }
+
+        fun setCardBorderWidth(width: Int) = viewModelScope.launch { userSettingsRepo.setCardBorderWidth(width) }
+
+        fun addCustomAccentColor(color: Long) =
+            viewModelScope.launch {
+                val current = state.value.customAccentColors
+                if (color !in current) userSettingsRepo.setCustomAccentColors(current + color)
+            }
+
+        fun removeCustomAccentColor(color: Long) =
+            viewModelScope.launch {
+                userSettingsRepo.setCustomAccentColors(state.value.customAccentColors - color)
+            }
 
         fun setRtspPort(port: Int) {
             viewModelScope.launch {
