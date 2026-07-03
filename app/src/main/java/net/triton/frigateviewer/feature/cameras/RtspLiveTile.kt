@@ -1,3 +1,5 @@
+@file:Suppress("INVISIBLE_REFERENCE", "INVISIBLE_MEMBER", "OPT_IN_USAGE", "OPT_IN_USAGE_ERROR")
+
 package net.triton.frigateviewer.feature.cameras
 
 import android.app.Activity
@@ -19,10 +21,14 @@ import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -95,13 +101,15 @@ private fun friendlyError(e: PlaybackException): String =
         }
     }
 
-@OptIn(UnstableApi::class)
+@OptIn(UnstableApi::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun RtspLiveTile(
     url: String,
     modifier: Modifier = Modifier,
     snapshotUrl: String? = null,
+    snapshotCachedAt: Long = 0L,
     autoLandscapeOnStream: Boolean = false,
+    onStateChanged: (CameraStreamState) -> Unit = {},
 ) {
     val context = LocalContext.current
     val view = LocalView.current
@@ -112,8 +120,21 @@ fun RtspLiveTile(
     var zoomOffset by remember { mutableStateOf(Offset.Zero) }
     val fullScreenMode = LocalFullScreenMode.current
 
-    val isLoadingState = remember(url, retryTrigger) { mutableStateOf(true) }
-    val errorState = remember(url, retryTrigger) { mutableStateOf<String?>(null) }
+    val streamState =
+        remember(url, retryTrigger) {
+            mutableStateOf<CameraStreamState>(
+                if (snapshotUrl != null) {
+                    CameraStreamState.LoadingWithCache(
+                        if (snapshotCachedAt > 0L) snapshotCachedAt else System.currentTimeMillis(),
+                    )
+                } else {
+                    CameraStreamState.Skeleton
+                },
+            )
+        }
+    var streamStateVal by streamState
+
+    LaunchedEffect(streamStateVal) { onStateChanged(streamStateVal) }
 
     val exoPlayer =
         remember(url, retryTrigger) {
@@ -132,7 +153,10 @@ fun RtspLiveTile(
                                     else -> "UNKNOWN($state)"
                                 }
                             Log.d(TAG, "State → $name (url=${maskRtspUrl(url)})")
-                            if (state == Player.STATE_READY) isLoadingState.value = false
+                        }
+
+                        override fun onRenderedFirstFrame() {
+                            streamState.value = CameraStreamState.Live
                         }
 
                         override fun onPlayerError(e: PlaybackException) {
@@ -141,8 +165,7 @@ fun RtspLiveTile(
                             e.cause?.let { cause ->
                                 Log.e(TAG, "  caused by: ${cause.javaClass.simpleName}: ${cause.message}")
                             }
-                            errorState.value = msg
-                            isLoadingState.value = false
+                            streamState.value = CameraStreamState.Offline(msg)
                         }
                     },
                 )
@@ -156,9 +179,6 @@ fun RtspLiveTile(
                 playWhenReady = true
             }
         }
-
-    val isLoading by isLoadingState
-    val error by errorState
 
     LaunchedEffect(Unit) {
         if (autoLandscapeOnStream) isFullScreen = true
@@ -196,6 +216,32 @@ fun RtspLiveTile(
 
     if (isFullScreen) {
         BackHandler { isFullScreen = false }
+    }
+
+    // Reconnect when returning from background: ExoPlayer stalls with a black
+    // surface after the app is stopped. Bumping retryTrigger recreates the player.
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        var stopped = false
+        val observer =
+            androidx.lifecycle.LifecycleEventObserver { _, event ->
+                when (event) {
+                    androidx.lifecycle.Lifecycle.Event.ON_STOP -> {
+                        stopped = true
+                    }
+
+                    androidx.lifecycle.Lifecycle.Event.ON_START -> {
+                        if (stopped) {
+                            stopped = false
+                            retryTrigger++
+                        }
+                    }
+
+                    else -> {}
+                }
+            }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     DisposableEffect(url, retryTrigger) {
@@ -243,91 +289,114 @@ fun RtspLiveTile(
                 },
         )
 
-        // Loading overlay — sits on top until STATE_READY
-        if (isLoading && error == null) {
-            if (snapshotUrl != null) {
-                AsyncImage(
-                    model =
-                        ImageRequest
-                            .Builder(context)
-                            .data(snapshotUrl)
-                            .crossfade(false)
-                            .build(),
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = if (snapshotUrl != null) 0.35f else 1f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+        // State-based overlay — camera pill and status badge are rendered by the parent
+        // StreamContent via StreamTileBadgeLayer so they appear above all stream types.
+        when (val state = streamStateVal) {
+            CameraStreamState.Skeleton -> {
+                Box(
+                    Modifier.fillMaxSize().background(Color.Black),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    CircularProgressIndicator(color = Color.White)
-                    Text(
-                        "Connecting via RTSP…",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White,
-                    )
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        LoadingIndicator(
+                            modifier = Modifier.size(48.dp),
+                            color = Color.White.copy(alpha = 0.80f),
+                        )
+                        Text(
+                            "Connecting via RTSP…",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White,
+                        )
+                    }
                 }
             }
-        }
 
-        // Error overlay
-        if (error != null) {
-            Box(
-                Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.85f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
+            is CameraStreamState.LoadingWithCache -> {
+                if (snapshotUrl != null) {
+                    AsyncImage(
+                        model =
+                            ImageRequest
+                                .Builder(context)
+                                .data(snapshotUrl)
+                                .crossfade(false)
+                                .build(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        alpha = 0.8f,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = if (snapshotUrl != null) 0.15f else 0.9f)),
+                )
+            }
+
+            CameraStreamState.Live -> { /* video frame visible through PlayerView */ }
+
+            is CameraStreamState.Offline -> {
+                if (snapshotUrl != null) {
+                    AsyncImage(
+                        model =
+                            ImageRequest
+                                .Builder(context)
+                                .data(snapshotUrl)
+                                .crossfade(false)
+                                .build(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        alpha = 0.5f,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                Box(
+                    Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.60f)),
                 ) {
-                    Text(
-                        "RTSP Failed",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = Color.White,
-                    )
-                    Text(
-                        error!!,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.8f),
-                        modifier = Modifier.padding(top = 6.dp),
-                    )
-                    Text(
-                        maskRtspUrl(url),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White.copy(alpha = 0.5f),
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
-                    Button(
-                        onClick = { retryTrigger++ },
-                        modifier = Modifier.padding(top = 12.dp),
+                    Column(
+                        modifier = Modifier.align(Alignment.Center).padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text("Retry")
+                        Icon(
+                            imageVector = Icons.Default.VideocamOff,
+                            contentDescription = null,
+                            tint = Color.White.copy(alpha = 0.54f),
+                            modifier = Modifier.size(32.dp),
+                        )
+                        Text(
+                            "Device offline",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.70f),
+                        )
+                        if (state.reason != null) {
+                            Text(
+                                state.reason,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White.copy(alpha = 0.50f),
+                            )
+                        }
+                    }
+                    FilledTonalButton(
+                        onClick = { retryTrigger++ },
+                        modifier =
+                            Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(12.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Text("Retry", modifier = Modifier.padding(start = 4.dp))
                     }
                 }
             }
         }
-
-        // RTSP badge
-        Text(
-            "RTSP",
-            modifier =
-                Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(8.dp)
-                    .background(Color.Green.copy(alpha = 0.5f), MaterialTheme.shapes.small)
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
-            style = MaterialTheme.typography.labelSmall,
-            color = Color.White,
-        )
 
         // Mute toggle
         IconButton(
@@ -345,7 +414,7 @@ fun RtspLiveTile(
         // Fullscreen toggle
         IconButton(
             onClick = { isFullScreen = !isFullScreen },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp),
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 8.dp),
         ) {
             Icon(
                 imageVector = if (isFullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,

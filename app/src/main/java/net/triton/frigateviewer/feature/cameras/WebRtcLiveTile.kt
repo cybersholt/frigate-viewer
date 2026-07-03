@@ -118,10 +118,12 @@ fun WebRtcLiveTile(
     cameraName: String,
     okHttpClient: OkHttpClient,
     snapshotUrl: String? = null,
+    snapshotCachedAt: Long = 0L,
     modifier: Modifier = Modifier,
     autoLandscapeOnStream: Boolean = false,
     showBoundingBoxes: Boolean = true,
     onFatal: (String) -> Unit = {},
+    onStateChanged: (CameraStreamState) -> Unit = {},
 ) {
     val context = LocalContext.current
     val view = LocalView.current
@@ -146,6 +148,21 @@ fun WebRtcLiveTile(
     val startTime = remember(retryCount) { System.currentTimeMillis() }
     val initialSnapshotUrl = remember(baseUrl, cameraName) { snapshotUrl }
     val fullScreenMode = LocalFullScreenMode.current
+
+    LaunchedEffect(isLoading) {
+        if (isLoading) {
+            val displayUrl = snapshotUrl ?: initialSnapshotUrl
+            onStateChanged(
+                if (displayUrl != null) {
+                    CameraStreamState.LoadingWithCache(
+                        if (snapshotCachedAt > 0L) snapshotCachedAt else System.currentTimeMillis(),
+                    )
+                } else {
+                    CameraStreamState.Skeleton
+                },
+            )
+        }
+    }
 
     val entryPoint = remember { EntryPointAccessors.fromApplication(context, WebRtcEntryPoint::class.java) }
     val credStore = entryPoint.credentialStore()
@@ -183,6 +200,33 @@ fun WebRtcLiveTile(
             controller.show(WindowInsetsCompat.Type.systemBars())
         }
         onDispose { controller.show(WindowInsetsCompat.Type.systemBars()) }
+    }
+
+    // Reconnect when returning from background: the peer connection silently dies
+    // while stopped (no WS failure fires), leaving a black frozen surface. Bumping
+    // retryCount triggers the full teardown + redial path below.
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        var stopped = false
+        val observer =
+            androidx.lifecycle.LifecycleEventObserver { _, event ->
+                when (event) {
+                    androidx.lifecycle.Lifecycle.Event.ON_STOP -> {
+                        stopped = true
+                    }
+
+                    androidx.lifecycle.Lifecycle.Event.ON_START -> {
+                        if (stopped) {
+                            stopped = false
+                            retryCount++
+                        }
+                    }
+
+                    else -> {}
+                }
+            }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     LaunchedEffect(retryCount) {
@@ -474,24 +518,9 @@ fun WebRtcLiveTile(
                 },
         contentAlignment = Alignment.Center,
     ) {
-        // 1. Snapshot placeholder
-        if (isLoading) {
-            val displayUrl = snapshotUrl ?: initialSnapshotUrl
-            if (displayUrl != null) {
-                AsyncImage(
-                    model =
-                        ImageRequest
-                            .Builder(LocalContext.current)
-                            .data(displayUrl)
-                            .build(),
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-        }
-
-        // 2. WebRTC Renderer
+        // 1. WebRTC Renderer — always in tree so the surface exists before first frame.
+        // visibility=INVISIBLE while loading hides the renderer's built-in "No frames
+        // received" error UI regardless of SurfaceView z-ordering.
         AndroidView(
             modifier =
                 Modifier.fillMaxSize().graphicsLayer {
@@ -509,6 +538,7 @@ fun WebRtcLiveTile(
                             override fun onFirstFrameRendered() {
                                 isLoading = false
                                 connectionTime = System.currentTimeMillis() - startTime
+                                onStateChanged(CameraStreamState.Live)
                             }
 
                             override fun onFrameResolutionChanged(
@@ -522,6 +552,9 @@ fun WebRtcLiveTile(
                     rendererHolder.set(this)
                 }
             },
+            update = { view ->
+                view.visibility = if (isLoading) android.view.View.INVISIBLE else android.view.View.VISIBLE
+            },
         )
 
         // Bounding Boxes
@@ -531,50 +564,29 @@ fun WebRtcLiveTile(
             }
         }
 
-        // 3. Loading Overlay (semi-transparent if we have a snapshot)
+        // 2. Loading overlay — after AndroidView so it is on top in window layer
         if (isLoading) {
-            Box(
-                Modifier.fillMaxSize().background(Color.Black.copy(alpha = if (snapshotUrl != null) 0.4f else 1f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator(color = Color.White)
-                Text(
-                    statusText,
-                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.White,
+            val displayUrl = snapshotUrl ?: initialSnapshotUrl
+            if (displayUrl != null) {
+                AsyncImage(
+                    model =
+                        ImageRequest
+                            .Builder(LocalContext.current)
+                            .data(displayUrl)
+                            .crossfade(false)
+                            .build(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    alpha = 0.8f,
+                    modifier = Modifier.fillMaxSize(),
                 )
-            }
-        }
-
-        // 4. Controls & Info
-        connectionTime?.let { time ->
-            Row(
-                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(
-                    "WebRTC",
-                    modifier =
-                        Modifier
-                            .background(
-                                Color.Blue.copy(alpha = 0.5f),
-                                MaterialTheme.shapes.small,
-                            ).padding(horizontal = 6.dp, vertical = 2.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color.White,
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.15f)),
                 )
-                Text(
-                    "${time}ms",
-                    modifier =
-                        Modifier
-                            .background(
-                                Color.Black.copy(alpha = 0.5f),
-                                MaterialTheme.shapes.small,
-                            ).padding(horizontal = 6.dp, vertical = 2.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color.White,
-                )
+            } else {
+                Box(Modifier.fillMaxSize().background(Color.Black))
             }
         }
 
@@ -593,7 +605,7 @@ fun WebRtcLiveTile(
 
         IconButton(
             onClick = { isFullScreen = !isFullScreen },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp),
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 8.dp),
         ) {
             Icon(
                 imageVector = if (isFullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,

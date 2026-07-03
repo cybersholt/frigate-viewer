@@ -43,6 +43,8 @@ fun FrigateImage(
     diskCache: Boolean = true,
     diskWriteOnly: Boolean = false,
     diskCacheKey: String? = null,
+    onSuccess: () -> Unit = {},
+    onError: () -> Unit = {},
 ) {
     if (baseUrl.isNullOrBlank()) {
         Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -76,6 +78,10 @@ fun FrigateImage(
         contentScale = ContentScale.Crop,
         modifier = modifier,
         placeholder = lastPainter,
-        onSuccess = { lastPainter = it.painter },
+        onSuccess = {
+            lastPainter = it.painter
+            onSuccess()
+        },
+        onError = { onError() },
     )
 }

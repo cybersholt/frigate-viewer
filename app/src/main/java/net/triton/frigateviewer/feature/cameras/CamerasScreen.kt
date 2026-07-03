@@ -1,8 +1,12 @@
+@file:Suppress("INVISIBLE_REFERENCE", "INVISIBLE_MEMBER", "OPT_IN_USAGE", "OPT_IN_USAGE_ERROR")
+
 package net.triton.frigateviewer.feature.cameras
 
 import androidx.activity.compose.BackHandler
+import androidx.annotation.OptIn
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,6 +17,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,15 +29,19 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -48,6 +57,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -60,6 +70,7 @@ import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import net.triton.frigateviewer.LocalFullScreenMode
 import net.triton.frigateviewer.core.data.CredentialStore
@@ -126,22 +137,31 @@ fun CamerasScreen(
                 ) {
                     items(skeletonCount) { i ->
                         val name = knownNames.getOrNull(i)
-                        CameraSkeletonTile(
-                            modifier = Modifier.fillMaxWidth(),
-                            cameraName = name,
-                            baseUrl = state.effectiveBaseUrl ?: state.activeServer?.baseUrl(),
-                            imageLoader = if (name != null) imageLoader else null,
-                        )
+                        Box(Modifier.fillMaxWidth()) {
+                            CameraSkeletonTile(
+                                modifier = Modifier.fillMaxWidth(),
+                                cameraName = name,
+                                baseUrl = state.effectiveBaseUrl ?: state.activeServer?.baseUrl(),
+                                imageLoader = if (name != null) imageLoader else null,
+                            )
+                            Row(
+                                modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                if (name != null) CameraPill(camera = name) else Spacer(Modifier.size(1.dp))
+                                StreamStatusBadge(
+                                    state =
+                                        if (name != null) {
+                                            CameraStreamState.LoadingWithCache(0L)
+                                        } else {
+                                            CameraStreamState.Skeleton
+                                        },
+                                )
+                            }
+                        }
                     }
                 }
-                CircularProgressIndicator(
-                    modifier =
-                        Modifier
-                            .align(Alignment.Center)
-                            .size(64.dp),
-                    strokeWidth = 6.dp,
-                    color = MaterialTheme.colorScheme.primary,
-                )
             }
 
             state.noServerConfigured -> {
@@ -444,6 +464,12 @@ private fun SwipeableCameraTile(
 
         // ── Main tile (slides over panels) ──
         val borderWidth = LocalCardBorderWidth.current
+        // Keyed on name only — refreshTimestamp must NOT reset this or the badge
+        // oscillates Live → "0s ago" → Live on every auto-refresh tick.
+        var tileState by remember(name) {
+            mutableStateOf<CameraStreamState>(CameraStreamState.LoadingWithCache(0L))
+        }
+        var lastGoodAt by remember(name) { mutableStateOf(0L) }
         Card(
             Modifier
                 .fillMaxSize()
@@ -467,14 +493,28 @@ private fun SwipeableCameraTile(
                     diskWriteOnly = true,
                     diskCacheKey = "snap_$name",
                     modifier = Modifier.fillMaxSize(),
+                    onSuccess = {
+                        lastGoodAt = System.currentTimeMillis()
+                        tileState = CameraStreamState.Live
+                    },
+                    onError = {
+                        tileState =
+                            if (lastGoodAt > 0L) {
+                                CameraStreamState.LoadingWithCache(lastGoodAt)
+                            } else {
+                                CameraStreamState.Offline()
+                            }
+                    },
                 )
-                CameraPill(
-                    camera = name,
-                    modifier =
-                        Modifier
-                            .align(Alignment.TopStart)
-                            .padding(4.dp),
-                )
+                // Pill left, status badge right — mirrored insets, Google Home style
+                Row(
+                    modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    CameraPill(camera = name)
+                    StreamStatusBadge(state = tileState)
+                }
             }
         }
     }
@@ -571,7 +611,12 @@ private fun FocusedTile(
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(if (isFullScreen) 0.dp else 8.dp)) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(if (isFullScreen) Color.Black else Color.Transparent)
+            .padding(if (isFullScreen) 0.dp else 8.dp),
+    ) {
         if (!isFullScreen) {
             Box(Modifier.fillMaxWidth().clickable { onClose() }.padding(bottom = 8.dp)) {
                 Text("← $cameraName (tap to close)", style = MaterialTheme.typography.titleMedium)
@@ -590,6 +635,7 @@ private fun FocusedTile(
                 imageLoader = imageLoader,
                 showBoundingBoxes = showBoundingBoxes,
                 autoLandscapeOnStream = autoLandscapeOnStream,
+                refreshTimestamp = refreshTimestamp,
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -610,6 +656,7 @@ private fun FocusedTile(
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun StreamContent(
     liveStreamOption: String,
@@ -623,9 +670,15 @@ private fun StreamContent(
     imageLoader: ImageLoader,
     showBoundingBoxes: Boolean,
     autoLandscapeOnStream: Boolean,
+    refreshTimestamp: Long,
     modifier: Modifier = Modifier,
 ) {
-    Box(modifier.background(androidx.compose.ui.graphics.Color.Black), contentAlignment = Alignment.Center) {
+    var streamState by remember(liveStreamOption, liveCameraName) {
+        mutableStateOf<CameraStreamState>(CameraStreamState.Skeleton)
+    }
+    val snapshotUrl = baseUrl?.trimEnd('/')?.plus("/") + snapshotPath
+
+    Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
         if (server != null && okHttpClient != null) {
             when (liveStreamOption) {
                 "rtsp" -> {
@@ -633,15 +686,17 @@ private fun StreamContent(
                     if (resolvedRtspUrl != null) {
                         RtspLiveTile(
                             url = resolvedRtspUrl,
-                            snapshotUrl = baseUrl?.trimEnd('/') + "/" + snapshotPath,
+                            snapshotUrl = snapshotUrl,
+                            snapshotCachedAt = refreshTimestamp,
                             autoLandscapeOnStream = autoLandscapeOnStream,
+                            onStateChanged = { streamState = it },
                             modifier = Modifier.fillMaxSize(),
                         )
                     } else {
                         Box(
-                            Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black),
+                            Modifier.fillMaxSize().background(Color.Black),
                             contentAlignment = Alignment.Center,
-                        ) { CircularProgressIndicator(color = androidx.compose.ui.graphics.Color.White) }
+                        ) { LoadingIndicator(modifier = Modifier.size(48.dp), color = Color.White.copy(alpha = 0.80f)) }
                     }
                 }
 
@@ -651,6 +706,7 @@ private fun StreamContent(
                         cameraName = cameraName,
                         imageLoader = imageLoader,
                         showBoundingBoxes = showBoundingBoxes,
+                        onStateChanged = { streamState = it },
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -660,15 +716,135 @@ private fun StreamContent(
                         baseUrl = baseUrl ?: "",
                         cameraName = liveCameraName,
                         okHttpClient = okHttpClient,
-                        snapshotUrl = baseUrl?.trimEnd('/') + "/" + snapshotPath,
+                        snapshotUrl = snapshotUrl,
+                        snapshotCachedAt = refreshTimestamp,
                         autoLandscapeOnStream = autoLandscapeOnStream,
                         showBoundingBoxes = showBoundingBoxes,
                         onFatal = { },
+                        onStateChanged = { streamState = it },
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
             }
         }
+
+        // Badge layer — camera pill + status badge + protocol badge — floats above all stream types
+        StreamTileBadgeLayer(
+            streamState = streamState,
+            cameraName = cameraName,
+            streamTypeLabel =
+                when (liveStreamOption) {
+                    "rtsp" -> "RTSP"
+                    "snapshot" -> "Snapshot"
+                    else -> "WebRTC"
+                },
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
+}
+
+@Composable
+private fun StreamStatusBadge(
+    state: CameraStreamState,
+    modifier: Modifier = Modifier,
+) {
+    val white70 = Color.White.copy(alpha = 0.70f)
+    when (val s = state) {
+        CameraStreamState.Skeleton -> {
+            Row(
+                modifier,
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Icon(
+                    Icons.Default.Videocam,
+                    contentDescription = null,
+                    tint = white70,
+                    modifier = Modifier.size(12.dp),
+                )
+                Text("Loading…", style = MaterialTheme.typography.labelSmall, color = white70)
+            }
+        }
+
+        is CameraStreamState.LoadingWithCache -> {
+            var timeText by remember(s.cachedAt) { mutableStateOf(formatTimeAgo(s.cachedAt)) }
+            LaunchedEffect(s.cachedAt) {
+                while (true) {
+                    delay(60_000)
+                    timeText = formatTimeAgo(s.cachedAt)
+                }
+            }
+            Row(
+                modifier,
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                LoadingIndicator(modifier = Modifier.size(14.dp), color = white70)
+                if (s.cachedAt > 0L) {
+                    Text(timeText, style = MaterialTheme.typography.labelSmall, color = white70)
+                }
+            }
+        }
+
+        CameraStreamState.Live -> {
+            Row(
+                modifier,
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Canvas(modifier = Modifier.size(8.dp)) { drawCircle(Color(0xFF4CAF50)) }
+                Text("Live", style = MaterialTheme.typography.labelSmall, color = Color.White)
+            }
+        }
+
+        is CameraStreamState.Offline -> { /* tile overlay handles this */ }
+    }
+}
+
+@Composable
+private fun StreamTileBadgeLayer(
+    streamState: CameraStreamState,
+    cameraName: String,
+    streamTypeLabel: String,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier) {
+        Row(
+            modifier =
+                Modifier
+                    .align(Alignment.TopStart)
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                CameraPill(camera = cameraName)
+                StreamStatusBadge(state = streamState)
+            }
+            StreamTypeBadge(label = streamTypeLabel)
+        }
+    }
+}
+
+/** Dark translucent pill showing the active stream protocol (RTSP / WebRTC / Snapshot). */
+@Composable
+private fun StreamTypeBadge(
+    label: String,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier.background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(50)),
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+        )
     }
 }
 

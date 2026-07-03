@@ -78,6 +78,7 @@ fun CameraSkeletonTile(
                     .fillMaxSize()
                     .then(if (hasCachedBg) Modifier.alpha(0.5f) else Modifier),
             )
+            // No center spinner — the caller overlays a pill + status badge instead
         }
     }
 }

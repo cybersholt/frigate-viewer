@@ -3,9 +3,6 @@ package net.triton.frigateviewer.feature.cameras
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -19,7 +16,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import coil3.ImageLoader
 import coil3.compose.AsyncImage
 import coil3.request.CachePolicy
@@ -34,8 +30,10 @@ fun SnapshotLiveTile(
     imageLoader: ImageLoader,
     showBoundingBoxes: Boolean = true,
     modifier: Modifier = Modifier,
+    onStateChanged: (CameraStreamState) -> Unit = {},
 ) {
     var refreshTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var firstFrameLoaded by remember { mutableStateOf(false) }
 
     LaunchedEffect(baseUrl, cameraName) {
         while (true) {
@@ -65,19 +63,13 @@ fun SnapshotLiveTile(
             contentScale = ContentScale.Fit,
             modifier = Modifier.fillMaxSize(),
             placeholder = lastPainter,
-            onSuccess = { lastPainter = it.painter },
-        )
-
-        Text(
-            "Snapshot",
-            modifier =
-                Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(8.dp)
-                    .background(Color.Red.copy(alpha = 0.5f), MaterialTheme.shapes.small)
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
-            style = MaterialTheme.typography.labelSmall,
-            color = Color.White,
+            onSuccess = {
+                lastPainter = it.painter
+                if (!firstFrameLoaded) {
+                    firstFrameLoaded = true
+                    onStateChanged(CameraStreamState.Live)
+                }
+            },
         )
     }
 }

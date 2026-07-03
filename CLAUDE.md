@@ -73,6 +73,9 @@ Pixel 8 connected via wireless ADB.
 # Connect if session dropped
 adb connect 192.168.88.32:5555
 
+# ZeroTier wireless ADB (use only when user explicitly asks to deploy via ZeroTier)
+adb connect 192.168.192.200:5555
+
 # Verify
 adb devices
 

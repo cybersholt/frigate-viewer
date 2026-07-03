@@ -19,10 +19,12 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarDefaults
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -148,6 +150,12 @@ private fun AppRoot() {
 
     CompositionLocalProvider(LocalFullScreenMode provides fullScreen) {
         Scaffold(
+            // m3 1.5.0 Scaffold pads content by displayCutout (union'd into the default
+            // insets) — the cutout inset never reaches zero even with system bars hidden,
+            // so fullscreen landscape would show a containerColor strip on the punch-hole
+            // edge. Zero insets + black container while fullscreen.
+            containerColor = if (fullScreen.value) Color.Black else MaterialTheme.colorScheme.background,
+            contentWindowInsets = if (fullScreen.value) WindowInsets(0) else ScaffoldDefaults.contentWindowInsets,
             bottomBar = {
                 if (onTab && !fullScreen.value) {
                     Column {
