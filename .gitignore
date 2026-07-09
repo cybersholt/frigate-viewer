@@ -36,8 +36,13 @@ desktop.ini
 # Logs
 *.log
 hs_err_pid*
+*.logcat
 
 # Coverage / test
 jacoco.exec
 /coverage
 /screenshots
+/export_claude_project.ps1
+/claude_project.zip
+/todo_ideas
+/memory

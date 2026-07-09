@@ -32,4 +32,4 @@ Do not store the PEM in DataStore — it bloats reads and serializes badly.
 - `SharedPreferences` for new code (use DataStore Preferences).
 - `Gson` for serialization (use kotlinx.serialization, which is the DI-provided `Json`).
 - `runBlocking` in any new public function. Suspend functions all the way.
-- Storing the bearer token unencrypted in a Cookie file. The `CookieJar` (when added) must be in-memory only or backed by `CredentialStore`.
+- Storing the bearer token unencrypted in a Cookie file. `SessionCookieJar` (`core/network/FrigateClient.kt`) caches cookies in-memory and persists them AEAD-encrypted via `CredentialStore.setCookies`/`cookies` — never write cookies to disk any other way.

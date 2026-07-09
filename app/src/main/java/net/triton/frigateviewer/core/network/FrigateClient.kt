@@ -1,9 +1,13 @@
 package net.triton.frigateviewer.core.network
 
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -14,6 +18,7 @@ import net.triton.frigateviewer.core.data.Server
 import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -69,6 +74,17 @@ class FrigateClient
                 clients.getValue(server.id)
             }
 
+        /**
+         * True if a live, unexpired session cookie is already held for [server]. Lets
+         * [net.triton.frigateviewer.core.data.FrigateRepository] skip redundant re-logins on
+         * every request when Frigate authenticates via cookie (no JWT echoed in the login body).
+         */
+        suspend fun hasSessionCookie(server: Server): Boolean =
+            mutex.withLock {
+                ensureFor(server, null)
+                (clients[server.id]?.cookieJar as? SessionCookieJar)?.hasCookies() ?: false
+            }
+
         suspend fun invalidate(serverId: String) =
             mutex.withLock {
                 servers.remove(serverId)
@@ -119,7 +135,7 @@ class FrigateClient
                     .connectTimeout(15, TimeUnit.SECONDS)
                     .readTimeout(30, TimeUnit.SECONDS)
                     .writeTimeout(30, TimeUnit.SECONDS)
-                    .cookieJar(InMemoryCookieJar(server.id))
+                    .cookieJar(SessionCookieJar(server.id, credentialStore))
                     .addInterceptor(logging)
                     .addInterceptor(PerServerAuthInterceptor(server, credentialStore))
 
@@ -185,32 +201,91 @@ class PerServerAuthInterceptor(
 }
 
 /**
- * Process-lifetime in-memory cookie jar, keyed implicitly by the OkHttpClient instance
- * (which is itself keyed per server in [FrigateClient]). Tokens never hit disk.
+ * Per-server cookie jar, keyed implicitly by the OkHttpClient instance (itself keyed per
+ * server in [FrigateClient]). Cached in memory for fast synchronous OkHttp access, and
+ * persisted AEAD-encrypted via [CredentialStore] so a Frigate session cookie survives an
+ * app restart instead of forcing a fresh `POST /api/login` every cold start.
  */
-class InMemoryCookieJar(
-    @Suppress("unused") private val tag: String,
+class SessionCookieJar(
+    private val serverId: String,
+    private val credentialStore: CredentialStore,
 ) : CookieJar {
-    private val store = ConcurrentHashMap<String, MutableList<Cookie>>()
+    private val store = mutableMapOf<String, MutableList<Cookie>>()
+    private val lock = Any()
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    @Volatile
+    private var loaded = false
+
+    // Synchronous CookieJar interface can't suspend; this mirrors the runBlocking-in-interceptor
+    // pattern already used by PerServerAuthInterceptor to bridge CredentialStore's suspend API.
+    private fun ensureLoaded() {
+        if (loaded) return
+        synchronized(lock) {
+            if (loaded) return
+            runBlocking { credentialStore.cookies(serverId) }
+                ?.lineSequence()
+                ?.forEach { line ->
+                    val tab = line.indexOf('\t')
+                    if (tab <= 0) return@forEach
+                    val host = line.substring(0, tab)
+                    val cookieStr = line.substring(tab + 1)
+                    runCatching { Cookie.parse("https://$host/".toHttpUrl(), cookieStr) }
+                        .getOrNull()
+                        ?.let { store.getOrPut(host) { mutableListOf() } += it }
+                }
+            loaded = true
+        }
+    }
 
     override fun loadForRequest(url: HttpUrl): List<Cookie> {
-        val host = url.host
-        val now = System.currentTimeMillis()
-        val list = store[host] ?: return emptyList()
-        val valid = list.filter { it.expiresAt > now && it.matches(url) }
-        if (valid.size != list.size) store[host] = valid.toMutableList()
-        return valid
+        ensureLoaded()
+        return synchronized(lock) {
+            val host = url.host
+            val now = System.currentTimeMillis()
+            val list = store[host] ?: return emptyList()
+            val valid = list.filter { it.expiresAt > now && it.matches(url) }
+            if (valid.size != list.size) {
+                store[host] = valid.toMutableList()
+            }
+            valid
+        }
     }
 
     override fun saveFromResponse(
         url: HttpUrl,
         cookies: List<Cookie>,
     ) {
-        val host = url.host
-        val list = store.getOrPut(host) { mutableListOf() }
-        cookies.forEach { c ->
-            list.removeAll { it.name == c.name }
-            list += c
+        ensureLoaded()
+        if (cookies.isEmpty()) return
+        synchronized(lock) {
+            val host = url.host
+            val list = store.getOrPut(host) { mutableListOf() }
+            cookies.forEach { c ->
+                list.removeAll { it.name == c.name }
+                list += c
+            }
+        }
+        persist()
+    }
+
+    /** True if any host has at least one unexpired cookie (i.e. an active Frigate session). */
+    fun hasCookies(): Boolean {
+        ensureLoaded()
+        return synchronized(lock) {
+            val now = System.currentTimeMillis()
+            store.values.any { list -> list.any { it.expiresAt > now } }
+        }
+    }
+
+    private fun persist() {
+        val snapshot =
+            synchronized(lock) {
+                store.entries.flatMap { (host, list) -> list.map { host to it } }
+            }
+        ioScope.launch {
+            val serialized = snapshot.joinToString("\n") { (host, cookie) -> "$host\t$cookie" }
+            credentialStore.setCookies(serverId, serialized)
         }
     }
 }

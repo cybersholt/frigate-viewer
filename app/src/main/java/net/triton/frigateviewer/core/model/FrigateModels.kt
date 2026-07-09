@@ -80,6 +80,46 @@ data class MqttConfig(
     val user: String? = null,
 )
 
+/** One physical recording segment on disk. Frigate's `GET api/{camera}/recordings`. */
+@Serializable
+data class RecordingSegment(
+    val id: String,
+    val camera: String? = null,
+    @SerialName("start_time") val startTime: Double,
+    @SerialName("end_time") val endTime: Double,
+    val path: String? = null,
+    @SerialName("segment_size") val segmentSize: Double? = null,
+    val duration: Double = 0.0,
+    val motion: Int? = null,
+    val objects: Int? = null,
+    @SerialName("dBFS") val dBFS: Double? = null,
+)
+
+/** A gap in the recording track (no footage). Frigate's `GET api/recordings/unavailable`. */
+@Serializable
+data class RecordingGap(
+    val id: String,
+    @SerialName("start_time") val startTime: Double,
+    @SerialName("end_time") val endTime: Double,
+    val motion: Int? = null,
+    val objects: Int? = null,
+    val duration: Double = 0.0,
+)
+
+/** Frigate's `GET api/review` — the severity-classified activity feed the web timeline draws. */
+@Serializable
+data class ReviewSegment(
+    val id: String,
+    val camera: String,
+    /** "alert" | "detection" | "significant_motion" */
+    val severity: String,
+    @SerialName("start_time") val startTime: Double,
+    @SerialName("end_time") val endTime: Double? = null,
+    @SerialName("thumb_path") val thumbPath: String? = null,
+    @SerialName("has_been_reviewed") val hasBeenReviewed: Boolean = false,
+    val data: JsonElement? = null,
+)
+
 @Serializable
 data class FrigateEvent(
     val id: String,

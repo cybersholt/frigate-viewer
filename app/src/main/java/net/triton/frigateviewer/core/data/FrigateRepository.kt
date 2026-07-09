@@ -3,6 +3,9 @@ package net.triton.frigateviewer.core.data
 import net.triton.frigateviewer.core.model.FrigateConfig
 import net.triton.frigateviewer.core.model.FrigateEvent
 import net.triton.frigateviewer.core.model.LoginRequest
+import net.triton.frigateviewer.core.model.RecordingGap
+import net.triton.frigateviewer.core.model.RecordingSegment
+import net.triton.frigateviewer.core.model.ReviewSegment
 import net.triton.frigateviewer.core.network.ApiResult
 import net.triton.frigateviewer.core.network.FrigateClient
 import net.triton.frigateviewer.core.network.WifiMonitor
@@ -45,17 +48,17 @@ class FrigateRepository
             }
 
         private suspend fun reloginIfNecessary(server: Server) {
-            val secret = credentialStore.rawSecret(server.id)
-            if (secret != null && !secret.startsWith(CredentialStore.BEARER_PREFIX)) {
-                // It's a password, not a JWT. Attempt login to get a session/token.
-                // But only if we don't have a valid cookie/token already in FrigateClient.
-                // FrigateClient handles cookies, so we only need to login if we don't have a bearer token
-                // and the repository just started or the secret was just set.
-                val parts = secret.split(":", limit = 2)
-                val user = if (parts.size == 2) parts[0] else server.username ?: ""
-                val pass = if (parts.size == 2) parts[1] else secret
-                login(server.id, user, pass)
-            }
+            val secret = credentialStore.rawSecret(server.id) ?: return
+            if (secret.startsWith(CredentialStore.BEARER_PREFIX)) return
+            // Frigate often authenticates via session cookie rather than echoing a JWT in the
+            // login response body, in which case the stored secret stays a raw password forever.
+            // Without this check we'd re-POST /api/login on every single request. Skip re-login
+            // while a live cookie is held; a call will naturally re-trigger login once it expires.
+            if (client.hasSessionCookie(server)) return
+            val parts = secret.split(":", limit = 2)
+            val user = if (parts.size == 2) parts[0] else server.username ?: ""
+            val pass = if (parts.size == 2) parts[1] else secret
+            login(server.id, user, pass)
         }
 
         suspend fun config(forceRefresh: Boolean = false): ApiResult<FrigateConfig> {
@@ -94,6 +97,37 @@ class FrigateRepository
         ): ApiResult<Unit> {
             val api = api() ?: return ApiResult.NetworkError(IllegalStateException("No active server"))
             return safeApiCall { if (retain) api.retainEvent(id) else api.unretainEvent(id) }
+        }
+
+        /** Physical recording segments for [camera] — drives VOD seek math (DynamicVideoPlayer parity). */
+        suspend fun recordings(
+            camera: String,
+            after: Double? = null,
+            before: Double? = null,
+        ): ApiResult<List<RecordingSegment>> {
+            val api = api() ?: return ApiResult.NetworkError(IllegalStateException("No active server"))
+            return safeApiCall { api.recordings(camera = camera, after = after, before = before) }
+        }
+
+        /** Gaps in the recording track, for drawing "no recording" ranges on the timeline. */
+        suspend fun recordingGaps(
+            camera: String,
+            after: Double? = null,
+            before: Double? = null,
+            scale: Int? = null,
+        ): ApiResult<List<RecordingGap>> {
+            val api = api() ?: return ApiResult.NetworkError(IllegalStateException("No active server"))
+            return safeApiCall { api.recordingGaps(cameras = camera, after = after, before = before, scale = scale) }
+        }
+
+        /** Severity-classified review segments (alert/detection/significant_motion). */
+        suspend fun review(
+            camera: String,
+            after: Double? = null,
+            before: Double? = null,
+        ): ApiResult<List<ReviewSegment>> {
+            val api = api() ?: return ApiResult.NetworkError(IllegalStateException("No active server"))
+            return safeApiCall { api.review(cameras = camera, after = after, before = before) }
         }
 
         suspend fun go2rtcStreams(forceRefresh: Boolean = false): ApiResult<Map<String, kotlinx.serialization.json.JsonElement>> {

@@ -56,6 +56,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
 import androidx.media3.ui.PlayerView
@@ -139,7 +140,13 @@ fun RtspLiveTile(
     val exoPlayer =
         remember(url, retryTrigger) {
             Log.i(TAG, "Connecting → ${maskRtspUrl(url)}")
-            ExoPlayer.Builder(context).build().apply {
+            // setEnableDecoderFallback: some hardware H.264 decoders (e.g. Exynos, on 4K streams)
+            // reject setOutputSurface with BAD_INDEX. Without fallback that's a fatal codec crash;
+            // with it, ExoPlayer retries the same stream on a software decoder.
+            val renderersFactory =
+                DefaultRenderersFactory(context)
+                    .setEnableDecoderFallback(true)
+            ExoPlayer.Builder(context, renderersFactory).build().apply {
                 volume = if (isMuted) 0f else 1f
                 addListener(
                     object : Player.Listener {

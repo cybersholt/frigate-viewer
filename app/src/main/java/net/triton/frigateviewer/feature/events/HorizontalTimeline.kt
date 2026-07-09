@@ -2,6 +2,8 @@ package net.triton.frigateviewer.feature.events
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,44 +26,60 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
-import net.triton.frigateviewer.core.model.FrigateEvent
+import net.triton.frigateviewer.core.model.RecordingGap
+import net.triton.frigateviewer.core.model.ReviewSegment
 import java.util.Locale
+import kotlin.math.abs
 
 private val TimelineBackground = Color(0xFF121212)
-private val BarColor = Color(0xFFEAA300)
+private val GapColor = Color(0xFF000000)
+private val SeverityAlertColor = Color(0xFFEF4444)
+private val SeverityDetectionColor = Color(0xFFF59E0B)
+private val SeveritySignificantMotionColor = Color(0xFFA16207)
 private val ScrubberColor = Color(0xFFE53935)
 private val GridLineColor = Color(0xFF333333)
 
 /**
- * Full-screen vertical timeline for Event Detail — Timeline view.
+ * Full-screen vertical timeline for Event Detail — Timeline view. Mirrors Frigate's own web
+ * frontend (MotionReviewTimeline/EventReviewTimeline): a recording-availability track (gaps
+ * darkened) with severity-colored review segments (alert/detection/significant_motion) drawn
+ * over it, instead of flat per-event pills.
  *
- * NOW is anchored at y=0 (top). Past scrolls downward — there is no way to
- * scroll above now. The red scrubber is a movable line that starts at the
- * event's detection time. Bar WIDTH represents activity density: more events
- * in a time bucket → wider bar.
+ * [viewEndMs] (<= real "now") anchors y=0 (top); it moves as the caller zooms/pans, so the
+ * scrubbed position stays in view instead of the window always snapping back to "now". Past
+ * scrolls downward. The red scrubber is a movable line that starts at the event's detection
+ * time. Bar WIDTH represents activity density: more/higher-severity segments in a bucket →
+ * wider, more saturated bar.
+ *
+ * Gestures: a tap (no meaningful vertical movement) jumps the scrubber to that time; a
+ * vertical drag pans the view instead, revealing time outside the current window.
  */
 @Composable
 fun HorizontalTimeline(
-    events: List<FrigateEvent>,
+    reviewSegments: List<ReviewSegment>,
+    recordingGaps: List<RecordingGap>,
     scrubberTimeMs: Long,
     timeRangeHours: Float,
+    viewEndMs: Long,
     onScrub: (Long) -> Unit,
+    onPan: (Long) -> Unit,
     onZoomChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // nowMs is the immovable ceiling — the top of the visible range
-    val nowMs = remember { System.currentTimeMillis() }
     val rangeMs = (timeRangeHours * 3_600_000L).toLong()
-    val oldestMs = nowMs - rangeMs
+    val oldestMs = viewEndMs - rangeMs
     // rememberUpdatedState so pointerInput(Unit) always reads latest values without restarting
+    val currentViewEndMs by rememberUpdatedState(viewEndMs)
     val currentRangeMs by rememberUpdatedState(rangeMs)
     val currentOldestMs by rememberUpdatedState(oldestMs)
     val currentOnScrub by rememberUpdatedState(onScrub)
+    val currentOnPan by rememberUpdatedState(onPan)
 
     val labelPaint =
         remember {
@@ -76,17 +94,39 @@ fun HorizontalTimeline(
         Canvas(
             Modifier
                 .fillMaxSize()
-                // Unit key: gesture handler never restarts mid-drag when zoom changes
+                // Unit key: gesture handler never restarts mid-drag when zoom/pan changes
                 .pointerInput(Unit) {
-                    awaitPointerEventScope {
+                    val touchSlop = viewConfiguration.touchSlop
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        var isPanning = false
+                        var lastY = down.position.y
                         while (true) {
                             val ev = awaitPointerEvent()
-                            val change = ev.changes.firstOrNull() ?: continue
-                            if (change.pressed) {
-                                change.consume()
-                                val frac = change.position.y / size.height
-                                currentOnScrub((nowMs - frac * currentRangeMs).toLong().coerceIn(currentOldestMs, nowMs))
+                            val change = ev.changes.firstOrNull { it.id == down.id } ?: break
+                            if (change.changedToUpIgnoreConsumed()) {
+                                if (!isPanning) {
+                                    val frac = change.position.y / size.height
+                                    currentOnScrub(
+                                        (currentViewEndMs - frac * currentRangeMs)
+                                            .toLong()
+                                            .coerceIn(currentOldestMs, currentViewEndMs),
+                                    )
+                                }
+                                break
                             }
+                            val dy = change.position.y - lastY
+                            if (!isPanning && abs(change.position.y - down.position.y) > touchSlop) {
+                                isPanning = true
+                            }
+                            if (isPanning) {
+                                change.consume()
+                                val msPerPx = currentRangeMs.toFloat() / size.height
+                                // Content follows the finger: drag down reveals newer time
+                                // (toward now), drag up reveals further into the past.
+                                currentOnPan((dy * msPerPx).toLong())
+                            }
+                            lastY = change.position.y
                         }
                     }
                 },
@@ -97,18 +137,42 @@ fun HorizontalTimeline(
             val msPerPx = rangeMs.toFloat() / h
             val maxBarHalfWidth = w * 0.38f
 
-            // nowMs → y=0 (top); older time → larger y (further down)
-            fun timeToY(timeMs: Long): Float = (nowMs - timeMs).toFloat() / msPerPx
+            // viewEndMs → y=0 (top); older time → larger y (further down)
+            fun timeToY(timeMs: Long): Float = (viewEndMs - timeMs).toFloat() / msPerPx
 
-            // ── Bucket events into activity density ──
+            // ── Recording-availability track: darken ranges with no footage ──
+            recordingGaps.forEach { gap ->
+                val gapStartMs = (gap.startTime * 1000).toLong()
+                val gapEndMs = (gap.endTime * 1000).toLong()
+                if (gapEndMs < oldestMs || gapStartMs > viewEndMs) return@forEach
+                val top = timeToY(gapEndMs.coerceAtMost(viewEndMs))
+                val bottom = timeToY(gapStartMs.coerceAtLeast(oldestMs))
+                drawRect(
+                    color = GapColor.copy(alpha = 0.5f),
+                    topLeft = Offset(0f, top.coerceIn(0f, h)),
+                    size =
+                        androidx.compose.ui.geometry
+                            .Size(w, (bottom - top).coerceIn(0f, h)),
+                )
+            }
+
+            // ── Bucket review segments into severity-ranked activity density ──
             val numBuckets = 160
             val bucketMs = rangeMs / numBuckets
             val buckets = IntArray(numBuckets)
-            events.forEach { ev ->
-                val evMs = (ev.startTime * 1000).toLong()
-                if (evMs in oldestMs..nowMs) {
-                    val idx = ((nowMs - evMs) / bucketMs).toInt().coerceIn(0, numBuckets - 1)
+            val bucketSeverityRank = IntArray(numBuckets)
+            reviewSegments.forEach { seg ->
+                val segMs = (seg.startTime * 1000).toLong()
+                if (segMs in oldestMs..viewEndMs) {
+                    val idx = ((viewEndMs - segMs) / bucketMs).toInt().coerceIn(0, numBuckets - 1)
                     buckets[idx]++
+                    val rank =
+                        when (seg.severity) {
+                            "alert" -> 3
+                            "detection" -> 2
+                            else -> 1
+                        }
+                    if (rank > bucketSeverityRank[idx]) bucketSeverityRank[idx] = rank
                 }
             }
             val bucketPx = h / numBuckets.toFloat()
@@ -128,14 +192,20 @@ fun HorizontalTimeline(
             val maxSmoothed = smoothed.max().coerceAtLeast(1f)
             val minHalfW = 3f // baseline bar visible everywhere
 
-            // ── Activity bars: width ∝ smoothed intensity, tiny bar for empty areas ──
+            // ── Activity bars: width ∝ smoothed intensity, color ∝ worst severity in bucket ──
             smoothed.forEachIndexed { i, value ->
                 val intensity = value / maxSmoothed
                 val halfW = (maxBarHalfWidth * intensity).coerceAtLeast(minHalfW)
                 val alpha = if (intensity < 0.02f) 0.22f else 0.9f
                 val barY = i * bucketPx + bucketPx / 2f
+                val barColor =
+                    when (bucketSeverityRank[i]) {
+                        3 -> SeverityAlertColor
+                        2 -> SeverityDetectionColor
+                        else -> SeveritySignificantMotionColor
+                    }
                 drawLine(
-                    color = BarColor.copy(alpha = alpha),
+                    color = barColor.copy(alpha = alpha),
                     start = Offset(centerX - halfW, barY),
                     end = Offset(centerX + halfW, barY),
                     strokeWidth = bucketPx.coerceIn(2f, 5f),
@@ -154,7 +224,7 @@ fun HorizontalTimeline(
                     else -> 12 * 3_600_000L
                 }
             val showDayLabel = timeRangeHours > 24f
-            var gridMs = (nowMs / intervalMs) * intervalMs
+            var gridMs = (viewEndMs / intervalMs) * intervalMs
             while (gridMs >= oldestMs) {
                 val y = timeToY(gridMs)
                 if (y in 0f..h) {

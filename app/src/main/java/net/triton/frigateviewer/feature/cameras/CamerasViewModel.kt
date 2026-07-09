@@ -30,12 +30,16 @@ data class CamerasUiState(
     val noServerConfigured: Boolean = false,
     val activeServer: Server? = null,
     val effectiveBaseUrl: String? = null,
+    /** Currently-connected Wi-Fi SSID, or null off Wi-Fi. Used to gate LAN-only RTSP. */
+    val currentSsid: String? = null,
     val preferSubStream: Boolean = false,
     val go2rtcStreams: Set<String> = emptySet(),
     val gridColumns: Int = 2,
     val autoRefresh: Boolean = false,
     val autoRefreshInterval: Int = 3,
     val liveStreamOption: String = "webrtc",
+    /** Per-camera live-mode overrides; a camera absent here uses [liveStreamOption]. */
+    val cameraStreamOverrides: Map<String, String> = emptyMap(),
     val showBoundingBoxes: Boolean = true,
     val hideEventImage: Boolean = false,
     val autoLandscapeOnStream: Boolean = false,
@@ -117,21 +121,27 @@ class CamerasViewModel
                     userSettingsRepo.showBoundingBoxes,
                     userSettingsRepo.hideEventImageInStream,
                     userSettingsRepo.autoLandscapeOnStream,
-                ) { option, showBoxes, hide, autoLandscape ->
+                    userSettingsRepo.cameraStreamOverrides,
+                ) { option, showBoxes, hide, autoLandscape, streamOverrides ->
                     _state.value =
                         _state.value.copy(
                             liveStreamOption = option,
                             showBoundingBoxes = showBoxes,
                             hideEventImage = hide,
                             autoLandscapeOnStream = autoLandscape,
+                            cameraStreamOverrides = streamOverrides,
                         )
                 }.collectLatest { }
             }
 
             viewModelScope.launch {
                 wifiMonitor.ssid.collect { ssid ->
-                    val server = _state.value.activeServer ?: return@collect
-                    _state.value = _state.value.copy(effectiveBaseUrl = server.effectiveBaseUrl(ssid))
+                    val server = _state.value.activeServer
+                    _state.value =
+                        _state.value.copy(
+                            currentSsid = ssid,
+                            effectiveBaseUrl = server?.effectiveBaseUrl(ssid) ?: _state.value.effectiveBaseUrl,
+                        )
                 }
             }
         }
@@ -250,6 +260,16 @@ class CamerasViewModel
                         cameraOrder = ordered,
                         displayedCameras = buildDisplayedCameras(_state.value.cameras, ordered, _state.value.hiddenCameras),
                     )
+            }
+        }
+
+        /** Set (or, when [mode] is null, clear) [cameraName]'s live-mode override. */
+        fun setCameraStreamOverride(
+            cameraName: String,
+            mode: String?,
+        ) {
+            viewModelScope.launch {
+                userSettingsRepo.setCameraStreamOverride(cameraName, mode)
             }
         }
 

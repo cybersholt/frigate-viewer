@@ -5,6 +5,9 @@ import net.triton.frigateviewer.core.model.FrigateConfig
 import net.triton.frigateviewer.core.model.FrigateEvent
 import net.triton.frigateviewer.core.model.LoginRequest
 import net.triton.frigateviewer.core.model.LoginResponse
+import net.triton.frigateviewer.core.model.RecordingGap
+import net.triton.frigateviewer.core.model.RecordingSegment
+import net.triton.frigateviewer.core.model.ReviewSegment
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.DELETE
@@ -61,4 +64,32 @@ interface FrigateApi {
 
     @GET("api/go2rtc/streams")
     suspend fun go2rtcStreams(): Response<Map<String, JsonElement>>
+
+    /** Physical recording segments for [camera] in `[after, before]` — drives VOD seek math. */
+    @GET("api/{camera}/recordings")
+    suspend fun recordings(
+        @Path("camera") camera: String,
+        @Query("after") after: Double? = null,
+        @Query("before") before: Double? = null,
+    ): Response<List<RecordingSegment>>
+
+    /** Gaps in the recording track — drawn on the timeline as "no recording" ranges. */
+    @GET("api/recordings/unavailable")
+    suspend fun recordingGaps(
+        @Query("cameras") cameras: String? = null,
+        @Query("after") after: Double? = null,
+        @Query("before") before: Double? = null,
+        @Query("scale") scale: Int? = null,
+    ): Response<List<RecordingGap>>
+
+    /** Severity-classified review segments (alert/detection/significant_motion). */
+    @GET("api/review")
+    suspend fun review(
+        @Query("cameras") cameras: String? = null,
+        @Query("labels") labels: String? = null,
+        @Query("zones") zones: String? = null,
+        @Query("reviewed") reviewed: Int? = null,
+        @Query("after") after: Double? = null,
+        @Query("before") before: Double? = null,
+    ): Response<List<ReviewSegment>>
 }

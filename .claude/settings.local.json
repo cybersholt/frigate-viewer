@@ -23,7 +23,16 @@
       "Bash(findstr /i \"offload static\")",
       "Bash(javap -classpath \"C:/Users/Sean/AppData/Local/Android/Sdk/platforms/android-36/android.jar\" android.media.AudioManager)",
       "Bash(findstr /i \"offload\")",
-      "Bash(./gradlew dependencies *)"
+      "Bash(./gradlew dependencies *)",
+      "Bash(git log *)",
+      "Bash(./gradlew :app:assembleDebug -q)",
+      "Bash(./gradlew :app:installDebug -q)",
+      "Bash(./gradlew :app:compileDebugKotlin -q)",
+      "Bash(MSYS_NO_PATHCONV=1 adb -s adb-3A210DLJH0023Y-jKEmpq._adb-tls-connect._tcp shell input tap 540 576)",
+      "Bash(MSYS_NO_PATHCONV=1 adb -s adb-3A210DLJH0023Y-jKEmpq._adb-tls-connect._tcp exec-out screencap -p)",
+      "Bash(./gradlew :app:compileDebugKotlin --console=plain)",
+      "Bash(./gradlew ktlintCheck --console=plain)",
+      "Bash(./gradlew :app:assembleDebug --console=plain)"
     ]
   },
   "hooks": {

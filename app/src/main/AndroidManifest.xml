@@ -33,6 +33,14 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Home Assistant motion-alert notifications deep-link here, e.g.
+                 frigateviewer://live?camera=ch1 or frigateviewer://event?id=X&camera=ch1 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="frigateviewer" />
+            </intent-filter>
         </activity>
 
         <service

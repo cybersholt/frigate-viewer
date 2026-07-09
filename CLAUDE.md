@@ -7,24 +7,56 @@ Native Android client for Frigate NVR. Rewritten in Kotlin to fix the JSON-parse
 ```
 /CLAUDE.md                            ← this file (project north star)
 /ARCHITECTURE.md                      ← design + invariants
+/memory/project_state.md              ← what's working, what's next (update every session)
 /docs/
   adr/                                ← architecture decision records (numbered)
   runbooks/                           ← release, signing, on-call
 /.claude/skills/                      ← reusable workflow playbooks
 /.claude/hooks/                       ← deterministic guardrails (settings.local.json + scripts)
 /gradle/libs.versions.toml            ← single source of truth for all dep versions
+/app/src/main/AndroidManifest.xml     ← MainActivity intent filters (launcher + frigateviewer:// deep link)
 /app/src/main/java/net/triton/frigateviewer/
   FrigateViewerApp.kt                 ← Hilt application + notification channels
-  MainActivity.kt                     ← Compose entry + nav scaffold
-  di/                                 ← Hilt modules
+  MainActivity.kt                     ← Compose entry, nav scaffold, frigateviewer:// deep-link routing
+  di/AppModule.kt                     ← Hilt modules
   core/
-    model/                            ← Frigate domain types (Serializable)
+    model/FrigateModels.kt            ← Frigate domain types (Serializable): FrigateConfig, CameraConfig, FrigateEvent
     network/  ← CLAUDE.md             ← JSON safety rules live here
+      FrigateApi.kt                   ← Retrofit interface (all endpoints)
+      FrigateClient.kt                ← per-server OkHttp/Retrofit factory + PerServerAuthInterceptor + SessionCookieJar
+                                         (cookies cached in-memory, persisted encrypted via CredentialStore)
+      AuthInterceptor.kt              ← AuthMode enum + TokenRefreshAuthenticator (defined but NOT wired into
+                                         FrigateClient's OkHttpClient.Builder — see Known gaps below)
+      SafeApiCall.kt                  ← the isSuccessful-gated funnel; ApiResult.kt is the sealed return type
+      WifiMonitor.kt                  ← current SSID, used for local-network base-URL + RTSP LAN gating
+      TrustConfig.kt                  ← per-host pinned cert / allow-untrusted
     data/     ← CLAUDE.md             ← credential storage rules live here
+      Server.kt                       ← server config model: host, rtspPort, rtspHost (LAN override), localNetworkSsids
+      ServerRepository.kt / CredentialStore.kt / FrigateRepository.kt / UserSettingsRepository.kt (DataStore prefs)
+    db/EventCache.kt                  ← Room offline cache for events
+    image/FrigateImage.kt             ← Coil AsyncImage wrapper (per-tile independent load/cache); ImageLoader.kt = DI-provided ImageLoader
   feature/
-    cameras/ events/ settings/        ← screen + ViewModel + UI
+    cameras/
+      CamerasScreen.kt                ← grid (LazyVerticalGrid, per-tile state) + FocusedTile + StreamContent (mode routing) + StreamTypeBadge (per-camera override menu)
+      CamerasViewModel.kt             ← camera list/order/hidden, liveStreamOption, cameraStreamOverrides, currentSsid
+      RtspLiveTile.kt / WebRtcLiveTile.kt / SnapshotLiveTile.kt ← the three live-mode players (each owns fullscreen + BackHandler)
+      CameraStreamState.kt            ← Skeleton/LoadingWithCache/Live/Offline sealed state shared by all tiles
+      CameraEditSheet.kt              ← reorder/hide bottom sheet
+    events/
+      EventsScreen.kt / EventsViewModel.kt   ← grid + filters (camera/label/zone), ordered by the same cameraOrder as Cameras
+      EventDetail.kt                  ← event detail: VOD/Clip tabs (ClipPlayer, HLS via DefaultMediaSourceFactory), timeline
+      HorizontalTimeline.kt / TimelinePanel.kt
+    settings/ SettingsScreen.kt / SettingsViewModel.kt ← servers, appearance, live-stream default, etc.
   notification/ ← CLAUDE.md           ← foreground service rules live here
 ```
+
+## Known gaps (found during 2026-07-03 bugfix pass, not yet resolved)
+- `TokenRefreshAuthenticator` (`core/network/AuthInterceptor.kt`) is fully implemented but never attached via
+  `.authenticator(...)` in `FrigateClient.buildClient()`. A 401 currently surfaces as `ApiResult.HttpError(401, ...)`
+  without an automatic re-login/retry. Low priority — auth failures are rare after initial setup — but wire it up
+  if silent JWT expiry becomes a reported issue.
+- Frigate recordings have no "substream" VOD — `<camera>_sub` is a go2rtc *live*-restream name only. Don't reuse
+  it for `/vod/.../index.m3u8` or `/api/events/.../clip.mp4` paths (confirmed via live 404 in production logs).
 
 ## Rules (non-negotiable)
 1. **Never parse a non-OK HTTP response as JSON.** Every Retrofit call funnels through `safeApiCall()` which gates `.body()` behind `response.isSuccessful`. See `core/network/CLAUDE.md`.
@@ -88,6 +120,11 @@ JDK: Android Studio bundled JBR at `C:/Program Files/Android/Android Studio/jbr`
 - Pinned in `gradle.properties` via `org.gradle.java.home`
 - Required because Cursor IDE's embedded JRE (`.antigravity-ide`) lacks `jlink.exe`, which AGP 9.2.1 needs for the `androidJdkImage` transform
 - Do NOT remove `org.gradle.java.home` from `gradle.properties` or builds will break in Cursor
+- Do NOT let `gradle/gradle-daemon-jvm.properties` exist/reappear. Gradle 9's daemon-toolchain feature reads it
+  and OVERRIDES `org.gradle.java.home`, auto-selecting whatever JDK 21 it finds first — on this machine that's
+  the Antigravity IDE's bundled JRE, which lacks `jlink.exe` and fails `:app:compileDebugJavaWithJavac` with
+  `JdkImageTransform ... jlink executable ... does not exist`. If `./gradlew updateDaemonJvm` or an IDE
+  regenerates this file, delete it — the pinned `org.gradle.java.home` is the only source of truth here.
 
 ANDROID_HOME: `C:/Users/Sean/AppData/Local/Android/Sdk`
 

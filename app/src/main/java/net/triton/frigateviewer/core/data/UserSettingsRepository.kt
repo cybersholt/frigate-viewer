@@ -42,6 +42,7 @@ class UserSettingsRepository
         private val cardCornerRadiusKey = intPreferencesKey(KEY_CARD_CORNER_RADIUS)
         private val cardBorderWidthKey = intPreferencesKey(KEY_CARD_BORDER_WIDTH)
         private val customAccentColorsKey = stringPreferencesKey(KEY_CUSTOM_ACCENT_COLORS)
+        private val cameraStreamOverridesKey = stringPreferencesKey(KEY_CAMERA_STREAM_OVERRIDES)
 
         val preferSubStream: Flow<Boolean> = store.data.map { it[preferSubStreamKey] ?: false }
         val themeMode: Flow<String> = store.data.map { it[themeModeKey] ?: "SYSTEM" }
@@ -56,6 +57,21 @@ class UserSettingsRepository
         val autoRefreshInterval: Flow<Int> = store.data.map { it[autoRefreshIntervalKey] ?: 3 }
         val eventPhotoPreference: Flow<String> = store.data.map { it[eventPhotoPreferenceKey] ?: "snapshot" }
         val liveStreamOption: Flow<String> = store.data.map { it[liveStreamOptionKey] ?: "webrtc" }
+
+        /**
+         * Per-camera live-mode override (camera name -> "webrtc"/"rtsp"/"snapshot").
+         * A camera absent from this map falls back to [liveStreamOption].
+         */
+        val cameraStreamOverrides: Flow<Map<String, String>> =
+            store.data.map { prefs ->
+                prefs[cameraStreamOverridesKey]
+                    ?.split(",")
+                    ?.filter { it.isNotBlank() }
+                    ?.mapNotNull { entry ->
+                        val parts = entry.split(":", limit = 2)
+                        if (parts.size == 2) parts[0] to parts[1] else null
+                    }?.toMap() ?: emptyMap()
+            }
         val showBoundingBoxes: Flow<Boolean> = store.data.map { it[showBoundingBoxesKey] ?: true }
         val eventGridColumns: Flow<Int> = store.data.map { it[eventGridColumnsKey] ?: 1 }
         val dateFormat: Flow<String> = store.data.map { it[dateFormatKey] ?: "descriptive" }
@@ -118,6 +134,23 @@ class UserSettingsRepository
 
         suspend fun setLiveStreamOption(option: String) = store.edit { it[liveStreamOptionKey] = option }
 
+        /** Set [camera]'s live-mode override, or clear it (revert to the global default) when [mode] is null. */
+        suspend fun setCameraStreamOverride(
+            camera: String,
+            mode: String?,
+        ) = store.edit { prefs ->
+            val current =
+                prefs[cameraStreamOverridesKey]
+                    ?.split(",")
+                    ?.filter { it.isNotBlank() }
+                    ?.mapNotNull { entry ->
+                        val parts = entry.split(":", limit = 2)
+                        if (parts.size == 2) parts[0] to parts[1] else null
+                    }?.toMap() ?: emptyMap()
+            val updated = if (mode != null) current + (camera to mode) else current - camera
+            prefs[cameraStreamOverridesKey] = updated.entries.joinToString(",") { "${it.key}:${it.value}" }
+        }
+
         suspend fun setShowBoundingBoxes(show: Boolean) = store.edit { it[showBoundingBoxesKey] = show }
 
         suspend fun setEventGridColumns(columns: Int) = store.edit { it[eventGridColumnsKey] = columns }
@@ -165,5 +198,6 @@ class UserSettingsRepository
             private const val KEY_CARD_CORNER_RADIUS = "card_corner_radius_v1"
             private const val KEY_CARD_BORDER_WIDTH = "card_border_width_v1"
             private const val KEY_CUSTOM_ACCENT_COLORS = "custom_accent_colors_v1"
+            private const val KEY_CAMERA_STREAM_OVERRIDES = "camera_stream_overrides_v1"
         }
     }

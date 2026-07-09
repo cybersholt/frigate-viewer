@@ -2,6 +2,7 @@
 
 package net.triton.frigateviewer.feature.cameras
 
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.animation.core.Animatable
@@ -31,11 +32,14 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.HorizontalDivider
@@ -83,6 +87,8 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sign
 
+private const val TAG = "CamerasScreen"
+
 @EntryPoint
 @InstallIn(SingletonComponent::class)
 interface CamerasEntryPoint {
@@ -97,6 +103,7 @@ interface CamerasEntryPoint {
 @Composable
 fun CamerasScreen(
     onNavigateToEvents: (camera: String?, label: String?, zone: String?) -> Unit = { _, _, _ -> },
+    initialFocusedCamera: String? = null,
     vm: CamerasViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -109,6 +116,16 @@ fun CamerasScreen(
     val frigateClient = entryPoint.frigateClient()
     var focused by remember { mutableStateOf<String?>(null) }
     var showEditSheet by remember { mutableStateOf(false) }
+
+    // frigateviewer://live?camera= deep link — focus once the camera list has loaded
+    // and actually contains the requested name (resolve against the real camera list).
+    var consumedInitialFocus by remember { mutableStateOf(false) }
+    LaunchedEffect(initialFocusedCamera, state.cameras) {
+        if (!consumedInitialFocus && initialFocusedCamera != null && initialFocusedCamera in state.cameras) {
+            focused = initialFocusedCamera
+            consumedInitialFocus = true
+        }
+    }
 
     // Full ordered list for edit sheet (visible + hidden, in persisted order)
     val allCamerasOrdered =
@@ -187,10 +204,14 @@ fun CamerasScreen(
                         preferSubStream = state.preferSubStream,
                         go2rtcStreams = state.go2rtcStreams,
                         hideEventImage = state.hideEventImage,
-                        liveStreamOption = state.liveStreamOption,
+                        liveStreamOption = state.cameraStreamOverrides[focused!!] ?: state.liveStreamOption,
+                        isStreamOptionOverridden = state.cameraStreamOverrides.containsKey(focused!!),
+                        globalDefaultStreamOption = state.liveStreamOption,
+                        onSetStreamOverride = { mode -> vm.setCameraStreamOverride(focused!!, mode) },
                         refreshTimestamp = state.refreshTimestamp,
                         showBoundingBoxes = state.showBoundingBoxes,
                         autoLandscapeOnStream = state.autoLandscapeOnStream,
+                        currentSsid = state.currentSsid,
                         onClose = { focused = null },
                     )
                 } else {
@@ -552,9 +573,13 @@ private fun FocusedTile(
     go2rtcStreams: Set<String>,
     hideEventImage: Boolean,
     liveStreamOption: String,
+    isStreamOptionOverridden: Boolean,
+    globalDefaultStreamOption: String,
+    onSetStreamOverride: (String?) -> Unit,
     refreshTimestamp: Long,
     showBoundingBoxes: Boolean,
     autoLandscapeOnStream: Boolean,
+    currentSsid: String?,
     onClose: () -> Unit,
 ) {
     val baseUrl = effectiveBaseUrl ?: server?.baseUrl()
@@ -592,13 +617,20 @@ private fun FocusedTile(
                 if (parts.size == 2) {
                     val u = java.net.URLEncoder.encode(parts[0], "UTF-8")
                     val p = java.net.URLEncoder.encode(parts[1], "UTF-8")
-                    "rtsp://$u:$p@${server.host}:${server.rtspPort}/$liveCameraName"
+                    // Must target rtspTargetHost (not server.host) — the RTSP port is
+                    // frequently only forwarded/reachable on the LAN-override host.
+                    "rtsp://$u:$p@$rtspTargetHost:${server.rtspPort}/$liveCameraName"
                 } else {
                     base
                 }
             } else {
                 base
             }
+        Log.d(
+            TAG,
+            "RTSP target resolved: host=$rtspTargetHost port=${server.rtspPort} " +
+                "camera=$liveCameraName authenticated=${secret != null}",
+        )
     }
 
     val isFullScreen = LocalFullScreenMode.current.value
@@ -625,9 +657,13 @@ private fun FocusedTile(
         Box(if (isFullScreen) Modifier.fillMaxWidth().weight(1f) else Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
             StreamContent(
                 liveStreamOption = liveStreamOption,
+                isStreamOptionOverridden = isStreamOptionOverridden,
+                globalDefaultStreamOption = globalDefaultStreamOption,
+                onSetStreamOverride = onSetStreamOverride,
                 server = server,
                 okHttpClient = okHttpClient,
                 rtspUrl = rtspUrl,
+                currentSsid = currentSsid,
                 baseUrl = baseUrl,
                 snapshotPath = snapshotPath,
                 liveCameraName = liveCameraName,
@@ -660,9 +696,13 @@ private fun FocusedTile(
 @Composable
 private fun StreamContent(
     liveStreamOption: String,
+    isStreamOptionOverridden: Boolean,
+    globalDefaultStreamOption: String,
+    onSetStreamOverride: (String?) -> Unit,
     server: net.triton.frigateviewer.core.data.Server?,
     okHttpClient: okhttp3.OkHttpClient?,
     rtspUrl: String?,
+    currentSsid: String?,
     baseUrl: String?,
     snapshotPath: String,
     liveCameraName: String,
@@ -678,9 +718,27 @@ private fun StreamContent(
     }
     val snapshotUrl = baseUrl?.trimEnd('/')?.plus("/") + snapshotPath
 
+    // The RTSP port is commonly only reachable via server.rtspHost, a LAN IP — off that
+    // Wi-Fi network the connection will just hang/fail. Gate it and fall back to WebRTC
+    // (which always goes through the public host over 443) instead of failing silently.
+    val rtspOffLan =
+        remember(server, currentSsid) {
+            val lanOnlyHost = server?.rtspHost?.takeIf { it.isNotBlank() }
+            lanOnlyHost != null &&
+                server.localNetworkSsids.isNotEmpty() &&
+                (currentSsid == null || currentSsid !in server.localNetworkSsids)
+        }
+    val effectiveStreamOption =
+        if (liveStreamOption == "rtsp" && rtspOffLan) {
+            Log.i(TAG, "RTSP gated off-LAN (ssid=$currentSsid) for $cameraName — falling back to WebRTC")
+            "webrtc"
+        } else {
+            liveStreamOption
+        }
+
     Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
         if (server != null && okHttpClient != null) {
-            when (liveStreamOption) {
+            when (effectiveStreamOption) {
                 "rtsp" -> {
                     val resolvedRtspUrl = rtspUrl
                     if (resolvedRtspUrl != null) {
@@ -733,11 +791,16 @@ private fun StreamContent(
             streamState = streamState,
             cameraName = cameraName,
             streamTypeLabel =
-                when (liveStreamOption) {
-                    "rtsp" -> "RTSP"
-                    "snapshot" -> "Snapshot"
+                when {
+                    liveStreamOption == "rtsp" && rtspOffLan -> "WebRTC (RTSP: home network only)"
+                    effectiveStreamOption == "rtsp" -> "RTSP"
+                    effectiveStreamOption == "snapshot" -> "Snapshot"
                     else -> "WebRTC"
                 },
+            selectedMode = liveStreamOption,
+            isOverridden = isStreamOptionOverridden,
+            globalDefaultStreamOption = globalDefaultStreamOption,
+            onSetStreamOverride = onSetStreamOverride,
             modifier = Modifier.fillMaxSize(),
         )
     }
@@ -806,6 +869,10 @@ private fun StreamTileBadgeLayer(
     streamState: CameraStreamState,
     cameraName: String,
     streamTypeLabel: String,
+    selectedMode: String,
+    isOverridden: Boolean,
+    globalDefaultStreamOption: String,
+    onSetStreamOverride: (String?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier) {
@@ -825,26 +892,76 @@ private fun StreamTileBadgeLayer(
                 CameraPill(camera = cameraName)
                 StreamStatusBadge(state = streamState)
             }
-            StreamTypeBadge(label = streamTypeLabel)
+            StreamTypeBadge(
+                label = streamTypeLabel,
+                selectedMode = selectedMode,
+                isOverridden = isOverridden,
+                globalDefaultStreamOption = globalDefaultStreamOption,
+                onSetStreamOverride = onSetStreamOverride,
+            )
         }
     }
 }
 
-/** Dark translucent pill showing the active stream protocol (RTSP / WebRTC / Snapshot). */
+/**
+ * Dark translucent pill showing the active stream protocol (RTSP / WebRTC / Snapshot).
+ * Tap opens a menu to override this camera's feed mode; overriding persists per-camera
+ * and takes precedence over the global default set in Settings.
+ */
 @Composable
 private fun StreamTypeBadge(
     label: String,
+    selectedMode: String,
+    isOverridden: Boolean,
+    globalDefaultStreamOption: String,
+    onSetStreamOverride: (String?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Box(
-        modifier.background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(50)),
-    ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelSmall,
-            color = Color.White,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-        )
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier) {
+        Box(
+            Modifier
+                .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(50))
+                .clickable { expanded = true },
+        ) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            listOf("webrtc" to "WebRTC", "rtsp" to "RTSP", "snapshot" to "Snapshot").forEach { (mode, modeLabel) ->
+                DropdownMenuItem(
+                    text = { Text(modeLabel) },
+                    leadingIcon =
+                        if (isOverridden && selectedMode == mode) {
+                            { Icon(Icons.Filled.Check, contentDescription = null) }
+                        } else {
+                            null
+                        },
+                    onClick = {
+                        expanded = false
+                        onSetStreamOverride(mode)
+                    },
+                )
+            }
+            HorizontalDivider()
+            DropdownMenuItem(
+                text = { Text("Use default ($globalDefaultStreamOption)") },
+                leadingIcon =
+                    if (!isOverridden) {
+                        { Icon(Icons.Filled.Check, contentDescription = null) }
+                    } else {
+                        null
+                    },
+                onClick = {
+                    expanded = false
+                    onSetStreamOverride(null)
+                },
+            )
+        }
     }
 }
 

@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.os.Environment
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -93,6 +94,7 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
@@ -102,6 +104,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -144,7 +147,20 @@ data class EventDetailUiState(
     val loadingCameraEvents: Boolean = false,
     val scrubberTimeMs: Long = System.currentTimeMillis(),
     val timeRangeHours: Float = 8f,
+    /** Top-of-visible-window time for [HorizontalTimeline]; <= real now, keeps the scrubber
+     *  in view across zoom/pan instead of always snapping back to "now". */
+    val viewEndMs: Long = System.currentTimeMillis(),
     val selectedView: EventDetailView = EventDetailViewPrefs.selected,
+    /** Severity-classified activity for the visible timeline window (Frigate's `api/review`). */
+    val reviewSegments: List<net.triton.frigateviewer.core.model.ReviewSegment> = emptyList(),
+    /** Gaps in the recording track for the visible timeline window. */
+    val recordingGaps: List<net.triton.frigateviewer.core.model.RecordingGap> = emptyList(),
+    /** [start, end) of the currently loaded hour-chunk VOD manifest (epoch seconds, UTC-aligned). */
+    val recordingChunkAfter: Long = 0L,
+    val recordingChunkBefore: Long = 0L,
+    /** Physical recording segments for the current chunk — drives seek math (VodSeekUtil). */
+    val recordings: List<net.triton.frigateviewer.core.model.RecordingSegment> = emptyList(),
+    val recordingsLoading: Boolean = false,
 )
 
 @HiltViewModel
@@ -165,9 +181,14 @@ class EventDetailViewModel
                     is ApiResult.Success -> {
                         val ev = r.data
                         val evStartMs = (ev.startTime * 1000).toLong()
-                        val ageHours = (System.currentTimeMillis() - evStartMs) / 3_600_000f
+                        val nowMs = System.currentTimeMillis()
+                        val ageHours = (nowMs - evStartMs) / 3_600_000f
                         // Ensure the event is always visible: range = age + 2h buffer, min 4h
                         val initialRange = (ageHours + 2f).coerceIn(4f, 168f)
+                        val initialRangeMs = (initialRange * 3_600_000L).toLong()
+                        // Center the event in view (with headroom above it) instead of always
+                        // pinning the visible window to real "now".
+                        val initialViewEnd = (evStartMs + initialRangeMs / 2).coerceAtMost(nowMs)
                         _state.value =
                             EventDetailUiState(
                                 loading = false,
@@ -175,9 +196,12 @@ class EventDetailViewModel
                                 baseUrl = baseUrl,
                                 scrubberTimeMs = evStartMs,
                                 timeRangeHours = initialRange,
+                                viewEndMs = initialViewEnd,
                                 selectedView = EventDetailViewPrefs.selected,
                             )
                         loadCameraEvents()
+                        loadRecordingsForTime(evStartMs)
+                        loadTimelineData()
                     }
 
                     is ApiResult.HttpError -> {
@@ -193,6 +217,93 @@ class EventDetailViewModel
                     }
                 }
             }
+        }
+
+        /**
+         * Loads the hour-aligned recording chunk containing [timeMs] and its physical segments
+         * (mirrors DynamicVideoPlayer's per-hour `recordings` fetch). No-ops if [timeMs] already
+         * falls within the currently loaded chunk.
+         */
+        fun loadRecordingsForTime(timeMs: Long) {
+            val camera = _state.value.event?.camera ?: return
+            val chunk = VodSeekUtil.hourChunkFor(timeMs / 1000)
+            val s = _state.value
+            if (chunk.first == s.recordingChunkAfter && s.recordingChunkBefore != 0L) return
+            _state.value =
+                s.copy(
+                    recordingsLoading = true,
+                    recordingChunkAfter = chunk.first,
+                    recordingChunkBefore = chunk.last,
+                    recordings = emptyList(),
+                )
+            viewModelScope.launch {
+                when (
+                    val r =
+                        repo.recordings(camera, after = chunk.first.toDouble(), before = chunk.last.toDouble())
+                ) {
+                    is ApiResult.Success -> {
+                        _state.value = _state.value.copy(recordings = r.data, recordingsLoading = false)
+                    }
+
+                    else -> {
+                        _state.value = _state.value.copy(recordings = emptyList(), recordingsLoading = false)
+                    }
+                }
+            }
+        }
+
+        /**
+         * Fetches severity-classified review segments + recording gaps for the currently visible
+         * timeline window (mirrors Frigate's MotionReviewTimeline data sources). This is why
+         * zooming/panning the timeline now reveals detail instead of showing a stale, sparse view.
+         */
+        fun loadTimelineData() {
+            val camera = _state.value.event?.camera ?: return
+            val s = _state.value
+            val rangeMs = (s.timeRangeHours * 3_600_000L).toLong()
+            val afterSec = (s.viewEndMs - rangeMs) / 1000.0
+            val beforeSec = s.viewEndMs / 1000.0
+            viewModelScope.launch {
+                when (val r = repo.review(camera, after = afterSec, before = beforeSec)) {
+                    is ApiResult.Success -> {
+                        _state.value = _state.value.copy(reviewSegments = r.data)
+                    }
+
+                    else -> {}
+                }
+            }
+            viewModelScope.launch {
+                val scaleSeconds = (rangeMs / 1000L / 300L).toInt().coerceIn(1, 3600)
+                when (
+                    val r =
+                        repo.recordingGaps(camera, after = afterSec, before = beforeSec, scale = scaleSeconds)
+                ) {
+                    is ApiResult.Success -> {
+                        _state.value = _state.value.copy(recordingGaps = r.data)
+                    }
+
+                    else -> {}
+                }
+            }
+        }
+
+        private var timelineDataJob: Job? = null
+
+        /** Debounced [loadTimelineData] for continuous zoom/pan gestures. */
+        private fun scheduleTimelineDataRefresh() {
+            timelineDataJob?.cancel()
+            timelineDataJob =
+                viewModelScope.launch {
+                    delay(400)
+                    loadTimelineData()
+                }
+        }
+
+        /** Called on player STATE_ENDED — advances to the next hour so playback doesn't stop at :59. */
+        fun advanceToNextChunk() {
+            val nextChunkStartSec = _state.value.recordingChunkBefore
+            if (nextChunkStartSec >= System.currentTimeMillis() / 1000L) return
+            loadRecordingsForTime(nextChunkStartSec * 1000L + 1000L)
         }
 
         private var fetchedWindowDays = 7
@@ -224,14 +335,45 @@ class EventDetailViewModel
             _state.value = _state.value.copy(selectedView = view)
         }
 
+        /** Moves the scrubber only — used by in-timeline tap/drag so the view doesn't jump. */
         fun setScrubberTime(timeMs: Long) {
             _state.value = _state.value.copy(scrubberTimeMs = timeMs)
         }
 
+        /** Moves the scrubber AND recenters the view — used by deliberate jumps (date picker). */
+        fun jumpToTime(timeMs: Long) {
+            val rangeMs = (_state.value.timeRangeHours * 3_600_000L).toLong()
+            val nowMs = System.currentTimeMillis()
+            val centeredEnd = (timeMs + rangeMs / 2).coerceAtMost(nowMs)
+            _state.value = _state.value.copy(scrubberTimeMs = timeMs, viewEndMs = centeredEnd)
+            requestMoreHistoryIfNeeded(centeredEnd - rangeMs)
+            loadTimelineData()
+        }
+
+        /** Pans the visible window by [deltaMs] (positive = toward now, negative = further back). */
+        fun panView(deltaMs: Long) {
+            val rangeMs = (_state.value.timeRangeHours * 3_600_000L).toLong()
+            val nowMs = System.currentTimeMillis()
+            val newViewEnd = (_state.value.viewEndMs + deltaMs).coerceAtMost(nowMs)
+            _state.value = _state.value.copy(viewEndMs = newViewEnd)
+            requestMoreHistoryIfNeeded(newViewEnd - rangeMs)
+            scheduleTimelineDataRefresh()
+        }
+
         fun zoomTimeline(factor: Float) {
             val newRange = (_state.value.timeRangeHours * factor).coerceIn(1f, 720f)
-            _state.value = _state.value.copy(timeRangeHours = newRange)
-            val neededDays = (newRange / 24).toInt().coerceAtLeast(7)
+            val newRangeMs = (newRange * 3_600_000L).toLong()
+            val nowMs = System.currentTimeMillis()
+            // Recenter on the scrubber so zooming in keeps whatever you're looking at in view,
+            // instead of re-snapping the window to "now" and losing the scrubbed position.
+            val centeredEnd = (_state.value.scrubberTimeMs + newRangeMs / 2).coerceAtMost(nowMs)
+            _state.value = _state.value.copy(timeRangeHours = newRange, viewEndMs = centeredEnd)
+            requestMoreHistoryIfNeeded(centeredEnd - newRangeMs)
+            scheduleTimelineDataRefresh()
+        }
+
+        private fun requestMoreHistoryIfNeeded(oldestVisibleMs: Long) {
+            val neededDays = ((System.currentTimeMillis() - oldestVisibleMs) / 86_400_000L).toInt().coerceAtLeast(7)
             if (neededDays > fetchedWindowDays) {
                 fetchedWindowDays = neededDays.coerceAtMost(30)
                 loadCameraEvents(force = true)
@@ -269,9 +411,6 @@ fun EventDetailScreen(
     var showViewSheet by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
-    // "vod" = HLS hour-long VOD (scrubable), "clip" = direct MP4 clip (fast start)
-    var playbackMode by remember { mutableStateOf("vod") }
-    var useSubstream by remember { mutableStateOf(false) }
 
     // ── Date picker ──
     if (showDatePicker) {
@@ -280,7 +419,7 @@ fun EventDetailScreen(
             onDismissRequest = { showDatePicker = false },
             confirmButton = {
                 TextButton(onClick = {
-                    datePickerState.selectedDateMillis?.let { vm.setScrubberTime(it) }
+                    datePickerState.selectedDateMillis?.let { vm.jumpToTime(it) }
                     showDatePicker = false
                 }) { Text("OK") }
             },
@@ -357,24 +496,37 @@ fun EventDetailScreen(
             val ev = state.event!!
             val evStartMs = (ev.startTime * 1000).toLong()
             val clipUrl = state.baseUrl?.trimEnd('/')?.let { "$it/api/events/${ev.id}/clip.mp4" }
-            // VOD URL uses UTC — Frigate (Docker) stores recordings by UTC hour, not device local time
-            val scrubLdt = Instant.fromEpochMilliseconds(state.scrubberTimeMs).toLocalDateTime(TimeZone.UTC)
-            val vodCamera = if (useSubstream) "${ev.camera}_sub" else ev.camera
+            // Recordings are only ever stored per top-level camera — "_sub" is a go2rtc live-restream
+            // naming convention with no recordings counterpart, so there is no substream VOD to request.
+            // Continuous VOD: a range-based master.m3u8 per hour-chunk (matches Frigate's own web
+            // frontend, DynamicVideoPlayer.tsx), not the old date/hour/camera/index.m3u8 shape.
+            val chunkAfter = state.recordingChunkAfter
+            val chunkBefore = state.recordingChunkBefore
             val vodUrl =
                 state.baseUrl?.trimEnd('/')?.let { base ->
-                    val y = scrubLdt.year
-                    val mo = scrubLdt.monthNumber.toString().padStart(2, '0')
-                    val d = scrubLdt.dayOfMonth.toString().padStart(2, '0')
-                    val h = scrubLdt.hour.toString().padStart(2, '0')
-                    "$base/vod/$y-$mo/$d/$h/$vodCamera/index.m3u8"
+                    "$base/vod/${ev.camera}/start/$chunkAfter/end/$chunkBefore/master.m3u8"
                 }
-            // Seek offset = ms elapsed since the start of the scrubber's current hour
-            val vodHourStartMs =
-                state.scrubberTimeMs - (scrubLdt.minute * 60L + scrubLdt.second) * 1000L - scrubLdt.nanosecond / 1_000_000L
-            val vodSeekMs = (state.scrubberTimeMs - vodHourStartMs).coerceAtLeast(0L)
-            // Active URL and seek based on current playback mode
-            val activePlayerUrl = if (playbackMode == "clip") clipUrl else vodUrl
-            val activeSeekMs = if (playbackMode == "clip") 0L else vodSeekMs
+            val scrubberSec = state.scrubberTimeMs / 1000.0
+            val inCurrentChunk = chunkBefore > 0L && scrubberSec >= chunkAfter && scrubberSec <= chunkBefore
+            val inpointOffset =
+                VodSeekUtil.calculateInpointOffset(chunkAfter.toDouble(), state.recordings.firstOrNull())
+            val seekSeconds =
+                if (inCurrentChunk) {
+                    VodSeekUtil.calculateSeekPosition(scrubberSec, state.recordings, inpointOffset)
+                } else {
+                    null
+                }
+
+            // Scrubbed (or jumped-to) outside the loaded chunk — fetch the hour that contains it.
+            LaunchedEffect(state.scrubberTimeMs, chunkAfter, chunkBefore) {
+                if (!inCurrentChunk) {
+                    vm.loadRecordingsForTime(state.scrubberTimeMs)
+                }
+            }
+
+            LaunchedEffect(vodUrl, seekSeconds) {
+                Log.d("EventDetail", "vod url=$vodUrl seekSeconds=$seekSeconds chunk=[$chunkAfter,$chunkBefore)")
+            }
 
             Column(
                 Modifier
@@ -462,56 +614,6 @@ fun EventDetailScreen(
                     HorizontalDivider()
                 }
 
-                // ── Stream type controls ──
-                if (!fullScreen.value) {
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 2.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        listOf("vod" to "VOD", "clip" to "Clip").forEach { (mode, label) ->
-                            if (playbackMode == mode) {
-                                Button(
-                                    onClick = {},
-                                    modifier = Modifier.height(28.dp),
-                                    contentPadding =
-                                        androidx.compose.foundation.layout
-                                            .PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                                ) { Text(label, style = MaterialTheme.typography.labelMedium) }
-                            } else {
-                                OutlinedButton(
-                                    onClick = { playbackMode = mode },
-                                    modifier = Modifier.height(28.dp),
-                                    contentPadding =
-                                        androidx.compose.foundation.layout
-                                            .PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                                ) { Text(label, style = MaterialTheme.typography.labelMedium) }
-                            }
-                        }
-                        if (playbackMode == "vod") {
-                            if (useSubstream) {
-                                Button(
-                                    onClick = { useSubstream = false },
-                                    modifier = Modifier.height(28.dp),
-                                    contentPadding =
-                                        androidx.compose.foundation.layout
-                                            .PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                                ) { Text("Sub", style = MaterialTheme.typography.labelMedium) }
-                            } else {
-                                OutlinedButton(
-                                    onClick = { useSubstream = true },
-                                    modifier = Modifier.height(28.dp),
-                                    contentPadding =
-                                        androidx.compose.foundation.layout
-                                            .PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                                ) { Text("Sub", style = MaterialTheme.typography.labelMedium) }
-                            }
-                        }
-                    }
-                }
-
                 // ── Player / Snapshot ──
                 Box(
                     Modifier
@@ -520,13 +622,18 @@ fun EventDetailScreen(
                             if (fullScreen.value) Modifier.weight(1f) else Modifier.aspectRatio(16f / 9f),
                         ),
                 ) {
-                    if (activePlayerUrl != null && okHttpClient != null) {
-                        ClipPlayer(
-                            url = activePlayerUrl,
+                    if (vodUrl != null && okHttpClient != null && state.recordings.isNotEmpty()) {
+                        RecordingPlayer(
+                            url = vodUrl,
                             okHttpClient = okHttpClient!!,
-                            seekPositionMs = activeSeekMs,
+                            seekSeconds = seekSeconds ?: 0.0,
+                            onEnded = vm::advanceToNextChunk,
                             modifier = Modifier.fillMaxSize(),
                         )
+                    } else if (state.recordingsLoading) {
+                        Box(Modifier.fillMaxSize().background(Color.Black)) {
+                            CircularProgressIndicator(Modifier.align(Alignment.Center), color = Color.White)
+                        }
                     } else if (ev.hasSnapshot) {
                         FrigateImage(
                             relativePath = "api/events/${ev.id}/snapshot.jpg?h=720",
@@ -555,10 +662,13 @@ fun EventDetailScreen(
                     when (state.selectedView) {
                         EventDetailView.TIMELINE -> {
                             HorizontalTimeline(
-                                events = state.cameraEvents,
+                                reviewSegments = state.reviewSegments,
+                                recordingGaps = state.recordingGaps,
                                 scrubberTimeMs = state.scrubberTimeMs,
                                 timeRangeHours = state.timeRangeHours,
+                                viewEndMs = state.viewEndMs,
                                 onScrub = vm::setScrubberTime,
+                                onPan = vm::panView,
                                 onZoomChange = vm::zoomTimeline,
                                 modifier = Modifier.weight(1f).fillMaxWidth(),
                             )
@@ -894,17 +1004,18 @@ private fun EventDetailTimeline(
     }
 }
 
-// ── Clip player ──
+// ── Continuous recording (VOD) player ──
 
-private enum class ClipPlayerState { BUFFERING, READY, ERROR }
+private enum class RecordingPlayerState { BUFFERING, READY, ERROR }
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ClipPlayer(
+private fun RecordingPlayer(
     url: String,
     okHttpClient: okhttp3.OkHttpClient,
-    seekPositionMs: Long = 0L,
+    seekSeconds: Double = 0.0,
+    onEnded: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -914,20 +1025,26 @@ private fun ClipPlayer(
     var isMuted by remember { mutableStateOf(true) }
     var playbackSpeed by remember { mutableFloatStateOf(1f) }
     var showSpeedMenu by remember { mutableStateOf(false) }
-    var clipState by remember(url) { mutableStateOf(ClipPlayerState.BUFFERING) }
+    var clipState by remember(url) { mutableStateOf(RecordingPlayerState.BUFFERING) }
     var errorMsg by remember(url) { mutableStateOf<String?>(null) }
-    // Pending seek applied by the listener once player reaches STATE_READY
+    // Pending seek (ms) applied by the listener once player reaches STATE_READY
     val seekRef =
         remember {
             java.util.concurrent.atomic
-                .AtomicLong(seekPositionMs)
+                .AtomicLong((seekSeconds * 1000).toLong())
         }
 
     val player =
         remember(url) {
             val dataSourceFactory = OkHttpDataSource.Factory(okHttpClient)
+            // setEnableDecoderFallback: some hardware H.264 decoders (e.g. Exynos, on 4K streams)
+            // reject setOutputSurface with BAD_INDEX. Without fallback that's a fatal codec crash;
+            // with it, ExoPlayer retries the same stream on a software decoder.
+            val renderersFactory =
+                DefaultRenderersFactory(context)
+                    .setEnableDecoderFallback(true)
             ExoPlayer
-                .Builder(context)
+                .Builder(context, renderersFactory)
                 .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
                 .build()
                 .apply {
@@ -966,13 +1083,23 @@ private fun ClipPlayer(
                 override fun onPlaybackStateChanged(state: Int) {
                     when (state) {
                         Player.STATE_BUFFERING -> {
-                            clipState = ClipPlayerState.BUFFERING
+                            clipState = RecordingPlayerState.BUFFERING
                         }
 
                         Player.STATE_READY -> {
-                            clipState = ClipPlayerState.READY
-                            val pending = seekRef.get()
+                            clipState = RecordingPlayerState.READY
+                            // getAndSet consumes the pending seek exactly once. Every segment
+                            // boundary rebuffers momentarily and re-enters STATE_READY, so a
+                            // plain get() here would re-seek back to the scrub target forever —
+                            // playback could never advance past the first segment after a seek.
+                            val pending = seekRef.getAndSet(-1L)
                             if (pending > 0L) player.seekTo(pending)
+                        }
+
+                        Player.STATE_ENDED -> {
+                            // End of this hour-chunk's recordings — advance to the next hour
+                            // instead of stopping, so continuous playback doesn't halt at :59.
+                            onEnded()
                         }
 
                         else -> {}
@@ -980,8 +1107,14 @@ private fun ClipPlayer(
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
-                    clipState = ClipPlayerState.ERROR
+                    clipState = RecordingPlayerState.ERROR
                     errorMsg = error.localizedMessage ?: "Playback error"
+                    Log.e(
+                        "EventDetail",
+                        "Playback failed for url=$url errorCode=${error.errorCode} " +
+                            "(${error.errorCodeName}): ${error.message}",
+                        error.cause,
+                    )
                 }
             }
         player.addListener(listener)
@@ -994,11 +1127,13 @@ private fun ClipPlayer(
     }
 
     // Update seekRef and debounce scrubber drags; if already READY, seek directly
-    LaunchedEffect(seekPositionMs) {
-        seekRef.set(seekPositionMs)
+    LaunchedEffect(seekSeconds) {
+        val seekMs = (seekSeconds * 1000).toLong()
+        seekRef.set(seekMs)
         delay(300)
         if (player.playbackState == Player.STATE_READY) {
-            player.seekTo(seekPositionMs)
+            val pending = seekRef.getAndSet(-1L)
+            if (pending > 0L) player.seekTo(pending)
         }
     }
 
@@ -1016,7 +1151,7 @@ private fun ClipPlayer(
         )
 
         // ── Buffering indicator ──
-        if (clipState == ClipPlayerState.BUFFERING) {
+        if (clipState == RecordingPlayerState.BUFFERING) {
             CircularProgressIndicator(
                 modifier = Modifier.align(Alignment.Center),
                 color = Color.White,
@@ -1025,7 +1160,7 @@ private fun ClipPlayer(
         }
 
         // ── Error overlay ──
-        if (clipState == ClipPlayerState.ERROR) {
+        if (clipState == RecordingPlayerState.ERROR) {
             Column(
                 modifier =
                     Modifier
@@ -1045,7 +1180,7 @@ private fun ClipPlayer(
                 }
                 OutlinedButton(
                     onClick = {
-                        clipState = ClipPlayerState.BUFFERING
+                        clipState = RecordingPlayerState.BUFFERING
                         errorMsg = null
                         player.prepare()
                         player.play()

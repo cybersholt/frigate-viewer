@@ -19,8 +19,9 @@ import javax.inject.Singleton
  * Secrets layer.
  *
  *   Layout on disk:
- *     filesDir/secrets/<serverId>.bin   -- AEAD-encrypted blob containing the password / JWT
- *     filesDir/secrets/<serverId>.pem   -- pinned certificate (not secret, but co-located)
+ *     filesDir/secrets/<serverId>.bin         -- AEAD-encrypted blob containing the password / JWT
+ *     filesDir/secrets/<serverId>.cookies.bin -- AEAD-encrypted blob containing the session cookie(s)
+ *     filesDir/secrets/<serverId>.pem         -- pinned certificate (not secret, but co-located)
  *
  *   Master key wrapped by Android Keystore (Tink AndroidKeysetManager).
  *
@@ -53,6 +54,8 @@ class CredentialStore
         private fun secretsDir() = File(context.filesDir, "secrets").apply { mkdirs() }
 
         private fun blobFile(serverId: String) = File(secretsDir(), "$serverId.bin")
+
+        private fun cookieFile(serverId: String) = File(secretsDir(), "$serverId.cookies.bin")
 
         private fun certFile(serverId: String) = File(secretsDir(), "$serverId.pem")
 
@@ -98,10 +101,38 @@ class CredentialStore
             // store only the password must include the username inline before calling setPassword().
         }
 
+        /** Persists the serialized Frigate session cookie(s) for [serverId], AEAD-encrypted. */
+        suspend fun setCookies(
+            serverId: String,
+            serialized: String,
+        ) = mutex.withLock {
+            withContext(Dispatchers.IO) {
+                if (serialized.isEmpty()) {
+                    cookieFile(serverId).delete()
+                } else {
+                    val ct = aead.encrypt(serialized.toByteArray(Charsets.UTF_8), AAD)
+                    cookieFile(serverId).writeBytes(ct)
+                }
+            }
+        }
+
+        /** Returns the serialized session cookie(s) for [serverId], or null if none stored. */
+        suspend fun cookies(serverId: String): String? =
+            mutex.withLock {
+                withContext(Dispatchers.IO) {
+                    val f = cookieFile(serverId)
+                    if (!f.exists()) return@withContext null
+                    runCatching {
+                        String(aead.decrypt(f.readBytes(), AAD), Charsets.UTF_8)
+                    }.getOrNull()
+                }
+            }
+
         suspend fun delete(serverId: String) =
             mutex.withLock {
                 withContext(Dispatchers.IO) {
                     blobFile(serverId).delete()
+                    cookieFile(serverId).delete()
                     certFile(serverId).delete()
                 }
             }

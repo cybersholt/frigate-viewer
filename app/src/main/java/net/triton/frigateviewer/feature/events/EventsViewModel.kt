@@ -61,6 +61,9 @@ class EventsViewModel
         private var refreshJob: Job? = null
         private var fetchedWindowDays = 7
 
+        /** Single source of truth for camera display order — same list the Cameras grid uses. */
+        private var cameraOrder: List<String> = emptyList()
+
         init {
             viewModelScope.launch {
                 combine(
@@ -81,6 +84,13 @@ class EventsViewModel
                 }.collectLatest {
                     refresh()
                     startOrStopAutoRefresh()
+                }
+            }
+
+            viewModelScope.launch {
+                userSettingsRepo.cameraOrder.collect { order ->
+                    cameraOrder = order
+                    if (allEvents.isNotEmpty()) updateAvailableFilters(allEvents)
                 }
             }
 
@@ -241,7 +251,15 @@ class EventsViewModel
         }
 
         private fun updateAvailableFilters(events: List<FrigateEvent>) {
-            val cameras = events.map { it.camera }.distinct().sorted()
+            val seen = events.map { it.camera }.distinct()
+            val cameras =
+                if (cameraOrder.isEmpty()) {
+                    seen.sorted()
+                } else {
+                    val inOrder = cameraOrder.filter { it in seen }
+                    val notInOrder = seen.filter { it !in cameraOrder }.sorted()
+                    inOrder + notInOrder
+                }
             val labels = events.map { it.label }.distinct().sorted()
             val zones = events.flatMap { it.zones }.distinct().sorted()
             _state.value =

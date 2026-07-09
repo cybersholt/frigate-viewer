@@ -3,6 +3,7 @@ package net.triton.frigateviewer.feature.cameras
 import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.util.Log
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -200,6 +201,13 @@ fun WebRtcLiveTile(
             controller.show(WindowInsetsCompat.Type.systemBars())
         }
         onDispose { controller.show(WindowInsetsCompat.Type.systemBars()) }
+    }
+
+    // System/predictive back must collapse fullscreen (restoring orientation via the
+    // isFullScreen effects above) before falling through to navigation, same as the
+    // fullscreen toggle button below — otherwise Back exits to the grid still landscape-locked.
+    if (isFullScreen) {
+        BackHandler { isFullScreen = false }
     }
 
     // Reconnect when returning from background: the peer connection silently dies

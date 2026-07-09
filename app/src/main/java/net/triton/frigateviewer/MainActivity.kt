@@ -1,5 +1,7 @@
 package net.triton.frigateviewer
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -28,6 +30,7 @@ import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
@@ -62,13 +65,48 @@ val LocalFullScreenMode =
         error("LocalFullScreenMode not provided")
     }
 
+/** Parsed target from a `frigateviewer://` deep link (HA motion-alert notifications). */
+private data class DeepLinkTarget(
+    val camera: String?,
+    val eventId: String?,
+)
+
+/**
+ * Resolves `frigateviewer://live?camera=<cam>` and `frigateviewer://event?id=<id>&camera=<cam>`.
+ * Also tolerates senders (e.g. HA's `intent://` wrapping) that deliver `camera`/`id` as plain
+ * string extras instead of encoding them in the data URI.
+ */
+private fun resolveDeepLink(intent: Intent?): DeepLinkTarget? {
+    if (intent?.action != Intent.ACTION_VIEW) return null
+    val data: Uri? = intent.data
+    if (data != null && data.scheme == "frigateviewer") {
+        val camera = data.getQueryParameter("camera") ?: intent.getStringExtra("camera")
+        val id = data.getQueryParameter("id") ?: intent.getStringExtra("id")
+        return when (data.host) {
+            "live" -> DeepLinkTarget(camera = camera, eventId = null)
+            "event" -> DeepLinkTarget(camera = camera, eventId = id)
+            else -> null
+        }
+    }
+    val camera = intent.getStringExtra("camera")
+    val id = intent.getStringExtra("id")
+    return when {
+        id != null -> DeepLinkTarget(camera = camera, eventId = id)
+        camera != null -> DeepLinkTarget(camera = camera, eventId = null)
+        else -> null
+    }
+}
+
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     @Inject lateinit var userSettingsRepo: UserSettingsRepository
 
+    private val deepLinkTarget = mutableStateOf<DeepLinkTarget?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        deepLinkTarget.value = resolveDeepLink(intent)
         setContent {
             val themeModeStr by userSettingsRepo.themeMode.collectAsState("SYSTEM")
             val accentColorLong by userSettingsRepo.accentColor.collectAsState(0xFF6750A4L)
@@ -102,9 +140,15 @@ class MainActivity : ComponentActivity() {
                 cardCornerRadius = cardCornerRadius,
                 cardBorderWidth = cardBorderWidth,
             ) {
-                AppRoot()
+                AppRoot(deepLinkTarget = deepLinkTarget)
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        deepLinkTarget.value = resolveDeepLink(intent)
     }
 }
 
@@ -121,6 +165,11 @@ private sealed class Dest(
 }
 
 private val tabs = listOf(Dest.Cameras, Dest.Events, Dest.Settings)
+
+// Route with an optional camera to auto-focus (live?camera= deep links land here)
+private const val CAMERAS_ROUTE = "cameras?camera={camera}"
+
+private fun camerasRouteWith(camera: String? = null): String = if (camera != null) "cameras?camera=$camera" else "cameras"
 
 // Route for events with optional filter query params
 private const val EVENTS_ROUTE = "events?camera={camera}&label={label}&zone={zone}"
@@ -140,13 +189,29 @@ private fun eventsRouteWith(
 }
 
 @Composable
-private fun AppRoot() {
+private fun AppRoot(deepLinkTarget: MutableState<DeepLinkTarget?> = remember { mutableStateOf(null) }) {
     val nav = rememberNavController()
     val backStack by nav.currentBackStackEntryAsState()
     val current = backStack?.destination
     // A destination is "on tab" if its route starts with a tab's base route
     val onTab = tabs.any { tab -> current?.route?.startsWith(tab.route) == true }
     val fullScreen = remember { mutableStateOf(false) }
+
+    // Routes a frigateviewer:// deep link (cold or warm start) into the existing nav
+    // graph, then clears the target so it isn't re-applied on the next recomposition.
+    LaunchedEffect(deepLinkTarget.value) {
+        val target = deepLinkTarget.value ?: return@LaunchedEffect
+        if (target.eventId != null) {
+            nav.navigate("event/${target.eventId}") { launchSingleTop = true }
+        } else if (target.camera != null) {
+            nav.navigate(camerasRouteWith(target.camera)) {
+                launchSingleTop = true
+                restoreState = true
+                popUpTo(nav.graph.startDestinationId) { saveState = true }
+            }
+        }
+        deepLinkTarget.value = null
+    }
 
     CompositionLocalProvider(LocalFullScreenMode provides fullScreen) {
         Scaffold(
@@ -200,11 +265,22 @@ private fun AppRoot() {
         ) { padding ->
             NavHost(
                 navController = nav,
-                startDestination = Dest.Cameras.route,
+                startDestination = CAMERAS_ROUTE,
                 modifier = Modifier.padding(padding),
             ) {
-                composable(Dest.Cameras.route) {
+                composable(
+                    route = CAMERAS_ROUTE,
+                    arguments =
+                        listOf(
+                            navArgument("camera") {
+                                type = NavType.StringType
+                                nullable = true
+                                defaultValue = null
+                            },
+                        ),
+                ) { entry ->
                     CamerasScreen(
+                        initialFocusedCamera = entry.arguments?.getString("camera"),
                         onNavigateToEvents = { camera, label, zone ->
                             nav.navigate(eventsRouteWith(camera, label, zone)) {
                                 launchSingleTop = true
