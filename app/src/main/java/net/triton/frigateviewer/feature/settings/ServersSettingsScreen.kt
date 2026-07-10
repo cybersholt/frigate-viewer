@@ -103,6 +103,10 @@ fun ServersSettingsScreen(
         ServerFormSheet(
             form = form,
             currentSsid = currentSsid,
+            connectionTest = connectionTest,
+            onTest = { draft -> vm.testDraftConnection(draft) },
+            onClearTest = { vm.clearConnectionTest() },
+            onPermissionGranted = { vm.refreshWifiSsid() },
             onDismiss = { editing = null },
             onSave = {
                 vm.saveServer(it)
@@ -202,21 +206,36 @@ internal fun ServerRow(
 internal fun ServerFormSheet(
     form: ServerForm,
     currentSsid: String?,
+    connectionTest: ConnectionTestResult?,
+    onTest: (ServerForm) -> Unit,
+    onClearTest: () -> Unit,
+    onPermissionGranted: () -> Unit = {},
     onDismiss: () -> Unit,
     onSave: (ServerForm) -> Unit,
 ) {
     var current by remember { mutableStateOf(form) }
     var newSsidInput by remember { mutableStateOf("") }
+    var testing by remember { mutableStateOf(false) }
     val scroll = rememberScrollState()
     val context = LocalContext.current
+    var hasLocationPermission by
+        remember {
+            mutableStateOf(
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                ) == PackageManager.PERMISSION_GRANTED,
+            )
+        }
 
+    // Granting the permission doesn't retroactively fix an already-null currentSsid on its own
+    // (see WifiMonitor.refresh doc) — onPermissionGranted asks the ViewModel to force a fresh read.
     val locationPermLauncher =
         rememberLauncherForActivityResult(
             ActivityResultContracts.RequestPermission(),
         ) { granted ->
-            if (granted && currentSsid != null && currentSsid !in current.localNetworkSsids) {
-                current = current.copy(localNetworkSsids = current.localNetworkSsids + currentSsid)
-            }
+            hasLocationPermission = granted
+            if (granted) onPermissionGranted()
         }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -226,6 +245,13 @@ internal fun ServerFormSheet(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Cancel") }
+                OutlinedButton(
+                    onClick = {
+                        testing = true
+                        onTest(current)
+                    },
+                    modifier = Modifier.weight(1f),
+                ) { Text("Test") }
                 Button(onClick = { onSave(current) }, modifier = Modifier.weight(1f)) { Text("Save") }
             }
             HorizontalDivider()
@@ -356,20 +382,25 @@ internal fun ServerFormSheet(
                     ) { Text("Add") }
                 }
 
-                if (currentSsid != null) {
+                // Was previously gated behind `currentSsid != null` — a dead end, since Android
+                // only reports the real SSID once ACCESS_FINE_LOCATION is granted, and that grant
+                // can only happen by tapping a button that this same condition was hiding. Always
+                // show a path forward instead: request permission first, then reveal Add/Current-SSID.
+                if (!hasLocationPermission) {
+                    Text(
+                        "Grant location access so Android can report your Wi-Fi network name " +
+                            "(required for local-network switching).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(onClick = { locationPermLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION) }) {
+                        Text("Grant location access")
+                    }
+                } else if (currentSsid != null) {
                     TextButton(
                         onClick = {
-                            val hasPermission =
-                                ContextCompat.checkSelfPermission(
-                                    context,
-                                    Manifest.permission.ACCESS_FINE_LOCATION,
-                                ) == PackageManager.PERMISSION_GRANTED
-                            if (hasPermission) {
-                                if (currentSsid !in current.localNetworkSsids) {
-                                    current = current.copy(localNetworkSsids = current.localNetworkSsids + currentSsid)
-                                }
-                            } else {
-                                locationPermLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                            if (currentSsid !in current.localNetworkSsids) {
+                                current = current.copy(localNetworkSsids = current.localNetworkSsids + currentSsid)
                             }
                         },
                         modifier = Modifier.padding(top = 0.dp),
@@ -381,9 +412,38 @@ internal fun ServerFormSheet(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                } else {
+                    Text(
+                        "Not currently connected to Wi-Fi.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
+    }
+
+    if (testing && connectionTest != null && connectionTest.serverId == current.id) {
+        ConnectionTestDialog(
+            result = connectionTest,
+            onDismiss = {
+                testing = false
+                onClearTest()
+            },
+        )
+    } else if (testing) {
+        // Waiting for the in-flight draft test to complete.
+        AlertDialog(
+            onDismissRequest = { testing = false },
+            confirmButton = {},
+            title = { Text("Testing connection…") },
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    CircularProgressIndicator(modifier = Modifier.padding(4.dp))
+                    Text("Contacting server…")
+                }
+            },
+        )
     }
 }
 

@@ -47,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -105,7 +106,7 @@ fun EventsScreen(
                     }
                 },
             ) {
-                IconButton(onClick = { showFilter = true }) {
+                IconButton(onClick = { showFilter = true }, modifier = Modifier.testTag("events_filter_button")) {
                     Icon(Icons.Filled.Tune, contentDescription = "Filters")
                 }
             }
@@ -204,7 +205,7 @@ private fun EventCard(
 ) {
     Card(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().testTag("event_card_${ev.id}"),
     ) {
         Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
             if (ev.hasSnapshot && baseUrl != null) {

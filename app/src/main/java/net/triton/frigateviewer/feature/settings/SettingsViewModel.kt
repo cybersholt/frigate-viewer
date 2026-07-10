@@ -69,6 +69,8 @@ data class SettingsUiState(
     val gridStreamType: String = "snapshot",
     val fullscreenStreamType: String = "webrtc",
     val keepOffscreenTilesAlive: Boolean = false,
+    val rtspReconnectAttempts: Int = 2,
+    val rtspReconnectBaseDelaySeconds: Int = 2,
     val showBoundingBoxes: Boolean = true,
     val eventGridColumns: Int = 1,
     val dateFormat: String = "descriptive",
@@ -92,6 +94,9 @@ class SettingsViewModel
         private val wifiMonitor: WifiMonitor,
     ) : ViewModel() {
         val currentSsid: kotlinx.coroutines.flow.StateFlow<String?> = wifiMonitor.ssid
+
+        /** Call right after the user grants ACCESS_FINE_LOCATION — see [WifiMonitor.refresh]. */
+        fun refreshWifiSsid() = wifiMonitor.refresh()
 
         val state: kotlinx.coroutines.flow.StateFlow<SettingsUiState> =
             combine<Any?, SettingsUiState>(
@@ -121,6 +126,8 @@ class SettingsViewModel
                 userSettingsRepo.fullscreenStreamType,
                 userSettingsRepo.preferSubStreamFullscreen,
                 userSettingsRepo.keepOffscreenTilesAlive,
+                userSettingsRepo.rtspReconnectAttempts,
+                userSettingsRepo.rtspReconnectBaseDelaySeconds,
             ) { args ->
                 @Suppress("UNCHECKED_CAST")
                 SettingsUiState(
@@ -150,44 +157,54 @@ class SettingsViewModel
                     fullscreenStreamType = args[23] as String,
                     preferSubStreamFullscreen = args[24] as Boolean,
                     keepOffscreenTilesAlive = args[25] as Boolean,
+                    rtspReconnectAttempts = args[26] as Int,
+                    rtspReconnectBaseDelaySeconds = args[27] as Int,
                 )
             }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
         @Suppress("unused")
         private val _testResult = MutableStateFlow<String?>(null)
 
+        /**
+         * Builds the [Server] a [ServerForm] would save as, without persisting anything —
+         * shared by [saveServer] and [testDraftConnection] so the host:port-extraction logic
+         * (and everything else derived from the form) has exactly one implementation.
+         */
+        private fun ServerForm.toDraftServer(): Server {
+            val inputHost = host.trim()
+            val (finalHost, extractedPort) =
+                if (inputHost.contains(":")) {
+                    val parts = inputHost.split(":")
+                    parts[0] to parts[1].toIntOrNull()
+                } else {
+                    inputHost to null
+                }
+
+            // If the user entered a port in the dedicated field, use it.
+            // If the field is blank, check if we extracted a port from the host field.
+            // Otherwise, it remains null (using protocol defaults).
+            val resolvedPort = port.trim().let { if (it.isEmpty()) extractedPort else it.toIntOrNull() }
+
+            return Server(
+                id = id,
+                name = name.ifBlank { finalHost },
+                protocol = protocol,
+                host = finalHost,
+                port = resolvedPort,
+                basePath = basePath.trim(),
+                authMode = authMode,
+                username = username.ifBlank { null },
+                allowUntrusted = allowUntrusted,
+                rtspPort = rtspPort.toIntOrNull() ?: 8554,
+                rtspHost = rtspHost.trim().ifBlank { null },
+                localNetworkUrl = localNetworkUrl.trim().ifBlank { null },
+                localNetworkSsids = localNetworkSsids,
+            )
+        }
+
         fun saveServer(form: ServerForm) {
             viewModelScope.launch {
-                val inputHost = form.host.trim()
-                val (finalHost, extractedPort) =
-                    if (inputHost.contains(":")) {
-                        val parts = inputHost.split(":")
-                        parts[0] to parts[1].toIntOrNull()
-                    } else {
-                        inputHost to null
-                    }
-
-                // If the user entered a port in the dedicated field, use it.
-                // If the field is blank, check if we extracted a port from the host field.
-                // Otherwise, it remains null (using protocol defaults).
-                val port = form.port.trim().let { if (it.isEmpty()) extractedPort else it.toIntOrNull() }
-
-                val server =
-                    Server(
-                        id = form.id,
-                        name = form.name.ifBlank { finalHost },
-                        protocol = form.protocol,
-                        host = finalHost,
-                        port = port,
-                        basePath = form.basePath.trim(),
-                        authMode = form.authMode,
-                        username = form.username.ifBlank { null },
-                        allowUntrusted = form.allowUntrusted,
-                        rtspPort = form.rtspPort.toIntOrNull() ?: 8554,
-                        rtspHost = form.rtspHost.trim().ifBlank { null },
-                        localNetworkUrl = form.localNetworkUrl.trim().ifBlank { null },
-                        localNetworkSsids = form.localNetworkSsids,
-                    )
+                val server = form.toDraftServer()
                 serverRepo.upsert(server)
                 client.invalidate(server.id)
                 if (form.password.isNotBlank()) {
@@ -254,6 +271,11 @@ class SettingsViewModel
 
         fun setAutoLandscapeOnStream(auto: Boolean) = viewModelScope.launch { userSettingsRepo.setAutoLandscapeOnStream(auto) }
 
+        fun setRtspReconnectAttempts(attempts: Int) = viewModelScope.launch { userSettingsRepo.setRtspReconnectAttempts(attempts) }
+
+        fun setRtspReconnectBaseDelaySeconds(seconds: Int) =
+            viewModelScope.launch { userSettingsRepo.setRtspReconnectBaseDelaySeconds(seconds) }
+
         fun setAutoRefreshInterval(seconds: Int) = viewModelScope.launch { userSettingsRepo.setAutoRefreshInterval(seconds) }
 
         fun setEventPhotoPreference(pref: String) = viewModelScope.launch { userSettingsRepo.setEventPhotoPreference(pref) }
@@ -318,6 +340,57 @@ class SettingsViewModel
 
         fun clearConnectionTest() {
             _connectionTest.value = null
+        }
+
+        /**
+         * Same connectivity probe as [testConnection], but for an in-progress (unsaved)
+         * [ServerForm] — lets the add/edit sheet's Test button work before the user hits Save.
+         * The draft's own [ServerForm.id] (a fresh UUID, never persisted) doubles as a safe,
+         * collision-free throwaway key: a password is written under it only long enough to run
+         * one request (so Basic-auth-protected servers are actually exercised, same as a saved
+         * server would be), then both the credential and the cached [FrigateClient] entry are
+         * torn down in `finally` regardless of outcome — nothing about the draft survives the test.
+         */
+        fun testDraftConnection(form: ServerForm) {
+            viewModelScope.launch {
+                val draftServer = form.toDraftServer()
+                if (form.password.isNotBlank()) {
+                    val raw =
+                        if (form.authMode == AuthMode.BASIC) {
+                            "${form.username}:${form.password}"
+                        } else {
+                            form.password
+                        }
+                    credentialStore.setPassword(draftServer.id, raw)
+                }
+                try {
+                    val start = System.currentTimeMillis()
+                    val api = client.apiFor(draftServer, wifiMonitor.ssid.value)
+                    val result = safeApiCall { api.config() }
+                    val elapsed = System.currentTimeMillis() - start
+                    _connectionTest.value =
+                        when (result) {
+                            is ApiResult.Success -> {
+                                ConnectionTestResult(draftServer.id, true, elapsed, "Reachable")
+                            }
+
+                            is ApiResult.HttpError -> {
+                                ConnectionTestResult(draftServer.id, false, elapsed, "HTTP ${result.code}: ${result.message}")
+                            }
+
+                            is ApiResult.NetworkError -> {
+                                ConnectionTestResult(draftServer.id, false, null, result.cause.message ?: "Network error")
+                            }
+
+                            is ApiResult.ParseError -> {
+                                ConnectionTestResult(draftServer.id, false, elapsed, "Server returned an unexpected response")
+                            }
+                        }
+                } finally {
+                    credentialStore.delete(draftServer.id)
+                    client.invalidate(draftServer.id)
+                }
+            }
         }
 
         private val _stats = MutableStateFlow<ApiResult<kotlinx.serialization.json.JsonElement>?>(null)

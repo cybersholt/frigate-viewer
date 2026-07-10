@@ -18,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 
 /** A single tappable row on the Settings root screen — navigates to a sub-page. */
@@ -33,7 +34,10 @@ fun SettingsNavRow(
     Card(
         onClick = onClick,
         shape = MaterialTheme.shapes.large,
-        modifier = Modifier.fillMaxWidth(),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .testTag("settings_nav_${title.lowercase().replace(' ', '_')}"),
     ) {
         Row(
             Modifier.fillMaxWidth().padding(16.dp),

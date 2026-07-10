@@ -35,6 +35,8 @@ class WifiMonitor
                 (Build.BRAND.startsWith("generic") && Build.DEVICE.startsWith("generic")) ||
                 "google_sdk" == Build.PRODUCT
 
+        private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
         init {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 registerNetworkCallback()
@@ -51,8 +53,7 @@ class WifiMonitor
                     .Builder()
                     .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
                     .build()
-            cm.registerNetworkCallback(
-                request,
+            val callback =
                 object : ConnectivityManager.NetworkCallback(FLAG_INCLUDE_LOCATION_INFO) {
                     override fun onCapabilitiesChanged(
                         network: Network,
@@ -71,8 +72,9 @@ class WifiMonitor
                     override fun onLost(network: Network) {
                         _ssid.value = null
                     }
-                },
-            )
+                }
+            cm.registerNetworkCallback(request, callback)
+            networkCallback = callback
         }
 
         @Suppress("DEPRECATION")
@@ -86,5 +88,28 @@ class WifiMonitor
                     ?.takeIf { it.isNotBlank() && it != "<unknown ssid>" }
 
             _ssid.value = realSsid ?: null
+        }
+
+        /**
+         * Force a fresh SSID read. Needed right after the user grants ACCESS_FINE_LOCATION from
+         * the Servers settings screen — confirmed on-device that a permission grant does NOT
+         * cause an already-registered [ConnectivityManager.NetworkCallback] to receive a new
+         * [ConnectivityManager.NetworkCallback.onCapabilitiesChanged] call, and a direct
+         * `getNetworkCapabilities(activeNetwork)` poll *also* still returns the
+         * location-redacted "<unknown ssid>" immediately after granting (ConnectivityService
+         * appears to sanitize location-sensitive fields once per capabilities snapshot, not
+         * freshly per read). Unregistering and re-registering the callback is what actually
+         * forces ConnectivityService to push a new snapshot computed against the just-granted
+         * permission — verified end-to-end on the emulator (permission grant while
+         * `currentSsid == null` → tapping through this path correctly revealed "AndroidWifi").
+         */
+        fun refresh() {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val cm = context.getSystemService(ConnectivityManager::class.java)
+                networkCallback?.let { cm.unregisterNetworkCallback(it) }
+                registerNetworkCallback()
+            } else {
+                readLegacySsid()
+            }
         }
     }
