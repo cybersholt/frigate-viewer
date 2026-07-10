@@ -7,6 +7,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
+import net.triton.frigateviewer.core.model.MotionActivity
 import net.triton.frigateviewer.core.model.RecordingGap
 import net.triton.frigateviewer.core.model.ReviewSegment
 
@@ -30,6 +31,7 @@ internal val TimelineGridLineColor = Color(0xFF333333)
 internal fun DrawScope.drawActivityTimeline(
     reviewSegments: List<ReviewSegment>,
     recordingGaps: List<RecordingGap>,
+    motionActivity: List<MotionActivity> = emptyList(),
     scrubberTimeMs: Long,
     viewEndMs: Long,
     rangeMs: Long,
@@ -62,15 +64,13 @@ internal fun DrawScope.drawActivityTimeline(
         )
     }
 
-    // ── Bucket review segments into severity-ranked activity density ──
+    // ── Bucket review segments by worst severity (color only, not width) ──
     val bucketMs = rangeMs / numBuckets
-    val buckets = IntArray(numBuckets)
     val bucketSeverityRank = IntArray(numBuckets)
     reviewSegments.forEach { seg ->
         val segMs = (seg.startTime * 1000).toLong()
         if (segMs in oldestMs..viewEndMs) {
             val idx = ((viewEndMs - segMs) / bucketMs).toInt().coerceIn(0, numBuckets - 1)
-            buckets[idx]++
             val rank =
                 when (seg.severity) {
                     "alert" -> 3
@@ -78,6 +78,29 @@ internal fun DrawScope.drawActivityTimeline(
                     else -> 1
                 }
             if (rank > bucketSeverityRank[idx]) bucketSeverityRank[idx] = rank
+        }
+    }
+
+    // ── Bucket activity intensity: real per-bucket motion score (api/review/activity/motion)
+    // when available; falls back to review-segment density if the endpoint returned nothing
+    // (older Frigate version, or data not yet loaded). ──
+    val buckets = FloatArray(numBuckets)
+    if (motionActivity.isNotEmpty()) {
+        motionActivity.forEach { point ->
+            val pointMs = (point.startTime * 1000).toLong()
+            if (pointMs in oldestMs..viewEndMs) {
+                val idx = ((viewEndMs - pointMs) / bucketMs).toInt().coerceIn(0, numBuckets - 1)
+                val motionValue = point.motion.toFloat()
+                if (motionValue > buckets[idx]) buckets[idx] = motionValue
+            }
+        }
+    } else {
+        reviewSegments.forEach { seg ->
+            val segMs = (seg.startTime * 1000).toLong()
+            if (segMs in oldestMs..viewEndMs) {
+                val idx = ((viewEndMs - segMs) / bucketMs).toInt().coerceIn(0, numBuckets - 1)
+                buckets[idx] += 1f
+            }
         }
     }
     val bucketPx = h / numBuckets.toFloat()
@@ -181,8 +204,8 @@ internal fun DrawScope.drawActivityTimeline(
     val pillPad = 8f
     val pillH = pillPaint.textSize + pillPad * 2
     val pillW = pillPaint.measureText(pillText) + pillPad * 2
-    val pillLeft = (centerX - pillW / 2).coerceIn(0f, w - pillW)
-    val pillTop = (scrubY - pillH - 4f).coerceIn(0f, h - pillH)
+    val pillLeft = (centerX - pillW / 2).coerceIn(0f, (w - pillW).coerceAtLeast(0f))
+    val pillTop = (scrubY - pillH - 4f).coerceIn(0f, (h - pillH).coerceAtLeast(0f))
     val bgPaint =
         android.graphics.Paint().apply {
             color = android.graphics.Color.argb(220, 229, 57, 53)

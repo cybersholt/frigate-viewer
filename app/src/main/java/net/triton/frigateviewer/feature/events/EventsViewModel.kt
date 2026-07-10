@@ -16,8 +16,11 @@ import net.triton.frigateviewer.core.data.UserSettingsRepository
 import net.triton.frigateviewer.core.db.CachedEvent
 import net.triton.frigateviewer.core.db.EventDao
 import net.triton.frigateviewer.core.model.FrigateEvent
+import net.triton.frigateviewer.core.model.MotionActivity
+import net.triton.frigateviewer.core.model.PreviewFrame
 import net.triton.frigateviewer.core.model.RecordingGap
 import net.triton.frigateviewer.core.model.ReviewSegment
+import net.triton.frigateviewer.core.model.parsePreviewFrames
 import net.triton.frigateviewer.core.network.ApiResult
 import net.triton.frigateviewer.core.network.WifiMonitor
 import javax.inject.Inject
@@ -48,6 +51,15 @@ data class EventsUiState(
     val reviewSegments: List<ReviewSegment> = emptyList(),
     /** Recording-gap ranges backing the TimelinePanel's darkened "no footage" bands. */
     val recordingGaps: List<RecordingGap> = emptyList(),
+    /** Fine-grained motion waveform (`api/review/activity/motion`) backing bar intensity. */
+    val motionActivity: List<MotionActivity> = emptyList(),
+    /** Cached preview-frame thumbnails for whichever camera [previewFramesCamera] resolved to. */
+    val previewFrames: List<PreviewFrame> = emptyList(),
+    val previewFramesCamera: String? = null,
+    val previewFramesWindowStartMs: Long = 0L,
+    val previewFramesWindowEndMs: Long = 0L,
+    /** Time under the finger while actively touching the timeline strip; null when not touching. */
+    val scrubPreviewTimeMs: Long? = null,
 )
 
 @HiltViewModel
@@ -220,6 +232,10 @@ class EventsViewModel
             val nowMs = System.currentTimeMillis()
             val afterSec = (nowMs - rangeMs) / 1000.0
             val beforeSec = nowMs / 1000.0
+            // Segment duration for this zoom level. Frigate's own frontend derives motion/gap
+            // scale from it: recordings-unavailable scale = segmentDuration, motion scale =
+            // segmentDuration / 2 (see api/review/activity/motion contract notes).
+            val segmentDurationSeconds = (rangeMs / 1000L / 300L).toInt().coerceIn(1, 3600)
             viewModelScope.launch {
                 when (val r = repo.review(camerasParam, after = afterSec, before = beforeSec)) {
                     is ApiResult.Success -> {
@@ -230,13 +246,35 @@ class EventsViewModel
                 }
             }
             viewModelScope.launch {
-                val scaleSeconds = (rangeMs / 1000L / 300L).toInt().coerceIn(1, 3600)
                 when (
                     val r =
-                        repo.recordingGaps(camerasParam, after = afterSec, before = beforeSec, scale = scaleSeconds)
+                        repo.recordingGaps(
+                            camerasParam,
+                            after = afterSec,
+                            before = beforeSec,
+                            scale = segmentDurationSeconds,
+                        )
                 ) {
                     is ApiResult.Success -> {
                         _state.value = _state.value.copy(recordingGaps = r.data)
+                    }
+
+                    else -> {}
+                }
+            }
+            viewModelScope.launch {
+                val motionScaleSeconds = (segmentDurationSeconds / 2).coerceAtLeast(1)
+                when (
+                    val r =
+                        repo.motionActivity(
+                            camerasParam,
+                            after = afterSec,
+                            before = beforeSec,
+                            scale = motionScaleSeconds,
+                        )
+                ) {
+                    is ApiResult.Success -> {
+                        _state.value = _state.value.copy(motionActivity = r.data)
                     }
 
                     else -> {}
@@ -251,6 +289,67 @@ class EventsViewModel
                 viewModelScope.launch {
                     delay(400)
                     loadTimelineData()
+                }
+        }
+
+        private var previewFramesJob: Job? = null
+
+        /**
+         * Resolves which camera was likely active at [timeMs], using whichever activity data
+         * (motion, then review) has a point closest to it — the strip mixes multiple cameras, so
+         * unlike [net.triton.frigateviewer.feature.events.EventDetail] there's no single camera
+         * to fetch preview frames for without this lookup.
+         */
+        private fun resolveCameraNear(timeMs: Long): String? {
+            val s = _state.value
+            val nearestMotion =
+                s.motionActivity.minByOrNull { kotlin.math.abs((it.startTime * 1000).toLong() - timeMs) }
+            if (nearestMotion != null &&
+                kotlin.math.abs((nearestMotion.startTime * 1000).toLong() - timeMs) <= 5 * 60_000L
+            ) {
+                nearestMotion.camera?.substringBefore(",")?.let { return it }
+            }
+            val nearestReview =
+                s.reviewSegments.minByOrNull { kotlin.math.abs((it.startTime * 1000).toLong() - timeMs) }
+            if (nearestReview != null &&
+                kotlin.math.abs((nearestReview.startTime * 1000).toLong() - timeMs) <= 5 * 60_000L
+            ) {
+                return nearestReview.camera
+            }
+            return null
+        }
+
+        /** Called continuously while a finger is on the timeline strip; see [EventDetailViewModel.updateScrubPreview]. */
+        fun updateScrubPreview(timeMs: Long?) {
+            _state.value = _state.value.copy(scrubPreviewTimeMs = timeMs)
+            if (timeMs == null) return
+            val camera = resolveCameraNear(timeMs) ?: return
+            val s = _state.value
+            if (camera == s.previewFramesCamera && timeMs in s.previewFramesWindowStartMs..s.previewFramesWindowEndMs) {
+                return
+            }
+            previewFramesJob?.cancel()
+            previewFramesJob =
+                viewModelScope.launch {
+                    delay(150)
+                    val windowStart = timeMs - PREVIEW_FRAME_WINDOW_HALF_MS
+                    val windowEnd = timeMs + PREVIEW_FRAME_WINDOW_HALF_MS
+                    when (
+                        val r =
+                            repo.previewFrames(camera, windowStart / 1000.0, windowEnd / 1000.0)
+                    ) {
+                        is ApiResult.Success -> {
+                            _state.value =
+                                _state.value.copy(
+                                    previewFrames = parsePreviewFrames(r.data, camera),
+                                    previewFramesCamera = camera,
+                                    previewFramesWindowStartMs = windowStart,
+                                    previewFramesWindowEndMs = windowEnd,
+                                )
+                        }
+
+                        else -> {}
+                    }
                 }
         }
 

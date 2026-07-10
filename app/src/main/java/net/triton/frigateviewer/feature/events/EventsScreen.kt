@@ -61,6 +61,7 @@ import kotlinx.datetime.minus
 import kotlinx.datetime.toLocalDateTime
 import net.triton.frigateviewer.core.image.FrigateImage
 import net.triton.frigateviewer.core.model.FrigateEvent
+import net.triton.frigateviewer.core.model.nearestTo
 import net.triton.frigateviewer.ui.components.CameraPill
 import net.triton.frigateviewer.ui.components.SegmentedEventPill
 import java.util.Locale
@@ -162,6 +163,7 @@ fun EventsScreen(
                 events = state.events,
                 reviewSegments = state.reviewSegments,
                 recordingGaps = state.recordingGaps,
+                motionActivity = state.motionActivity,
                 scrubberTimeMs = state.scrubberTimeMs,
                 timeRangeHours = state.timeRangeHours,
                 gridState = gridState,
@@ -169,6 +171,13 @@ fun EventsScreen(
                 onZoomIn = { vm.zoomTimeline(0.5f) },
                 onZoomOut = { vm.zoomTimeline(2f) },
                 modifier = Modifier.width(64.dp).fillMaxHeight(),
+                previewFrameFileName =
+                    state.scrubPreviewTimeMs?.let { t ->
+                        state.previewFrames.nearestTo(t, PREVIEW_FRAME_MAX_MATCH_MS)?.fileName
+                    },
+                baseUrl = state.baseUrl,
+                imageLoader = imageLoader,
+                onTouchPreview = vm::updateScrubPreview,
             )
         }
     }

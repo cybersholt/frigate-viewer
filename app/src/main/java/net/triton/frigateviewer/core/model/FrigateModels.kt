@@ -106,6 +106,18 @@ data class RecordingGap(
     val duration: Double = 0.0,
 )
 
+/**
+ * One bucket of Frigate's `GET api/review/activity/motion` — the fine-grained motion waveform
+ * (distinct from [ReviewSegment] severity data). `motion` is normalized 0-100 per-hour by the
+ * server; `camera` is comma-joined when a bucket spans multiple cameras.
+ */
+@Serializable
+data class MotionActivity(
+    @SerialName("start_time") val startTime: Double,
+    val motion: Double = 0.0,
+    val camera: String? = null,
+)
+
 /** Frigate's `GET api/review` — the severity-classified activity feed the web timeline draws. */
 @Serializable
 data class ReviewSegment(

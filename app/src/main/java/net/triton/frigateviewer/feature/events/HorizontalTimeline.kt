@@ -4,7 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -17,17 +17,21 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
+import coil3.ImageLoader
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import net.triton.frigateviewer.core.model.MotionActivity
 import net.triton.frigateviewer.core.model.RecordingGap
 import net.triton.frigateviewer.core.model.ReviewSegment
 import java.util.Locale
@@ -54,6 +58,7 @@ private val TimelineBackground = Color(0xFF121212)
 fun HorizontalTimeline(
     reviewSegments: List<ReviewSegment>,
     recordingGaps: List<RecordingGap>,
+    motionActivity: List<MotionActivity> = emptyList(),
     scrubberTimeMs: Long,
     timeRangeHours: Float,
     viewEndMs: Long,
@@ -61,6 +66,10 @@ fun HorizontalTimeline(
     onPan: (Long) -> Unit,
     onZoomChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
+    previewFrameFileName: String? = null,
+    baseUrl: String? = null,
+    imageLoader: ImageLoader? = null,
+    onTouchPreview: (Long?) -> Unit = {},
 ) {
     val rangeMs = (timeRangeHours * 3_600_000L).toLong()
     val oldestMs = viewEndMs - rangeMs
@@ -70,6 +79,8 @@ fun HorizontalTimeline(
     val currentOldestMs by rememberUpdatedState(oldestMs)
     val currentOnScrub by rememberUpdatedState(onScrub)
     val currentOnPan by rememberUpdatedState(onPan)
+    val currentOnTouchPreview by rememberUpdatedState(onTouchPreview)
+    var previewFractionY by remember { mutableStateOf<Float?>(null) }
 
     val labelPaint =
         remember {
@@ -80,7 +91,10 @@ fun HorizontalTimeline(
             }
         }
 
-    Box(modifier.background(TimelineBackground)) {
+    BoxWithConstraints(modifier.background(TimelineBackground)) {
+        fun timeAtFraction(frac: Float): Long =
+            (currentViewEndMs - frac * currentRangeMs).toLong().coerceIn(currentOldestMs, currentViewEndMs)
+
         Canvas(
             Modifier
                 .fillMaxSize()
@@ -91,6 +105,8 @@ fun HorizontalTimeline(
                         val down = awaitFirstDown(requireUnconsumed = false)
                         var isPanning = false
                         var lastY = down.position.y
+                        previewFractionY = down.position.y / size.height
+                        currentOnTouchPreview(timeAtFraction(down.position.y / size.height))
                         while (true) {
                             val ev = awaitPointerEvent()
                             val change = ev.changes.firstOrNull { it.id == down.id } ?: break
@@ -116,14 +132,19 @@ fun HorizontalTimeline(
                                 // (toward now), drag up reveals further into the past.
                                 currentOnPan((dy * msPerPx).toLong())
                             }
+                            previewFractionY = change.position.y / size.height
+                            currentOnTouchPreview(timeAtFraction(change.position.y / size.height))
                             lastY = change.position.y
                         }
+                        previewFractionY = null
+                        currentOnTouchPreview(null)
                     }
                 },
         ) {
             drawActivityTimeline(
                 reviewSegments = reviewSegments,
                 recordingGaps = recordingGaps,
+                motionActivity = motionActivity,
                 scrubberTimeMs = scrubberTimeMs,
                 viewEndMs = viewEndMs,
                 rangeMs = rangeMs,
@@ -154,6 +175,21 @@ fun HorizontalTimeline(
                 modifier = Modifier.size(40.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape),
             ) {
                 Icon(Icons.Filled.ZoomOut, "Zoom out", tint = Color.White, modifier = Modifier.size(20.dp))
+            }
+        }
+
+        // ── Preview-frame thumbnail bubble, follows the finger while touching ──
+        previewFractionY?.let { frac ->
+            if (imageLoader != null) {
+                val bubbleHeight = 120.dp * 9f / 16f
+                val offsetY = (maxHeight * frac - bubbleHeight / 2).coerceIn(0.dp, maxHeight - bubbleHeight)
+                PreviewThumbnailBubble(
+                    fileName = previewFrameFileName,
+                    baseUrl = baseUrl,
+                    imageLoader = imageLoader,
+                    offsetY = offsetY,
+                    modifier = Modifier.align(Alignment.TopStart).padding(start = 90.dp),
+                )
             }
         }
     }

@@ -117,10 +117,19 @@ import net.triton.frigateviewer.core.data.FrigateRepository
 import net.triton.frigateviewer.core.data.ServerRepository
 import net.triton.frigateviewer.core.image.FrigateImage
 import net.triton.frigateviewer.core.model.FrigateEvent
+import net.triton.frigateviewer.core.model.PreviewFrame
+import net.triton.frigateviewer.core.model.nearestTo
+import net.triton.frigateviewer.core.model.parsePreviewFrames
 import net.triton.frigateviewer.core.network.ApiResult
 import net.triton.frigateviewer.core.network.FrigateClient
 import java.util.Locale
 import javax.inject.Inject
+
+/** Half-width of the preview-frame fetch window on either side of a scrubbed time. */
+internal const val PREVIEW_FRAME_WINDOW_HALF_MS = 90_000L
+
+/** A cached frame further than this from the scrubbed time isn't shown — too misleading. */
+internal const val PREVIEW_FRAME_MAX_MATCH_MS = 15_000L
 
 enum class EventDetailView { TIMELINE, EVENTS, DETAIL }
 
@@ -155,6 +164,14 @@ data class EventDetailUiState(
     val reviewSegments: List<net.triton.frigateviewer.core.model.ReviewSegment> = emptyList(),
     /** Gaps in the recording track for the visible timeline window. */
     val recordingGaps: List<net.triton.frigateviewer.core.model.RecordingGap> = emptyList(),
+    /** Fine-grained motion waveform (`api/review/activity/motion`) backing bar intensity. */
+    val motionActivity: List<net.triton.frigateviewer.core.model.MotionActivity> = emptyList(),
+    /** Cached preview-frame thumbnails covering [previewFramesWindowStartMs, previewFramesWindowEndMs]. */
+    val previewFrames: List<PreviewFrame> = emptyList(),
+    val previewFramesWindowStartMs: Long = 0L,
+    val previewFramesWindowEndMs: Long = 0L,
+    /** Time under the finger while actively touching the timeline; null when not touching. */
+    val scrubPreviewTimeMs: Long? = null,
     /** [start, end) of the currently loaded hour-chunk VOD manifest (epoch seconds, UTC-aligned). */
     val recordingChunkAfter: Long = 0L,
     val recordingChunkBefore: Long = 0L,
@@ -263,6 +280,10 @@ class EventDetailViewModel
             val rangeMs = (s.timeRangeHours * 3_600_000L).toLong()
             val afterSec = (s.viewEndMs - rangeMs) / 1000.0
             val beforeSec = s.viewEndMs / 1000.0
+            // Segment duration for this zoom level. Frigate's own frontend derives motion/gap
+            // scale from it: recordings-unavailable scale = segmentDuration, motion scale =
+            // segmentDuration / 2 (see api/review/activity/motion contract notes).
+            val segmentDurationSeconds = (rangeMs / 1000L / 300L).toInt().coerceIn(1, 3600)
             viewModelScope.launch {
                 when (val r = repo.review(camera, after = afterSec, before = beforeSec)) {
                     is ApiResult.Success -> {
@@ -273,13 +294,25 @@ class EventDetailViewModel
                 }
             }
             viewModelScope.launch {
-                val scaleSeconds = (rangeMs / 1000L / 300L).toInt().coerceIn(1, 3600)
                 when (
                     val r =
-                        repo.recordingGaps(camera, after = afterSec, before = beforeSec, scale = scaleSeconds)
+                        repo.recordingGaps(camera, after = afterSec, before = beforeSec, scale = segmentDurationSeconds)
                 ) {
                     is ApiResult.Success -> {
                         _state.value = _state.value.copy(recordingGaps = r.data)
+                    }
+
+                    else -> {}
+                }
+            }
+            viewModelScope.launch {
+                val motionScaleSeconds = (segmentDurationSeconds / 2).coerceAtLeast(1)
+                when (
+                    val r =
+                        repo.motionActivity(camera, after = afterSec, before = beforeSec, scale = motionScaleSeconds)
+                ) {
+                    is ApiResult.Success -> {
+                        _state.value = _state.value.copy(motionActivity = r.data)
                     }
 
                     else -> {}
@@ -296,6 +329,44 @@ class EventDetailViewModel
                 viewModelScope.launch {
                     delay(400)
                     loadTimelineData()
+                }
+        }
+
+        private var previewFramesJob: Job? = null
+
+        /**
+         * Called continuously while a finger is on the timeline. [timeMs] is the time under the
+         * touch point, or null when the touch ends. Fetches a fresh window of cached preview-frame
+         * filenames only when [timeMs] falls outside the currently cached window — the cache is
+         * short-lived server-side (recent time only), so most scrub gestures reuse one fetch.
+         */
+        fun updateScrubPreview(timeMs: Long?) {
+            _state.value = _state.value.copy(scrubPreviewTimeMs = timeMs)
+            if (timeMs == null) return
+            val s = _state.value
+            val camera = s.event?.camera ?: return
+            if (timeMs in s.previewFramesWindowStartMs..s.previewFramesWindowEndMs) return
+            previewFramesJob?.cancel()
+            previewFramesJob =
+                viewModelScope.launch {
+                    delay(150)
+                    val windowStart = timeMs - PREVIEW_FRAME_WINDOW_HALF_MS
+                    val windowEnd = timeMs + PREVIEW_FRAME_WINDOW_HALF_MS
+                    when (
+                        val r =
+                            repo.previewFrames(camera, windowStart / 1000.0, windowEnd / 1000.0)
+                    ) {
+                        is ApiResult.Success -> {
+                            _state.value =
+                                _state.value.copy(
+                                    previewFrames = parsePreviewFrames(r.data, camera),
+                                    previewFramesWindowStartMs = windowStart,
+                                    previewFramesWindowEndMs = windowEnd,
+                                )
+                        }
+
+                        else -> {}
+                    }
                 }
         }
 
@@ -664,6 +735,7 @@ fun EventDetailScreen(
                             HorizontalTimeline(
                                 reviewSegments = state.reviewSegments,
                                 recordingGaps = state.recordingGaps,
+                                motionActivity = state.motionActivity,
                                 scrubberTimeMs = state.scrubberTimeMs,
                                 timeRangeHours = state.timeRangeHours,
                                 viewEndMs = state.viewEndMs,
@@ -671,6 +743,13 @@ fun EventDetailScreen(
                                 onPan = vm::panView,
                                 onZoomChange = vm::zoomTimeline,
                                 modifier = Modifier.weight(1f).fillMaxWidth(),
+                                previewFrameFileName =
+                                    state.scrubPreviewTimeMs?.let { t ->
+                                        state.previewFrames.nearestTo(t, PREVIEW_FRAME_MAX_MATCH_MS)?.fileName
+                                    },
+                                baseUrl = state.baseUrl,
+                                imageLoader = imageLoader,
+                                onTouchPreview = vm::updateScrubPreview,
                             )
                         }
 

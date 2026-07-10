@@ -3,6 +3,7 @@ package net.triton.frigateviewer.core.data
 import net.triton.frigateviewer.core.model.FrigateConfig
 import net.triton.frigateviewer.core.model.FrigateEvent
 import net.triton.frigateviewer.core.model.LoginRequest
+import net.triton.frigateviewer.core.model.MotionActivity
 import net.triton.frigateviewer.core.model.RecordingGap
 import net.triton.frigateviewer.core.model.RecordingSegment
 import net.triton.frigateviewer.core.model.ReviewSegment
@@ -134,6 +135,30 @@ class FrigateRepository
         ): ApiResult<List<ReviewSegment>> {
             val api = api() ?: return ApiResult.NetworkError(IllegalStateException("No active server"))
             return safeApiCall { api.review(cameras = cameras, after = after, before = before) }
+        }
+
+        /**
+         * Fine-grained motion waveform (`api/review/activity/motion`), distinct from [review]'s
+         * severity classification. [cameras] is a comma-separated list, or null for all cameras.
+         */
+        suspend fun motionActivity(
+            cameras: String? = null,
+            after: Double? = null,
+            before: Double? = null,
+            scale: Int? = null,
+        ): ApiResult<List<MotionActivity>> {
+            val api = api() ?: return ApiResult.NetworkError(IllegalStateException("No active server"))
+            return safeApiCall { api.motionActivity(cameras = cameras, after = after, before = before, scale = scale) }
+        }
+
+        /** Cached preview-frame filenames for [camera] in `[startTs, endTs]`. Single camera only. */
+        suspend fun previewFrames(
+            camera: String,
+            startTs: Double,
+            endTs: Double,
+        ): ApiResult<List<String>> {
+            val api = api() ?: return ApiResult.NetworkError(IllegalStateException("No active server"))
+            return safeApiCall { api.previewFrames(camera = camera, startTs = startTs, endTs = endTs) }
         }
 
         suspend fun go2rtcStreams(forceRefresh: Boolean = false): ApiResult<Map<String, kotlinx.serialization.json.JsonElement>> {

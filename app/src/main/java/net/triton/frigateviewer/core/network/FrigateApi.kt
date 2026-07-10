@@ -5,6 +5,7 @@ import net.triton.frigateviewer.core.model.FrigateConfig
 import net.triton.frigateviewer.core.model.FrigateEvent
 import net.triton.frigateviewer.core.model.LoginRequest
 import net.triton.frigateviewer.core.model.LoginResponse
+import net.triton.frigateviewer.core.model.MotionActivity
 import net.triton.frigateviewer.core.model.RecordingGap
 import net.triton.frigateviewer.core.model.RecordingSegment
 import net.triton.frigateviewer.core.model.ReviewSegment
@@ -96,4 +97,29 @@ interface FrigateApi {
         @Query("after") after: Double? = null,
         @Query("before") before: Double? = null,
     ): Response<List<ReviewSegment>>
+
+    /**
+     * Fine-grained motion waveform, distinct from [review]'s severity classification —
+     * `scale` is the resample bucket size in seconds (server resamples raw per-segment motion
+     * scores with `.resample(f"{scale}s").max()`, normalized 0-100 against the local max).
+     */
+    @GET("api/review/activity/motion")
+    suspend fun motionActivity(
+        @Query("cameras") cameras: String? = null,
+        @Query("after") after: Double? = null,
+        @Query("before") before: Double? = null,
+        @Query("scale") scale: Int? = null,
+    ): Response<List<MotionActivity>>
+
+    /**
+     * Filenames of cached preview-frame thumbnails (single camera only — no comma-list
+     * support server-side) in `[startTs, endTs]`, sorted chronologically. This cache is
+     * short-lived (recent time only); returns an empty list outside the retention window.
+     */
+    @GET("api/preview/{camera}/start/{startTs}/end/{endTs}/frames")
+    suspend fun previewFrames(
+        @Path("camera") camera: String,
+        @Path("startTs") startTs: Double,
+        @Path("endTs") endTs: Double,
+    ): Response<List<String>>
 }
