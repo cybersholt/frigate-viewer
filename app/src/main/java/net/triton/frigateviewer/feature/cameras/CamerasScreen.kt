@@ -29,7 +29,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -201,17 +201,20 @@ fun CamerasScreen(
                         effectiveBaseUrl = state.effectiveBaseUrl,
                         frigateClient = frigateClient,
                         imageLoader = imageLoader,
-                        preferSubStream = state.preferSubStream,
+                        preferSubStream = state.preferSubStreamFullscreen,
                         go2rtcStreams = state.go2rtcStreams,
+                        subStreamFallbacks = state.subStreamFallbacks,
                         hideEventImage = state.hideEventImage,
-                        liveStreamOption = state.cameraStreamOverrides[focused!!] ?: state.liveStreamOption,
+                        liveStreamOption = state.cameraStreamOverrides[focused!!] ?: state.fullscreenStreamType,
                         isStreamOptionOverridden = state.cameraStreamOverrides.containsKey(focused!!),
-                        globalDefaultStreamOption = state.liveStreamOption,
+                        globalDefaultStreamOption = state.fullscreenStreamType,
                         onSetStreamOverride = { mode -> vm.setCameraStreamOverride(focused!!, mode) },
                         refreshTimestamp = state.refreshTimestamp,
                         showBoundingBoxes = state.showBoundingBoxes,
                         autoLandscapeOnStream = state.autoLandscapeOnStream,
+                        showLastImageWhileLoading = state.showLastImageWhileLoading,
                         currentSsid = state.currentSsid,
+                        onSubStreamFallback = { vm.markSubStreamFallback(focused!!) },
                         onClose = { focused = null },
                     )
                 } else {
@@ -228,19 +231,33 @@ fun CamerasScreen(
                                 Icon(Icons.Filled.Menu, contentDescription = "Edit cameras")
                             }
                         }
+                        val gridState =
+                            androidx.compose.foundation.lazy.grid
+                                .rememberLazyGridState()
                         PullToRefreshBox(
                             isRefreshing = state.loading,
                             onRefresh = { vm.refresh(forceCacheRefresh = true) },
                             modifier = Modifier.weight(1f),
                         ) {
                             LazyVerticalGrid(
+                                state = gridState,
                                 columns = GridCells.Fixed(state.gridColumns),
                                 contentPadding = PaddingValues(12.dp),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                                 modifier = Modifier.fillMaxSize(),
                             ) {
-                                items(state.displayedCameras, key = { it }) { name ->
+                                itemsIndexed(state.displayedCameras, key = { _, it -> it }) { index, name ->
+                                    val isActive by remember(state.keepOffscreenTilesAlive) {
+                                        androidx.compose.runtime.derivedStateOf {
+                                            if (state.keepOffscreenTilesAlive) return@derivedStateOf true
+                                            val visibleItems = gridState.layoutInfo.visibleItemsInfo
+                                            if (visibleItems.isEmpty()) return@derivedStateOf true
+                                            val first = visibleItems.first().index
+                                            val last = visibleItems.last().index
+                                            index in (first - 2)..(last + 2)
+                                        }
+                                    }
                                     val labels =
                                         remember(name, state.cameras, state.globalTrackedObjects) {
                                             vm.labelsForCamera(name)
@@ -252,6 +269,8 @@ fun CamerasScreen(
                                     SwipeableCameraTile(
                                         name = name,
                                         baseUrl = state.effectiveBaseUrl,
+                                        server = state.activeServer,
+                                        frigateClient = frigateClient,
                                         imageLoader = imageLoader,
                                         refreshTimestamp = state.refreshTimestamp,
                                         showBoundingBoxes = state.showBoundingBoxes,
@@ -260,6 +279,17 @@ fun CamerasScreen(
                                         zones = zones,
                                         recentEvent = state.recentEvents[name],
                                         recentEventFetched = state.recentEvents.containsKey(name),
+                                        gridStreamType = state.cameraStreamOverrides[name] ?: state.gridStreamType,
+                                        isStreamOptionOverridden = state.cameraStreamOverrides.containsKey(name),
+                                        globalDefaultStreamOption = state.gridStreamType,
+                                        onSetStreamOverride = { mode -> vm.setCameraStreamOverride(name, mode) },
+                                        preferSubStreamGrid = state.preferSubStreamGrid,
+                                        go2rtcStreams = state.go2rtcStreams,
+                                        subStreamFallbacks = state.subStreamFallbacks,
+                                        currentSsid = state.currentSsid,
+                                        showLastImageWhileLoading = state.showLastImageWhileLoading,
+                                        isActive = isActive,
+                                        onSubStreamFallback = { vm.markSubStreamFallback(name) },
                                         onOpenCamera = { focused = name },
                                         onFetchRecentEvent = { vm.fetchRecentEvent(name) },
                                         onNavigateToEvents = onNavigateToEvents,
@@ -289,6 +319,8 @@ fun CamerasScreen(
 private fun SwipeableCameraTile(
     name: String,
     baseUrl: String?,
+    server: net.triton.frigateviewer.core.data.Server?,
+    frigateClient: net.triton.frigateviewer.core.network.FrigateClient,
     imageLoader: ImageLoader,
     refreshTimestamp: Long,
     showBoundingBoxes: Boolean,
@@ -297,6 +329,17 @@ private fun SwipeableCameraTile(
     zones: List<String>,
     recentEvent: FrigateEvent?,
     recentEventFetched: Boolean,
+    gridStreamType: String,
+    isStreamOptionOverridden: Boolean,
+    globalDefaultStreamOption: String,
+    onSetStreamOverride: (String?) -> Unit,
+    preferSubStreamGrid: Boolean,
+    go2rtcStreams: Set<String>,
+    subStreamFallbacks: Map<String, Boolean>,
+    currentSsid: String?,
+    showLastImageWhileLoading: Boolean,
+    isActive: Boolean,
+    onSubStreamFallback: () -> Unit,
     onOpenCamera: () -> Unit,
     onFetchRecentEvent: () -> Unit,
     onNavigateToEvents: (camera: String?, label: String?, zone: String?) -> Unit,
@@ -483,14 +526,63 @@ private fun SwipeableCameraTile(
             }
         }
 
-        // ── Main tile (slides over panels) ──
         val borderWidth = LocalCardBorderWidth.current
-        // Keyed on name only — refreshTimestamp must NOT reset this or the badge
-        // oscillates Live → "0s ago" → Live on every auto-refresh tick.
-        var tileState by remember(name) {
-            mutableStateOf<CameraStreamState>(CameraStreamState.LoadingWithCache(0L))
+
+        val context = LocalContext.current
+        val entryPoint =
+            remember {
+                EntryPointAccessors.fromApplication(context, CamerasEntryPoint::class.java)
+            }
+        val credentialStore = remember { entryPoint.credentialStore() }
+
+        val okHttpClient by androidx.compose.runtime.produceState<okhttp3.OkHttpClient?>(initialValue = null, server) {
+            value = if (server != null) frigateClient.clientFor(server) else null
         }
-        var lastGoodAt by remember(name) { mutableStateOf(0L) }
+
+        val subStreamName = "${name}_sub"
+        val liveCameraName =
+            if (preferSubStreamGrid && go2rtcStreams.contains(subStreamName) &&
+                subStreamFallbacks[name] != true
+            ) {
+                subStreamName
+            } else {
+                name
+            }
+        val bboxParam = if (showBoundingBoxes) "&bbox=1" else ""
+        val snapshotPath = "api/$name/latest.jpg?h=360&t=$refreshTimestamp$bboxParam"
+
+        val rtspUrl by androidx.compose.runtime.produceState<String?>(
+            initialValue = null,
+            server,
+            liveCameraName,
+        ) {
+            if (server == null) {
+                value = null
+                return@produceState
+            }
+            // Strip any embedded ":port" — the main Host field's label invites "host:port" and
+            // users carry that habit into RTSP host too, but rtspPort is always a separate field.
+            val rtspTargetHost = (server.rtspHost?.takeIf { it.isNotBlank() } ?: server.host).substringBefore(':')
+            val base = "rtsp://$rtspTargetHost:${server.rtspPort}/$liveCameraName"
+            val secret = credentialStore.rawSecret(server.id)
+            val finalUrl =
+                if (secret != null && !secret.startsWith(CredentialStore.BEARER_PREFIX)) {
+                    val parts = secret.split(":", limit = 2)
+                    if (parts.size == 2) {
+                        val u = java.net.URLEncoder.encode(parts[0], "UTF-8")
+                        val p = java.net.URLEncoder.encode(parts[1], "UTF-8")
+                        "rtsp://$u:$p@$rtspTargetHost:${server.rtspPort}/$liveCameraName"
+                    } else {
+                        base
+                    }
+                } else {
+                    base
+                }
+
+            Log.d(TAG, "[DEBUG-RTSP] Constructing Grid RTSP URL: $finalUrl (SSID: $currentSsid)")
+            value = finalUrl
+        }
+
         Card(
             Modifier
                 .fillMaxSize()
@@ -503,40 +595,27 @@ private fun SwipeableCameraTile(
                     },
                 ),
         ) {
-            Box(Modifier.fillMaxSize()) {
-                val bboxParam = if (showBoundingBoxes) "&bbox=1" else ""
-                FrigateImage(
-                    relativePath = "api/$name/latest.jpg?h=360&quality=60&t=$refreshTimestamp$bboxParam",
-                    contentDescription = name,
-                    baseUrl = baseUrl,
-                    imageLoader = imageLoader,
-                    crossfade = false,
-                    diskWriteOnly = true,
-                    diskCacheKey = "snap_$name",
-                    modifier = Modifier.fillMaxSize(),
-                    onSuccess = {
-                        lastGoodAt = System.currentTimeMillis()
-                        tileState = CameraStreamState.Live
-                    },
-                    onError = {
-                        tileState =
-                            if (lastGoodAt > 0L) {
-                                CameraStreamState.LoadingWithCache(lastGoodAt)
-                            } else {
-                                CameraStreamState.Offline()
-                            }
-                    },
-                )
-                // Pill left, status badge right — mirrored insets, Google Home style
-                Row(
-                    modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    CameraPill(camera = name)
-                    StreamStatusBadge(state = tileState)
-                }
-            }
+            StreamContent(
+                liveStreamOption = if (isActive) gridStreamType else "snapshot",
+                isStreamOptionOverridden = isStreamOptionOverridden,
+                globalDefaultStreamOption = globalDefaultStreamOption,
+                onSetStreamOverride = onSetStreamOverride,
+                server = server,
+                okHttpClient = okHttpClient,
+                rtspUrl = rtspUrl,
+                currentSsid = currentSsid,
+                baseUrl = baseUrl,
+                snapshotPath = snapshotPath,
+                liveCameraName = liveCameraName,
+                cameraName = name,
+                imageLoader = imageLoader,
+                showBoundingBoxes = showBoundingBoxes,
+                autoLandscapeOnStream = false,
+                showLastImageWhileLoading = showLastImageWhileLoading,
+                refreshTimestamp = refreshTimestamp,
+                onSubStreamFallback = onSubStreamFallback,
+                modifier = Modifier.fillMaxSize(),
+            )
         }
     }
 }
@@ -571,6 +650,7 @@ private fun FocusedTile(
     imageLoader: ImageLoader,
     preferSubStream: Boolean,
     go2rtcStreams: Set<String>,
+    subStreamFallbacks: Map<String, Boolean>,
     hideEventImage: Boolean,
     liveStreamOption: String,
     isStreamOptionOverridden: Boolean,
@@ -579,7 +659,9 @@ private fun FocusedTile(
     refreshTimestamp: Long,
     showBoundingBoxes: Boolean,
     autoLandscapeOnStream: Boolean,
+    showLastImageWhileLoading: Boolean,
     currentSsid: String?,
+    onSubStreamFallback: () -> Unit,
     onClose: () -> Unit,
 ) {
     val baseUrl = effectiveBaseUrl ?: server?.baseUrl()
@@ -595,7 +677,14 @@ private fun FocusedTile(
     }
 
     val subStreamName = "${cameraName}_sub"
-    val liveCameraName = if (preferSubStream && go2rtcStreams.contains(subStreamName)) subStreamName else cameraName
+    val liveCameraName =
+        if (preferSubStream && go2rtcStreams.contains(subStreamName) &&
+            subStreamFallbacks[cameraName] != true
+        ) {
+            subStreamName
+        } else {
+            cameraName
+        }
     val bboxParam = if (showBoundingBoxes) "&bbox=1" else ""
     val snapshotPath = "api/$cameraName/latest.jpg?h=720&t=$refreshTimestamp$bboxParam"
 
@@ -671,7 +760,9 @@ private fun FocusedTile(
                 imageLoader = imageLoader,
                 showBoundingBoxes = showBoundingBoxes,
                 autoLandscapeOnStream = autoLandscapeOnStream,
+                showLastImageWhileLoading = showLastImageWhileLoading,
                 refreshTimestamp = refreshTimestamp,
+                onSubStreamFallback = onSubStreamFallback,
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -710,11 +801,13 @@ private fun StreamContent(
     imageLoader: ImageLoader,
     showBoundingBoxes: Boolean,
     autoLandscapeOnStream: Boolean,
+    showLastImageWhileLoading: Boolean,
     refreshTimestamp: Long,
+    onSubStreamFallback: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var streamState by remember(liveStreamOption, liveCameraName) {
-        mutableStateOf<CameraStreamState>(CameraStreamState.Skeleton)
+        mutableStateOf<LiveStreamState>(LiveStreamState.Idle)
     }
     val snapshotUrl = baseUrl?.trimEnd('/')?.plus("/") + snapshotPath
 
@@ -726,15 +819,20 @@ private fun StreamContent(
             val lanOnlyHost = server?.rtspHost?.takeIf { it.isNotBlank() }
             lanOnlyHost != null &&
                 server.localNetworkSsids.isNotEmpty() &&
-                (currentSsid == null || currentSsid !in server.localNetworkSsids)
+                currentSsid !in server.localNetworkSsids
         }
     val effectiveStreamOption =
         if (liveStreamOption == "rtsp" && rtspOffLan) {
-            Log.i(TAG, "RTSP gated off-LAN (ssid=$currentSsid) for $cameraName — falling back to WebRTC")
             "webrtc"
         } else {
             liveStreamOption
         }
+
+    LaunchedEffect(liveStreamOption, rtspOffLan, cameraName) {
+        if (liveStreamOption == "rtsp" && rtspOffLan) {
+            Log.i(TAG, "RTSP gated off-LAN (ssid=$currentSsid) for $cameraName — falling back to WebRTC")
+        }
+    }
 
     Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
         if (server != null && okHttpClient != null) {
@@ -747,7 +845,13 @@ private fun StreamContent(
                             snapshotUrl = snapshotUrl,
                             snapshotCachedAt = refreshTimestamp,
                             autoLandscapeOnStream = autoLandscapeOnStream,
+                            showLastImageWhileLoading = showLastImageWhileLoading,
                             onStateChanged = { streamState = it },
+                            onFatal = {
+                                if (liveCameraName != cameraName) {
+                                    onSubStreamFallback()
+                                }
+                            },
                             modifier = Modifier.fillMaxSize(),
                         )
                     } else {
@@ -764,6 +868,8 @@ private fun StreamContent(
                         cameraName = cameraName,
                         imageLoader = imageLoader,
                         showBoundingBoxes = showBoundingBoxes,
+                        snapshotUrl = snapshotUrl,
+                        showLastImageWhileLoading = showLastImageWhileLoading,
                         onStateChanged = { streamState = it },
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -778,7 +884,12 @@ private fun StreamContent(
                         snapshotCachedAt = refreshTimestamp,
                         autoLandscapeOnStream = autoLandscapeOnStream,
                         showBoundingBoxes = showBoundingBoxes,
-                        onFatal = { },
+                        showLastImageWhileLoading = showLastImageWhileLoading,
+                        onFatal = {
+                            if (liveCameraName != cameraName) {
+                                onSubStreamFallback()
+                            }
+                        },
                         onStateChanged = { streamState = it },
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -788,7 +899,7 @@ private fun StreamContent(
 
         // Badge layer — camera pill + status badge + protocol badge — floats above all stream types
         StreamTileBadgeLayer(
-            streamState = streamState,
+            streamState = streamState.toBadgeState(),
             cameraName = cameraName,
             streamTypeLabel =
                 when {

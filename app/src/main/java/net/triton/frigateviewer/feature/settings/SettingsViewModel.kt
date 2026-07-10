@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -13,19 +15,29 @@ import net.triton.frigateviewer.core.data.FrigateRepository
 import net.triton.frigateviewer.core.data.Server
 import net.triton.frigateviewer.core.data.ServerRepository
 import net.triton.frigateviewer.core.data.UserSettingsRepository
+import net.triton.frigateviewer.core.network.ApiResult
 import net.triton.frigateviewer.core.network.AuthMode
 import net.triton.frigateviewer.core.network.FrigateClient
 import net.triton.frigateviewer.core.network.WifiMonitor
+import net.triton.frigateviewer.core.network.safeApiCall
 import net.triton.frigateviewer.notification.ServiceController
 import java.util.UUID
 import javax.inject.Inject
+
+/** Result of a manual "test connection" tap on a server row (Servers settings page). */
+data class ConnectionTestResult(
+    val serverId: String,
+    val success: Boolean,
+    val latencyMs: Long?,
+    val message: String,
+)
 
 data class ServerForm(
     val id: String = UUID.randomUUID().toString(),
     val name: String = "",
     val protocol: String = "https",
     val host: String = "",
-    val port: String = "8971",
+    val port: String = "",
     val basePath: String = "",
     val authMode: AuthMode = AuthMode.NONE,
     val username: String = "",
@@ -41,7 +53,8 @@ data class SettingsUiState(
     val servers: List<Server> = emptyList(),
     val activeId: String? = null,
     val testResult: String? = null,
-    val preferSubStream: Boolean = false,
+    val preferSubStreamGrid: Boolean = true,
+    val preferSubStreamFullscreen: Boolean = false,
     val themeMode: String = "SYSTEM",
     val accentColor: Long = 0xFF6750A4,
     val useWallpaperColor: Boolean = false,
@@ -53,7 +66,9 @@ data class SettingsUiState(
     val autoLandscapeOnStream: Boolean = false,
     val autoRefreshInterval: Int = 3,
     val eventPhotoPreference: String = "snapshot",
-    val liveStreamOption: String = "webrtc",
+    val gridStreamType: String = "snapshot",
+    val fullscreenStreamType: String = "webrtc",
+    val keepOffscreenTilesAlive: Boolean = false,
     val showBoundingBoxes: Boolean = true,
     val eventGridColumns: Int = 1,
     val dateFormat: String = "descriptive",
@@ -61,6 +76,7 @@ data class SettingsUiState(
     val cardCornerRadius: Int = 12,
     val cardBorderWidth: Int = 0,
     val customAccentColors: List<Long> = emptyList(),
+    val showLastImageWhileLoading: Boolean = true,
 )
 
 @HiltViewModel
@@ -78,10 +94,10 @@ class SettingsViewModel
         val currentSsid: kotlinx.coroutines.flow.StateFlow<String?> = wifiMonitor.ssid
 
         val state: kotlinx.coroutines.flow.StateFlow<SettingsUiState> =
-            combine(
+            combine<Any?, SettingsUiState>(
                 serverRepo.servers,
                 serverRepo.activeServerId,
-                userSettingsRepo.preferSubStream,
+                userSettingsRepo.preferSubStreamGrid,
                 userSettingsRepo.themeMode,
                 userSettingsRepo.accentColor,
                 userSettingsRepo.useWallpaperColor,
@@ -93,7 +109,7 @@ class SettingsViewModel
                 userSettingsRepo.autoLandscapeOnStream,
                 userSettingsRepo.autoRefreshInterval,
                 userSettingsRepo.eventPhotoPreference,
-                userSettingsRepo.liveStreamOption,
+                userSettingsRepo.gridStreamType,
                 userSettingsRepo.showBoundingBoxes,
                 userSettingsRepo.eventGridColumns,
                 userSettingsRepo.dateFormat,
@@ -101,12 +117,16 @@ class SettingsViewModel
                 userSettingsRepo.cardCornerRadius,
                 userSettingsRepo.cardBorderWidth,
                 userSettingsRepo.customAccentColors,
+                userSettingsRepo.showLastImageWhileLoading,
+                userSettingsRepo.fullscreenStreamType,
+                userSettingsRepo.preferSubStreamFullscreen,
+                userSettingsRepo.keepOffscreenTilesAlive,
             ) { args ->
                 @Suppress("UNCHECKED_CAST")
                 SettingsUiState(
                     servers = args[0] as List<Server>,
                     activeId = args[1] as String?,
-                    preferSubStream = args[2] as Boolean,
+                    preferSubStreamGrid = args[2] as Boolean,
                     themeMode = args[3] as String,
                     accentColor = args[4] as Long,
                     useWallpaperColor = args[5] as Boolean,
@@ -118,7 +138,7 @@ class SettingsViewModel
                     autoLandscapeOnStream = args[11] as Boolean,
                     autoRefreshInterval = args[12] as Int,
                     eventPhotoPreference = args[13] as String,
-                    liveStreamOption = args[14] as String,
+                    gridStreamType = args[14] as String,
                     showBoundingBoxes = args[15] as Boolean,
                     eventGridColumns = args[16] as Int,
                     dateFormat = args[17] as String,
@@ -126,6 +146,10 @@ class SettingsViewModel
                     cardCornerRadius = args[19] as Int,
                     cardBorderWidth = args[20] as Int,
                     customAccentColors = args[21] as List<Long>,
+                    showLastImageWhileLoading = args[22] as Boolean,
+                    fullscreenStreamType = args[23] as String,
+                    preferSubStreamFullscreen = args[24] as Boolean,
+                    keepOffscreenTilesAlive = args[25] as Boolean,
                 )
             }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
@@ -134,13 +158,26 @@ class SettingsViewModel
 
         fun saveServer(form: ServerForm) {
             viewModelScope.launch {
-                val port = form.port.toIntOrNull()
+                val inputHost = form.host.trim()
+                val (finalHost, extractedPort) =
+                    if (inputHost.contains(":")) {
+                        val parts = inputHost.split(":")
+                        parts[0] to parts[1].toIntOrNull()
+                    } else {
+                        inputHost to null
+                    }
+
+                // If the user entered a port in the dedicated field, use it.
+                // If the field is blank, check if we extracted a port from the host field.
+                // Otherwise, it remains null (using protocol defaults).
+                val port = form.port.trim().let { if (it.isEmpty()) extractedPort else it.toIntOrNull() }
+
                 val server =
                     Server(
                         id = form.id,
-                        name = form.name.ifBlank { form.host },
+                        name = form.name.ifBlank { finalHost },
                         protocol = form.protocol,
-                        host = form.host.trim(),
+                        host = finalHost,
                         port = port,
                         basePath = form.basePath.trim(),
                         authMode = form.authMode,
@@ -193,7 +230,11 @@ class SettingsViewModel
             }
         }
 
-        fun setPreferSubStream(prefer: Boolean) = viewModelScope.launch { userSettingsRepo.setPreferSubStream(prefer) }
+        fun setPreferSubStreamGrid(prefer: Boolean) = viewModelScope.launch { userSettingsRepo.setPreferSubStreamGrid(prefer) }
+
+        fun setPreferSubStreamFullscreen(prefer: Boolean) = viewModelScope.launch { userSettingsRepo.setPreferSubStreamFullscreen(prefer) }
+
+        fun setKeepOffscreenTilesAlive(keep: Boolean) = viewModelScope.launch { userSettingsRepo.setKeepOffscreenTilesAlive(keep) }
 
         fun setThemeMode(mode: String) = viewModelScope.launch { userSettingsRepo.setThemeMode(mode) }
 
@@ -217,7 +258,9 @@ class SettingsViewModel
 
         fun setEventPhotoPreference(pref: String) = viewModelScope.launch { userSettingsRepo.setEventPhotoPreference(pref) }
 
-        fun setLiveStreamOption(option: String) = viewModelScope.launch { userSettingsRepo.setLiveStreamOption(option) }
+        fun setGridStreamType(option: String) = viewModelScope.launch { userSettingsRepo.setGridStreamType(option) }
+
+        fun setFullscreenStreamType(option: String) = viewModelScope.launch { userSettingsRepo.setFullscreenStreamType(option) }
 
         fun setShowBoundingBoxes(show: Boolean) = viewModelScope.launch { userSettingsRepo.setShowBoundingBoxes(show) }
 
@@ -242,11 +285,47 @@ class SettingsViewModel
                 userSettingsRepo.setCustomAccentColors(state.value.customAccentColors - color)
             }
 
+        fun setShowLastImageWhileLoading(show: Boolean) = viewModelScope.launch { userSettingsRepo.setShowLastImageWhileLoading(show) }
+
         fun setRtspPort(port: Int) {
             viewModelScope.launch {
                 val server = serverRepo.activeServer() ?: return@launch
                 serverRepo.upsert(server.copy(rtspPort = port))
                 client.invalidate(server.id)
+            }
+        }
+
+        private val _connectionTest = MutableStateFlow<ConnectionTestResult?>(null)
+        val connectionTest: StateFlow<ConnectionTestResult?> = _connectionTest.asStateFlow()
+
+        /** Pings [serverId] via the existing config() endpoint and records round-trip latency. */
+        fun testConnection(serverId: String) {
+            viewModelScope.launch {
+                val server = serverRepo.all().firstOrNull { it.id == serverId } ?: return@launch
+                val start = System.currentTimeMillis()
+                val api = client.apiFor(server, wifiMonitor.ssid.value)
+                val result = safeApiCall { api.config() }
+                val elapsed = System.currentTimeMillis() - start
+                _connectionTest.value =
+                    when (result) {
+                        is ApiResult.Success -> ConnectionTestResult(serverId, true, elapsed, "Reachable")
+                        is ApiResult.HttpError -> ConnectionTestResult(serverId, false, elapsed, "HTTP ${result.code}: ${result.message}")
+                        is ApiResult.NetworkError -> ConnectionTestResult(serverId, false, null, result.cause.message ?: "Network error")
+                        is ApiResult.ParseError -> ConnectionTestResult(serverId, false, elapsed, "Server returned an unexpected response")
+                    }
+            }
+        }
+
+        fun clearConnectionTest() {
+            _connectionTest.value = null
+        }
+
+        private val _stats = MutableStateFlow<ApiResult<kotlinx.serialization.json.JsonElement>?>(null)
+        val stats: StateFlow<ApiResult<kotlinx.serialization.json.JsonElement>?> = _stats.asStateFlow()
+
+        fun fetchStats() {
+            viewModelScope.launch {
+                _stats.value = repo.stats()
             }
         }
     }

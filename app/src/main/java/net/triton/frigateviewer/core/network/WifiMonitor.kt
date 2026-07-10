@@ -25,6 +25,16 @@ class WifiMonitor
         private val _ssid = MutableStateFlow<String?>(null)
         val ssid: StateFlow<String?> = _ssid.asStateFlow()
 
+        private fun isEmulator(): Boolean =
+            Build.FINGERPRINT.contains("generic") ||
+                Build.FINGERPRINT.contains("unknown") ||
+                Build.MODEL.contains("google_sdk") ||
+                Build.MODEL.contains("Emulator") ||
+                Build.MODEL.contains("Android SDK built for x86") ||
+                Build.MANUFACTURER.contains("Genymotion") ||
+                (Build.BRAND.startsWith("generic") && Build.DEVICE.startsWith("generic")) ||
+                "google_sdk" == Build.PRODUCT
+
         init {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 registerNetworkCallback()
@@ -49,11 +59,13 @@ class WifiMonitor
                         caps: NetworkCapabilities,
                     ) {
                         val info = caps.transportInfo as? WifiInfo
-                        _ssid.value =
+                        val realSsid =
                             info
                                 ?.ssid
                                 ?.trim('"')
                                 ?.takeIf { it.isNotBlank() && it != "<unknown ssid>" }
+
+                        _ssid.value = realSsid ?: null
                     }
 
                     override fun onLost(network: Network) {
@@ -66,10 +78,13 @@ class WifiMonitor
         @Suppress("DEPRECATION")
         private fun readLegacySsid() {
             val wm = context.applicationContext.getSystemService(WifiManager::class.java) ?: return
-            val info = wm.connectionInfo ?: return
-            _ssid.value =
-                info.ssid
+            val info = wm.connectionInfo
+            val realSsid =
+                info
+                    ?.ssid
                     ?.trim('"')
                     ?.takeIf { it.isNotBlank() && it != "<unknown ssid>" }
+
+            _ssid.value = realSsid ?: null
         }
     }

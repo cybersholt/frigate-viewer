@@ -335,7 +335,7 @@ private fun ColorDot(
             Modifier
                 .size(36.dp)
                 .clip(CircleShape)
-                .background(Color(color))
+                .background(Color(color.toInt()))
                 .then(
                     if (selected) {
                         Modifier.border(3.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
@@ -399,7 +399,7 @@ fun AddCustomColorSheet(
                         Modifier
                             .size(48.dp)
                             .clip(CircleShape)
-                            .background(Color(parsedColor)),
+                            .background(Color(parsedColor.toInt())),
                     )
                 }
             }
@@ -419,7 +419,7 @@ fun AddCustomColorSheet(
                         Modifier
                             .size(32.dp)
                             .clip(CircleShape)
-                            .background(Color(color))
+                            .background(Color(color.toInt()))
                             .clickable {
                                 onAdd(color)
                                 onDismiss()

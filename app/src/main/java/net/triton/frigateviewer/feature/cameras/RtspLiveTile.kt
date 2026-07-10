@@ -10,9 +10,7 @@ import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -21,16 +19,9 @@ import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.VideocamOff
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LoadingIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -45,7 +36,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
@@ -60,46 +50,32 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
 import androidx.media3.ui.PlayerView
-import coil3.compose.AsyncImage
-import coil3.request.ImageRequest
-import coil3.request.crossfade
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import net.triton.frigateviewer.LocalFullScreenMode
 
 private const val TAG = "RtspLiveTile"
+private const val MAX_AUTO_RECONNECTS = 2
+private val BACKOFF_MS = longArrayOf(2_000L, 5_000L)
 
 private fun maskRtspUrl(url: String): String = url.replace(Regex("(rtsp://[^:@/]+):([^@]+)@"), "$1:***@")
 
-private fun friendlyError(e: PlaybackException): String =
+private fun classifyError(e: PlaybackException): StreamError =
     when (e.errorCode) {
-        PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED -> {
-            "Can't reach the RTSP server. Is port accessible from this device?"
-        }
+        PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED -> StreamError.NETWORK
 
-        PlaybackException.ERROR_CODE_TIMEOUT -> {
-            "Connection timed out."
-        }
+        PlaybackException.ERROR_CODE_TIMEOUT -> StreamError.TIMEOUT
 
-        PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> {
-            "Server rejected the connection — likely an auth failure."
-        }
-
-        PlaybackException.ERROR_CODE_IO_NO_PERMISSION -> {
-            "Permission denied by server."
-        }
-
-        PlaybackException.ERROR_CODE_IO_CLEARTEXT_NOT_PERMITTED -> {
-            "Clear-text RTSP blocked. The stream must use TCP."
-        }
+        PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+        PlaybackException.ERROR_CODE_IO_NO_PERMISSION,
+        PlaybackException.ERROR_CODE_IO_CLEARTEXT_NOT_PERMITTED,
+        -> StreamError.SOURCE_UNAVAILABLE
 
         PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
         PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
-        -> {
-            "Unsupported stream format."
-        }
+        -> StreamError.DECODE_FAILED
 
-        else -> {
-            "Error ${e.errorCode}: ${e.message ?: "unknown"}"
-        }
+        else -> StreamError.NETWORK
     }
 
 @OptIn(UnstableApi::class, ExperimentalMaterial3ExpressiveApi::class)
@@ -110,36 +86,67 @@ fun RtspLiveTile(
     snapshotUrl: String? = null,
     snapshotCachedAt: Long = 0L,
     autoLandscapeOnStream: Boolean = false,
-    onStateChanged: (CameraStreamState) -> Unit = {},
+    showLastImageWhileLoading: Boolean = true,
+    onStateChanged: (LiveStreamState) -> Unit = {},
+    onFatal: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val view = LocalView.current
     var retryTrigger by remember { mutableIntStateOf(0) }
+    var autoReconnectAttempts by remember { mutableIntStateOf(0) }
     var isFullScreen by remember { mutableStateOf(false) }
     var isMuted by remember { mutableStateOf(true) }
     var scale by remember { mutableStateOf(1f) }
     var zoomOffset by remember { mutableStateOf(Offset.Zero) }
+    var videoRevealed by remember { mutableStateOf(false) }
     val fullScreenMode = LocalFullScreenMode.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
 
-    val streamState =
-        remember(url, retryTrigger) {
-            mutableStateOf<CameraStreamState>(
-                if (snapshotUrl != null) {
-                    CameraStreamState.LoadingWithCache(
-                        if (snapshotCachedAt > 0L) snapshotCachedAt else System.currentTimeMillis(),
-                    )
-                } else {
-                    CameraStreamState.Skeleton
-                },
-            )
+    var liveState by remember { mutableStateOf<LiveStreamState>(LiveStreamState.Idle) }
+    LaunchedEffect(liveState) { onStateChanged(liveState) }
+
+    fun handleFailure(reason: StreamError) {
+        if (reason == StreamError.NETWORK && autoReconnectAttempts < MAX_AUTO_RECONNECTS) {
+            autoReconnectAttempts++
+            liveState = LiveStreamState.Reconnecting(autoReconnectAttempts)
+            val delayMs = BACKOFF_MS[autoReconnectAttempts - 1]
+            scope.launch {
+                delay(delayMs)
+                retryTrigger++
+            }
+        } else {
+            liveState = LiveStreamState.Error(reason)
+            onFatal()
         }
-    var streamStateVal by streamState
+    }
 
-    LaunchedEffect(streamStateVal) { onStateChanged(streamStateVal) }
+    // Timeout watchdog: server can take >10s (measured 17.4s against a real unhealthy camera),
+    // so give it 20s total before declaring a hard timeout rather than trusting ExoPlayer alone.
+    LaunchedEffect(retryTrigger) {
+        videoRevealed = false
+        liveState = LiveStreamState.Connecting(0)
+        var elapsed = 0L
+        while (true) {
+            delay(500)
+            elapsed += 500
+            val s = liveState
+            if (s !is LiveStreamState.Connecting && s !is LiveStreamState.Negotiating && s !is LiveStreamState.Buffering) {
+                break
+            }
+            if (elapsed >= 20_000) {
+                liveState = LiveStreamState.Error(StreamError.TIMEOUT)
+                onFatal()
+                break
+            }
+            if (s is LiveStreamState.Connecting) {
+                liveState = LiveStreamState.Connecting(elapsed)
+            }
+        }
+    }
 
     val exoPlayer =
         remember(url, retryTrigger) {
-            Log.i(TAG, "Connecting → ${maskRtspUrl(url)}")
+            Log.i(TAG, "[DEBUG-RTSP] Connecting to URL: $url")
             // setEnableDecoderFallback: some hardware H.264 decoders (e.g. Exynos, on 4K streams)
             // reject setOutputSurface with BAD_INDEX. Without fallback that's a fatal codec crash;
             // with it, ExoPlayer retries the same stream on a software decoder.
@@ -159,20 +166,23 @@ fun RtspLiveTile(
                                     Player.STATE_ENDED -> "ENDED"
                                     else -> "UNKNOWN($state)"
                                 }
-                            Log.d(TAG, "State → $name (url=${maskRtspUrl(url)})")
+                            Log.d(TAG, "[DEBUG-RTSP] State → $name (url=${maskRtspUrl(url)})")
+                            if (state == Player.STATE_BUFFERING && liveState !is LiveStreamState.Playing) {
+                                liveState = LiveStreamState.Buffering
+                            }
                         }
 
                         override fun onRenderedFirstFrame() {
-                            streamState.value = CameraStreamState.Live
+                            videoRevealed = true
+                            liveState = LiveStreamState.Playing
                         }
 
                         override fun onPlayerError(e: PlaybackException) {
-                            val msg = friendlyError(e)
-                            Log.e(TAG, "Error on ${maskRtspUrl(url)}: code=${e.errorCode} — $msg", e)
+                            Log.e(TAG, "[DEBUG-RTSP] Error on ${maskRtspUrl(url)}: code=${e.errorCode} — ${e.message}", e)
                             e.cause?.let { cause ->
-                                Log.e(TAG, "  caused by: ${cause.javaClass.simpleName}: ${cause.message}")
+                                Log.e(TAG, "[DEBUG-RTSP]   caused by: ${cause.javaClass.simpleName}: ${cause.message}")
                             }
-                            streamState.value = CameraStreamState.Offline(msg)
+                            handleFailure(classifyError(e))
                         }
                     },
                 )
@@ -240,6 +250,7 @@ fun RtspLiveTile(
                     androidx.lifecycle.Lifecycle.Event.ON_START -> {
                         if (stopped) {
                             stopped = false
+                            autoReconnectAttempts = 0
                             retryTrigger++
                         }
                     }
@@ -296,114 +307,17 @@ fun RtspLiveTile(
                 },
         )
 
-        // State-based overlay — camera pill and status badge are rendered by the parent
-        // StreamContent via StreamTileBadgeLayer so they appear above all stream types.
-        when (val state = streamStateVal) {
-            CameraStreamState.Skeleton -> {
-                Box(
-                    Modifier.fillMaxSize().background(Color.Black),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        LoadingIndicator(
-                            modifier = Modifier.size(48.dp),
-                            color = Color.White.copy(alpha = 0.80f),
-                        )
-                        Text(
-                            "Connecting via RTSP…",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White,
-                        )
-                    }
-                }
-            }
-
-            is CameraStreamState.LoadingWithCache -> {
-                if (snapshotUrl != null) {
-                    AsyncImage(
-                        model =
-                            ImageRequest
-                                .Builder(context)
-                                .data(snapshotUrl)
-                                .crossfade(false)
-                                .build(),
-                        contentDescription = null,
-                        contentScale = ContentScale.Fit,
-                        alpha = 0.8f,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = if (snapshotUrl != null) 0.15f else 0.9f)),
-                )
-            }
-
-            CameraStreamState.Live -> { /* video frame visible through PlayerView */ }
-
-            is CameraStreamState.Offline -> {
-                if (snapshotUrl != null) {
-                    AsyncImage(
-                        model =
-                            ImageRequest
-                                .Builder(context)
-                                .data(snapshotUrl)
-                                .crossfade(false)
-                                .build(),
-                        contentDescription = null,
-                        contentScale = ContentScale.Fit,
-                        alpha = 0.5f,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
-                Box(
-                    Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.60f)),
-                ) {
-                    Column(
-                        modifier = Modifier.align(Alignment.Center).padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.VideocamOff,
-                            contentDescription = null,
-                            tint = Color.White.copy(alpha = 0.54f),
-                            modifier = Modifier.size(32.dp),
-                        )
-                        Text(
-                            "Device offline",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.70f),
-                        )
-                        if (state.reason != null) {
-                            Text(
-                                state.reason,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Color.White.copy(alpha = 0.50f),
-                            )
-                        }
-                    }
-                    FilledTonalButton(
-                        onClick = { retryTrigger++ },
-                        modifier =
-                            Modifier
-                                .align(Alignment.BottomEnd)
-                                .padding(12.dp),
-                    ) {
-                        Icon(
-                            Icons.Default.Refresh,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Text("Retry", modifier = Modifier.padding(start = 4.dp))
-                    }
-                }
-            }
-        }
+        StreamOverlay(
+            state = liveState,
+            posterUrl = snapshotUrl,
+            showPoster = showLastImageWhileLoading,
+            videoRevealed = videoRevealed,
+            onRetry = {
+                autoReconnectAttempts = 0
+                retryTrigger++
+            },
+            modifier = Modifier.fillMaxSize(),
+        )
 
         // Mute toggle
         IconButton(

@@ -36,45 +36,6 @@ fun EventPill(
     }
 }
 
-@Composable
-fun LabelPill(
-    label: String,
-    modifier: Modifier = Modifier,
-) {
-    EventPill(
-        text = label,
-        containerColor = MaterialTheme.colorScheme.primaryContainer,
-        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        modifier = modifier,
-    )
-}
-
-@Composable
-fun ScorePill(
-    score: String,
-    modifier: Modifier = Modifier,
-) {
-    EventPill(
-        text = score,
-        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-        modifier = modifier,
-    )
-}
-
-@Composable
-fun ZonePill(
-    zone: String,
-    modifier: Modifier = Modifier,
-) {
-    EventPill(
-        text = zone,
-        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-        modifier = modifier,
-    )
-}
-
 /** Camera name pill — uses secondaryContainer, distinct from label (primary) and score (tertiary). */
 @Composable
 fun CameraPill(

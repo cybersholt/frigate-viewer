@@ -32,7 +32,8 @@
       "Bash(MSYS_NO_PATHCONV=1 adb -s adb-3A210DLJH0023Y-jKEmpq._adb-tls-connect._tcp exec-out screencap -p)",
       "Bash(./gradlew :app:compileDebugKotlin --console=plain)",
       "Bash(./gradlew ktlintCheck --console=plain)",
-      "Bash(./gradlew :app:assembleDebug --console=plain)"
+      "Bash(./gradlew :app:assembleDebug --console=plain)",
+      "Bash(./gradlew :app:installDebug)"
     ]
   },
   "hooks": {

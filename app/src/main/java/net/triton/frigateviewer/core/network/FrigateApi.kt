@@ -65,6 +65,10 @@ interface FrigateApi {
     @GET("api/go2rtc/streams")
     suspend fun go2rtcStreams(): Response<Map<String, JsonElement>>
 
+    /** Loosely-typed system stats (cpu/storage/detector usage) — shown raw on the Advanced settings page. */
+    @GET("api/stats")
+    suspend fun stats(): Response<JsonElement>
+
     /** Physical recording segments for [camera] in `[after, before]` — drives VOD seek math. */
     @GET("api/{camera}/recordings")
     suspend fun recordings(

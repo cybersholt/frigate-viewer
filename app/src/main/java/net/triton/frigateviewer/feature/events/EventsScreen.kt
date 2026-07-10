@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
@@ -118,10 +119,15 @@ fun EventsScreen(
                     }
 
                     state.error != null && state.events.isEmpty() -> {
-                        Text(
-                            "Couldn't load events: ${state.error}",
-                            modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                        )
+                        Column(
+                            Modifier.align(Alignment.Center).padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            Text("Couldn't load events", style = MaterialTheme.typography.titleLarge)
+                            Text(state.error!!, style = MaterialTheme.typography.bodyMedium)
+                            Button(onClick = { vm.refresh() }, modifier = Modifier.padding(top = 16.dp)) { Text("Retry") }
+                        }
                     }
 
                     state.events.isEmpty() -> {

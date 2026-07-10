@@ -31,9 +31,22 @@ data class Server(
     val localNetworkSsids: List<String> = emptyList(),
 ) {
     fun baseUrl(): String {
-        val portPart = port?.let { ":$it" }.orEmpty()
+        val cleanHost = host.substringBefore(':')
+        val hostPort = host.substringAfter(':', "")
+
+        val finalPort =
+            when {
+                port != null -> port
+                hostPort.isNotEmpty() -> hostPort.toIntOrNull()
+                else -> null
+            }
+
+        // Omit port if it's the default for the protocol
+        val isDefaultPort = (protocol == "https" && finalPort == 443) || (protocol == "http" && finalPort == 80)
+        val portPart = if (finalPort != null && !isDefaultPort) ":$finalPort" else ""
+        
         val path = basePath.trim('/').let { if (it.isEmpty()) "" else "/$it" }
-        return "$protocol://$host$portPart$path/"
+        return "$protocol://$cleanHost$portPart$path/"
     }
 
     fun effectiveBaseUrl(currentSsid: String?): String {

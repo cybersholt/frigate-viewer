@@ -161,4 +161,19 @@ Launch: adb shell am start -n "net.triton.frigateviewer.debug/net.triton.frigate
 5. All forms must support keyboard navigation
 6. All screens must support landscape and portrait mode
 7. All screens must support 1x1 aspect ratio, 2x2 aspect ratio, 3x3 aspect ratio
+8. All password fields must include a visibility toggle (eye icon) to reveal/hide the value — never a bare `PasswordVisualTransformation()` with no way to check what was typed
+
+## Agent skills
+
+### Issue tracker
+
+GitHub (`cybersholt/frigate-viewer`, the `origin` remote), via the `gh` CLI; external PRs are not treated as a triage surface. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`) — no repo-specific overrides. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context — one `CONTEXT.md` (once created) + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
 

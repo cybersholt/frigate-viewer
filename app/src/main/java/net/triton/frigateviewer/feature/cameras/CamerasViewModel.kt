@@ -32,17 +32,22 @@ data class CamerasUiState(
     val effectiveBaseUrl: String? = null,
     /** Currently-connected Wi-Fi SSID, or null off Wi-Fi. Used to gate LAN-only RTSP. */
     val currentSsid: String? = null,
-    val preferSubStream: Boolean = false,
+    val preferSubStreamGrid: Boolean = true,
+    val preferSubStreamFullscreen: Boolean = false,
     val go2rtcStreams: Set<String> = emptySet(),
     val gridColumns: Int = 2,
     val autoRefresh: Boolean = false,
     val autoRefreshInterval: Int = 3,
-    val liveStreamOption: String = "webrtc",
-    /** Per-camera live-mode overrides; a camera absent here uses [liveStreamOption]. */
+    val gridStreamType: String = "snapshot",
+    val fullscreenStreamType: String = "webrtc",
+    val keepOffscreenTilesAlive: Boolean = false,
+    val subStreamFallbacks: Map<String, Boolean> = emptyMap(),
+    /** Per-camera live-mode overrides; a camera absent here uses [gridStreamType]/[fullscreenStreamType]. */
     val cameraStreamOverrides: Map<String, String> = emptyMap(),
     val showBoundingBoxes: Boolean = true,
     val hideEventImage: Boolean = false,
     val autoLandscapeOnStream: Boolean = false,
+    val showLastImageWhileLoading: Boolean = true,
     val refreshTimestamp: Long = 0L,
     /** Persisted camera display order (empty = follow API order). */
     val cameraOrder: List<String> = emptyList(),
@@ -96,14 +101,14 @@ class CamerasViewModel
             viewModelScope.launch {
                 combine(
                     serverRepo.activeServerId,
-                    userSettingsRepo.preferSubStream,
+                    userSettingsRepo.preferSubStreamGrid,
                     userSettingsRepo.cameraGridColumns,
                     userSettingsRepo.autoRefreshCameras,
                     userSettingsRepo.autoRefreshInterval,
                 ) { activeId, preferSub, grid, auto, interval ->
                     _state.value =
                         _state.value.copy(
-                            preferSubStream = preferSub,
+                            preferSubStreamGrid = preferSub,
                             gridColumns = grid,
                             autoRefresh = auto,
                             autoRefreshInterval = interval,
@@ -116,20 +121,37 @@ class CamerasViewModel
             }
 
             viewModelScope.launch {
-                combine(
-                    userSettingsRepo.liveStreamOption,
+                combine<Any?, Unit>(
+                    userSettingsRepo.gridStreamType,
+                    userSettingsRepo.fullscreenStreamType,
+                    userSettingsRepo.preferSubStreamFullscreen,
+                    userSettingsRepo.keepOffscreenTilesAlive,
                     userSettingsRepo.showBoundingBoxes,
                     userSettingsRepo.hideEventImageInStream,
-                    userSettingsRepo.autoLandscapeOnStream,
-                    userSettingsRepo.cameraStreamOverrides,
-                ) { option, showBoxes, hide, autoLandscape, streamOverrides ->
+                ) { args ->
                     _state.value =
                         _state.value.copy(
-                            liveStreamOption = option,
-                            showBoundingBoxes = showBoxes,
-                            hideEventImage = hide,
+                            gridStreamType = args[0] as String,
+                            fullscreenStreamType = args[1] as String,
+                            preferSubStreamFullscreen = args[2] as Boolean,
+                            keepOffscreenTilesAlive = args[3] as Boolean,
+                            showBoundingBoxes = args[4] as Boolean,
+                            hideEventImage = args[5] as Boolean,
+                        )
+                }.collectLatest { }
+            }
+
+            viewModelScope.launch {
+                combine(
+                    userSettingsRepo.autoLandscapeOnStream,
+                    userSettingsRepo.cameraStreamOverrides,
+                    userSettingsRepo.showLastImageWhileLoading,
+                ) { autoLandscape, overrides, showLastImage ->
+                    _state.value =
+                        _state.value.copy(
                             autoLandscapeOnStream = autoLandscape,
-                            cameraStreamOverrides = streamOverrides,
+                            cameraStreamOverrides = overrides,
+                            showLastImageWhileLoading = showLastImage,
                         )
                 }.collectLatest { }
             }
@@ -173,7 +195,7 @@ class CamerasViewModel
                         _state.value = _state.value.copy(noServerConfigured = true, loading = false)
                         return@launch
                     }
-                    val effectiveBaseUrl = server.effectiveBaseUrl(wifiMonitor.ssid.value)
+                    val effectiveBaseUrl = server.effectiveBaseUrl(_state.value.currentSsid)
                     if (!isSilent) {
                         _state.value =
                             _state.value.copy(
@@ -340,6 +362,14 @@ class CamerasViewModel
                 ?.zones
                 ?.keys
                 ?.sorted() ?: emptyList()
+
+        /** Record that a camera's sub-stream failed, falling back to the main stream for this session. */
+        fun markSubStreamFallback(cameraName: String) {
+            _state.value =
+                _state.value.copy(
+                    subStreamFallbacks = _state.value.subStreamFallbacks + (cameraName to true),
+                )
+        }
 
         // --- helpers ---
 

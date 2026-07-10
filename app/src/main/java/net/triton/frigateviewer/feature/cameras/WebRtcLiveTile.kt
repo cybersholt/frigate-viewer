@@ -6,13 +6,10 @@ import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -23,7 +20,6 @@ import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -32,18 +28,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.IntOffset
@@ -52,14 +46,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import coil3.compose.AsyncImage
-import coil3.request.ImageRequest
-import coil3.request.crossfade
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -110,6 +100,9 @@ data class FrigateObjectState(
     val region: List<Float>? = null,
 )
 
+private const val MAX_AUTO_RECONNECTS = 2
+private val BACKOFF_MS = longArrayOf(2_000L, 5_000L)
+
 /**
  * Sub-second live tile via Frigate WebRTC signaling.
  */
@@ -123,12 +116,19 @@ fun WebRtcLiveTile(
     modifier: Modifier = Modifier,
     autoLandscapeOnStream: Boolean = false,
     showBoundingBoxes: Boolean = true,
+    showLastImageWhileLoading: Boolean = true,
     onFatal: (String) -> Unit = {},
-    onStateChanged: (CameraStreamState) -> Unit = {},
+    onStateChanged: (LiveStreamState) -> Unit = {},
 ) {
     val context = LocalContext.current
     val view = LocalView.current
-    val eglBase = remember { EglBase.create() }
+    val eglBase = remember(baseUrl, cameraName, okHttpClient) { EglBase.create() }
+    DisposableEffect(eglBase) {
+        onDispose {
+            eglBase.release()
+        }
+    }
+
     val pcfHolder = remember { AtomicReference<PeerConnectionFactory?>() }
     val pcHolder = remember { AtomicReference<PeerConnection?>() }
     val wsGlobalHolder = remember { AtomicReference<WebSocket?>() }
@@ -137,33 +137,18 @@ fun WebRtcLiveTile(
     val audioTrackHolder = remember { AtomicReference<org.webrtc.AudioTrack?>() }
     val pendingCandidates = remember { mutableListOf<IceCandidate>() }
 
-    var isLoading by remember { mutableStateOf(true) }
     var isFullScreen by remember { mutableStateOf(false) }
     var isMuted by remember { mutableStateOf(true) }
     var scale by remember { mutableStateOf(1f) }
     var zoomOffset by remember { mutableStateOf(Offset.Zero) }
-    var statusText by remember { mutableStateOf("Initializing...") }
-    var connectionTime by remember { mutableStateOf<Long?>(null) }
     var retryCount by remember { mutableStateOf(0) }
+    var autoReconnectAttempts by remember { mutableStateOf(0) }
+    var liveState by remember { mutableStateOf<LiveStreamState>(LiveStreamState.Idle) }
+    var videoRevealed by remember { mutableStateOf(false) }
     var objectStates by remember { mutableStateOf<List<FrigateObjectState>>(emptyList()) }
-    val startTime = remember(retryCount) { System.currentTimeMillis() }
-    val initialSnapshotUrl = remember(baseUrl, cameraName) { snapshotUrl }
     val fullScreenMode = LocalFullScreenMode.current
 
-    LaunchedEffect(isLoading) {
-        if (isLoading) {
-            val displayUrl = snapshotUrl ?: initialSnapshotUrl
-            onStateChanged(
-                if (displayUrl != null) {
-                    CameraStreamState.LoadingWithCache(
-                        if (snapshotCachedAt > 0L) snapshotCachedAt else System.currentTimeMillis(),
-                    )
-                } else {
-                    CameraStreamState.Skeleton
-                },
-            )
-        }
-    }
+    LaunchedEffect(liveState) { onStateChanged(liveState) }
 
     val entryPoint = remember { EntryPointAccessors.fromApplication(context, WebRtcEntryPoint::class.java) }
     val credStore = entryPoint.credentialStore()
@@ -226,6 +211,7 @@ fun WebRtcLiveTile(
                     androidx.lifecycle.Lifecycle.Event.ON_START -> {
                         if (stopped) {
                             stopped = false
+                            autoReconnectAttempts = 0
                             retryCount++
                         }
                     }
@@ -237,10 +223,41 @@ fun WebRtcLiveTile(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    /** Classifies a transient failure: auto-retries up to [MAX_AUTO_RECONNECTS] with backoff, else terminal Error. */
+    fun handleFailure(reason: StreamError) {
+        if (autoReconnectAttempts < MAX_AUTO_RECONNECTS) {
+            autoReconnectAttempts++
+            liveState = LiveStreamState.Reconnecting(autoReconnectAttempts)
+            val delayMs = BACKOFF_MS[autoReconnectAttempts - 1]
+            scope.launch {
+                delay(delayMs)
+                retryCount++
+            }
+        } else {
+            liveState = LiveStreamState.Error(reason)
+            onFatal(reason.name)
+        }
+    }
+
+    // Timeout watchdog: server can take >10s (measured 17.4s against a real unhealthy camera),
+    // so give it 20s total before declaring a hard timeout rather than looping forever.
     LaunchedEffect(retryCount) {
-        if (retryCount > 0) {
-            isLoading = true
-            statusText = "Reconnecting..."
+        var elapsed = 0L
+        while (true) {
+            delay(500)
+            elapsed += 500
+            val s = liveState
+            if (s !is LiveStreamState.Connecting && s !is LiveStreamState.Negotiating && s !is LiveStreamState.Buffering) {
+                break
+            }
+            if (elapsed >= 20_000) {
+                liveState = LiveStreamState.Error(StreamError.TIMEOUT)
+                onFatal(StreamError.TIMEOUT.name)
+                break
+            }
+            if (s is LiveStreamState.Connecting) {
+                liveState = LiveStreamState.Connecting(elapsed)
+            }
         }
     }
 
@@ -253,8 +270,18 @@ fun WebRtcLiveTile(
             pcHolder.getAndSet(null)?.dispose()
             pcfHolder.getAndSet(null)?.dispose()
 
+            videoRevealed = false
+            liveState = LiveStreamState.Connecting(0)
+
             try {
                 val server = serverRepo.activeServer() ?: return@withContext
+                // baseUrl is passed in by the caller (CamerasScreen), which already resolves
+                // local-vs-public URL via CamerasViewModel's SSID tracking (including the debug
+                // simulated-SSID override) — recomputing it here from a raw WifiMonitor read
+                // would silently ignore that override.
+                val effectiveBaseUrl = baseUrl
+                Log.i("WebRtcLiveTile", "[DEBUG-WebRTC] Starting connection. Effective Base URL: $effectiveBaseUrl")
+
                 val rawSecret = credStore.rawSecret(server.id) ?: ""
                 val token =
                     if (rawSecret.startsWith(CredentialStore.BEARER_PREFIX)) {
@@ -263,15 +290,16 @@ fun WebRtcLiveTile(
                         ""
                     }
 
-                val origin = baseUrl.trimEnd('/')
+                val origin = effectiveBaseUrl.trimEnd('/')
 
                 // 1. Establish global session
-                statusText = "Connecting..."
                 val globalWsUrl =
-                    baseUrl
+                    effectiveBaseUrl
                         .trimEnd('/')
                         .replaceFirst("https://", "wss://")
                         .replaceFirst("http://", "ws://") + "/ws"
+
+                Log.d("WebRtcLiveTile", "[DEBUG-WebRTC] Global WS URL: $globalWsUrl")
 
                 val globalWs =
                     okHttpClient.newWebSocket(
@@ -286,6 +314,7 @@ fun WebRtcLiveTile(
                                 webSocket: WebSocket,
                                 response: Response,
                             ) {
+                                Log.d("WebRtcLiveTile", "[DEBUG-WebRTC] Global WS Opened")
                                 webSocket.send("onConnect")
                             }
                         },
@@ -320,6 +349,7 @@ fun WebRtcLiveTile(
                         object : EmptyPcObserver() {
                             override fun onIceCandidate(candidate: IceCandidate?) {
                                 candidate ?: return
+                                Log.d("WebRtcLiveTile", "[DEBUG-WebRTC] Local ICE Candidate: ${candidate.sdp}")
                                 val ws = wsStreamHolder.get()
                                 if (ws != null) {
                                     val msg =
@@ -334,17 +364,27 @@ fun WebRtcLiveTile(
                             }
 
                             override fun onIceConnectionChange(newState: PeerConnection.IceConnectionState?) {
-                                if (newState == PeerConnection.IceConnectionState.CONNECTED) {
-                                    statusText = "Streaming..."
-                                } else if (newState == PeerConnection.IceConnectionState.FAILED ||
-                                    newState == PeerConnection.IceConnectionState.DISCONNECTED
-                                ) {
-                                    retryCount++
+                                Log.d("WebRtcLiveTile", "[DEBUG-WebRTC] ICE Connection State: $newState")
+                                when (newState) {
+                                    PeerConnection.IceConnectionState.CONNECTED -> {
+                                        if (liveState !is LiveStreamState.Playing) {
+                                            liveState = LiveStreamState.Buffering
+                                        }
+                                    }
+
+                                    PeerConnection.IceConnectionState.FAILED,
+                                    PeerConnection.IceConnectionState.DISCONNECTED,
+                                    -> {
+                                        handleFailure(StreamError.ICE_FAILED)
+                                    }
+
+                                    else -> {}
                                 }
                             }
 
                             override fun onTrack(transceiver: org.webrtc.RtpTransceiver?) {
                                 val track = transceiver?.receiver?.track() ?: return
+                                Log.d("WebRtcLiveTile", "[DEBUG-WebRTC] Received track: ${track.id()} type: ${track.kind()}")
                                 when (track) {
                                     is VideoTrack -> {
                                         track.setEnabled(true)
@@ -375,10 +415,12 @@ fun WebRtcLiveTile(
 
                 // 3. Signaling WS
                 val streamWsUrl =
-                    baseUrl
+                    effectiveBaseUrl
                         .trimEnd('/')
                         .replaceFirst("https://", "wss://")
                         .replaceFirst("http://", "ws://") + "/live/webrtc/api/ws?src=$cameraName"
+
+                Log.d("WebRtcLiveTile", "[DEBUG-WebRTC] Stream WS URL: $streamWsUrl")
 
                 val streamWs =
                     okHttpClient.newWebSocket(
@@ -393,6 +435,7 @@ fun WebRtcLiveTile(
                                 webSocket: WebSocket,
                                 response: Response,
                             ) {
+                                Log.d("WebRtcLiveTile", "[DEBUG-WebRTC] Stream WS Opened")
                                 webSocket.send(
                                     buildJsonObject {
                                         put("type", "webrtc/offer")
@@ -453,16 +496,24 @@ fun WebRtcLiveTile(
 
                                 when (type) {
                                     "webrtc/answer" -> {
+                                        Log.d("WebRtcLiveTile", "[DEBUG-WebRTC] Received WebRTC Answer")
+                                        if (liveState is LiveStreamState.Connecting) {
+                                            liveState = LiveStreamState.Negotiating
+                                        }
                                         val sdp = SessionDescription(SessionDescription.Type.ANSWER, value)
                                         pc.setRemoteDescription(
                                             object : SdpObserver {
                                                 override fun onCreateSuccess(sdp: SessionDescription?) {}
 
-                                                override fun onSetSuccess() {}
+                                                override fun onSetSuccess() {
+                                                    Log.d("WebRtcLiveTile", "[DEBUG-WebRTC] Remote Description Set")
+                                                }
 
                                                 override fun onCreateFailure(s: String?) {}
 
-                                                override fun onSetFailure(s: String?) {}
+                                                override fun onSetFailure(s: String?) {
+                                                    Log.e("WebRtcLiveTile", "[DEBUG-WebRTC] Failed to set Remote Description: $s")
+                                                }
                                             },
                                             sdp,
                                         )
@@ -480,19 +531,13 @@ fun WebRtcLiveTile(
                                 response: Response?,
                             ) {
                                 Log.w("WebRtcLiveTile", "Stream WS failure, retrying...", t)
-                                // Exponential backoff for retries
-                                val delayMs = (1000L * (1 shl (retryCount % 5))).coerceAtMost(10000L)
-                                scope.launch {
-                                    delay(delayMs)
-                                    retryCount++
-                                }
+                                handleFailure(StreamError.NETWORK)
                             }
                         },
                     )
                 wsStreamHolder.set(streamWs)
             } catch (t: Throwable) {
-                delay(2000)
-                retryCount++
+                handleFailure(StreamError.NETWORK)
             }
         }
     }
@@ -504,8 +549,6 @@ fun WebRtcLiveTile(
             wsGlobalHolder.getAndSet(null)?.close(1000, "dispose")
             pcHolder.getAndSet(null)?.dispose()
             pcfHolder.getAndSet(null)?.dispose()
-            rendererHolder.getAndSet(null)?.release()
-            eglBase.release()
         }
     }
 
@@ -527,43 +570,44 @@ fun WebRtcLiveTile(
         contentAlignment = Alignment.Center,
     ) {
         // 1. WebRTC Renderer — always in tree so the surface exists before first frame.
-        // visibility=INVISIBLE while loading hides the renderer's built-in "No frames
-        // received" error UI regardless of SurfaceView z-ordering.
-        AndroidView(
-            modifier =
-                Modifier.fillMaxSize().graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                    translationX = zoomOffset.x
-                    translationY = zoomOffset.y
-                    clip = true
-                },
-            factory = { ctx ->
-                SurfaceViewRenderer(ctx).apply {
-                    init(
-                        eglBase.eglBaseContext,
-                        object : org.webrtc.RendererCommon.RendererEvents {
-                            override fun onFirstFrameRendered() {
-                                isLoading = false
-                                connectionTime = System.currentTimeMillis() - startTime
-                                onStateChanged(CameraStreamState.Live)
-                            }
+        // We key it on the session to ensure a fresh renderer (and surface) if eglBase changes.
+        key(baseUrl, cameraName, okHttpClient) {
+            AndroidView(
+                modifier =
+                    Modifier.fillMaxSize().graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        translationX = zoomOffset.x
+                        translationY = zoomOffset.y
+                        clip = true
+                    },
+                factory = { ctx ->
+                    SurfaceViewRenderer(ctx).apply {
+                        init(
+                            eglBase.eglBaseContext,
+                            object : org.webrtc.RendererCommon.RendererEvents {
+                                override fun onFirstFrameRendered() {
+                                    videoRevealed = true
+                                    liveState = LiveStreamState.Playing
+                                }
 
-                            override fun onFrameResolutionChanged(
-                                w: Int,
-                                h: Int,
-                                r: Int,
-                            ) {}
-                        },
-                    )
-                    setEnableHardwareScaler(true)
-                    rendererHolder.set(this)
-                }
-            },
-            update = { view ->
-                view.visibility = if (isLoading) android.view.View.INVISIBLE else android.view.View.VISIBLE
-            },
-        )
+                                override fun onFrameResolutionChanged(
+                                    w: Int,
+                                    h: Int,
+                                    r: Int,
+                                ) {}
+                            },
+                        )
+                        setEnableHardwareScaler(true)
+                        rendererHolder.set(this)
+                    }
+                },
+                onRelease = { renderer ->
+                    renderer.release()
+                    rendererHolder.compareAndSet(renderer, null)
+                },
+            )
+        }
 
         // Bounding Boxes
         if (showBoundingBoxes) {
@@ -572,31 +616,18 @@ fun WebRtcLiveTile(
             }
         }
 
-        // 2. Loading overlay — after AndroidView so it is on top in window layer
-        if (isLoading) {
-            val displayUrl = snapshotUrl ?: initialSnapshotUrl
-            if (displayUrl != null) {
-                AsyncImage(
-                    model =
-                        ImageRequest
-                            .Builder(LocalContext.current)
-                            .data(displayUrl)
-                            .crossfade(false)
-                            .build(),
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    alpha = 0.8f,
-                    modifier = Modifier.fillMaxSize(),
-                )
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.15f)),
-                )
-            } else {
-                Box(Modifier.fillMaxSize().background(Color.Black))
-            }
-        }
+        // 2. Poster / spinner / error overlay — after AndroidView so it sits above the video layer.
+        StreamOverlay(
+            state = liveState,
+            posterUrl = snapshotUrl,
+            showPoster = showLastImageWhileLoading,
+            videoRevealed = videoRevealed,
+            onRetry = {
+                autoReconnectAttempts = 0
+                retryCount++
+            },
+            modifier = Modifier.fillMaxSize(),
+        )
 
         // Mute toggle
         IconButton(
@@ -632,11 +663,6 @@ private fun BoundingBoxOverlay(state: FrigateObjectState) {
         val w = maxWidth
         val h = maxHeight
 
-        // Frigate coordinates are often normalized or absolute depending on the API.
-        // Assuming normalized 0-1 for now based on common Frigate WS patterns,
-        // but if it's absolute we need the camera resolution.
-        // Based on Frigate docs, /ws sends absolute coordinates relative to the detected frame.
-        // Let's assume normalized for simplicity of the UI for now.
         val left = state.box[1] * w.value
         val top = state.box[0] * h.value
         val right = state.box[3] * w.value

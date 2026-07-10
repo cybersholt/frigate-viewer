@@ -138,6 +138,12 @@ class FrigateRepository
             }
         }
 
+        /** Raw system stats (api/stats) for the Advanced settings page. Not cached — always fresh. */
+        suspend fun stats(): ApiResult<kotlinx.serialization.json.JsonElement> {
+            val api = api() ?: return ApiResult.NetworkError(IllegalStateException("No active server"))
+            return safeApiCall { api.stats() }
+        }
+
         suspend fun login(
             serverId: String,
             username: String,

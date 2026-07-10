@@ -43,6 +43,13 @@ class UserSettingsRepository
         private val cardBorderWidthKey = intPreferencesKey(KEY_CARD_BORDER_WIDTH)
         private val customAccentColorsKey = stringPreferencesKey(KEY_CUSTOM_ACCENT_COLORS)
         private val cameraStreamOverridesKey = stringPreferencesKey(KEY_CAMERA_STREAM_OVERRIDES)
+        private val showLastImageWhileLoadingKey = booleanPreferencesKey(KEY_SHOW_LAST_IMAGE_WHILE_LOADING)
+
+        private val gridStreamTypeKey = stringPreferencesKey(KEY_GRID_STREAM_TYPE)
+        private val fullscreenStreamTypeKey = stringPreferencesKey(KEY_FULLSCREEN_STREAM_TYPE)
+        private val preferSubStreamGridKey = booleanPreferencesKey(KEY_PREFER_SUB_STREAM_GRID)
+        private val preferSubStreamFullscreenKey = booleanPreferencesKey(KEY_PREFER_SUB_STREAM_FULLSCREEN)
+        private val keepOffscreenTilesAliveKey = booleanPreferencesKey(KEY_KEEP_OFFSCREEN_TILES_ALIVE)
 
         val preferSubStream: Flow<Boolean> = store.data.map { it[preferSubStreamKey] ?: false }
         val themeMode: Flow<String> = store.data.map { it[themeModeKey] ?: "SYSTEM" }
@@ -57,6 +64,15 @@ class UserSettingsRepository
         val autoRefreshInterval: Flow<Int> = store.data.map { it[autoRefreshIntervalKey] ?: 3 }
         val eventPhotoPreference: Flow<String> = store.data.map { it[eventPhotoPreferenceKey] ?: "snapshot" }
         val liveStreamOption: Flow<String> = store.data.map { it[liveStreamOptionKey] ?: "webrtc" }
+
+        val gridStreamType: Flow<String> = store.data.map { it[gridStreamTypeKey] ?: "snapshot" }
+        val fullscreenStreamType: Flow<String> = store.data.map { it[fullscreenStreamTypeKey] ?: it[liveStreamOptionKey] ?: "webrtc" }
+        val preferSubStreamGrid: Flow<Boolean> = store.data.map { it[preferSubStreamGridKey] ?: it[preferSubStreamKey] ?: true }
+        val preferSubStreamFullscreen: Flow<Boolean> =
+            store.data.map {
+                it[preferSubStreamFullscreenKey] ?: it[preferSubStreamKey] ?: false
+            }
+        val keepOffscreenTilesAlive: Flow<Boolean> = store.data.map { it[keepOffscreenTilesAliveKey] ?: false }
 
         /**
          * Per-camera live-mode override (camera name -> "webrtc"/"rtsp"/"snapshot").
@@ -109,6 +125,16 @@ class UserSettingsRepository
             }
 
         suspend fun setPreferSubStream(prefer: Boolean) = store.edit { it[preferSubStreamKey] = prefer }
+
+        suspend fun setGridStreamType(type: String) = store.edit { it[gridStreamTypeKey] = type }
+
+        suspend fun setFullscreenStreamType(type: String) = store.edit { it[fullscreenStreamTypeKey] = type }
+
+        suspend fun setPreferSubStreamGrid(prefer: Boolean) = store.edit { it[preferSubStreamGridKey] = prefer }
+
+        suspend fun setPreferSubStreamFullscreen(prefer: Boolean) = store.edit { it[preferSubStreamFullscreenKey] = prefer }
+
+        suspend fun setKeepOffscreenTilesAlive(keep: Boolean) = store.edit { it[keepOffscreenTilesAliveKey] = keep }
 
         suspend fun setThemeMode(mode: String) = store.edit { it[themeModeKey] = mode }
 
@@ -173,6 +199,11 @@ class UserSettingsRepository
 
         suspend fun setCustomAccentColors(colors: List<Long>) = store.edit { it[customAccentColorsKey] = colors.joinToString(",") }
 
+        /** Show the last cached snapshot under the loading spinner instead of a blank fill. Default ON. */
+        val showLastImageWhileLoading: Flow<Boolean> = store.data.map { it[showLastImageWhileLoadingKey] ?: true }
+
+        suspend fun setShowLastImageWhileLoading(show: Boolean) = store.edit { it[showLastImageWhileLoadingKey] = show }
+
         companion object {
             private const val KEY_PREFER_SUB_STREAM = "prefer_sub_stream_v1"
             private const val KEY_THEME_MODE = "theme_mode_v1"
@@ -199,5 +230,12 @@ class UserSettingsRepository
             private const val KEY_CARD_BORDER_WIDTH = "card_border_width_v1"
             private const val KEY_CUSTOM_ACCENT_COLORS = "custom_accent_colors_v1"
             private const val KEY_CAMERA_STREAM_OVERRIDES = "camera_stream_overrides_v1"
+            private const val KEY_SHOW_LAST_IMAGE_WHILE_LOADING = "show_last_image_while_loading_v1"
+
+            private const val KEY_GRID_STREAM_TYPE = "grid_stream_type_v1"
+            private const val KEY_FULLSCREEN_STREAM_TYPE = "fullscreen_stream_type_v1"
+            private const val KEY_PREFER_SUB_STREAM_GRID = "prefer_sub_stream_grid_v1"
+            private const val KEY_PREFER_SUB_STREAM_FULLSCREEN = "prefer_sub_stream_fullscreen_v1"
+            private const val KEY_KEEP_OFFSCREEN_TILES_ALIVE = "keep_offscreen_tiles_alive_v1"
         }
     }

@@ -42,6 +42,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -51,11 +52,23 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.materialkolor.PaletteStyle
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.launch
 import net.triton.frigateviewer.core.data.UserSettingsRepository
 import net.triton.frigateviewer.feature.cameras.CamerasScreen
 import net.triton.frigateviewer.feature.events.EventDetailScreen
 import net.triton.frigateviewer.feature.events.EventsScreen
+import net.triton.frigateviewer.feature.settings.AboutSettingsScreen
+import net.triton.frigateviewer.feature.settings.AdvancedSettingsScreen
+import net.triton.frigateviewer.feature.settings.AppearanceSettingsScreen
+import net.triton.frigateviewer.feature.settings.CamerasViewSettingsScreen
+import net.triton.frigateviewer.feature.settings.DeviceCapabilitiesSettingsScreen
+import net.triton.frigateviewer.feature.settings.DownloadsSettingsScreen
+import net.triton.frigateviewer.feature.settings.EventsSettingsScreen
+import net.triton.frigateviewer.feature.settings.NotificationsSettingsScreen
+import net.triton.frigateviewer.feature.settings.ServersSettingsScreen
+import net.triton.frigateviewer.feature.settings.SettingsRoutes
 import net.triton.frigateviewer.feature.settings.SettingsScreen
+import net.triton.frigateviewer.feature.settings.StreamingSettingsScreen
 import net.triton.frigateviewer.ui.theme.FrigateViewerTheme
 import net.triton.frigateviewer.ui.theme.ThemeMode
 import javax.inject.Inject
@@ -132,7 +145,7 @@ class MainActivity : ComponentActivity() {
 
             FrigateViewerTheme(
                 themeMode = themeMode,
-                seedColor = Color(accentColorLong),
+                seedColor = Color(accentColorLong.toInt()),
                 useWallpaperColor = useWallpaper,
                 paletteStyle = paletteStyle,
                 amoledBlack = amoledBlack,
@@ -223,8 +236,12 @@ private fun AppRoot(deepLinkTarget: MutableState<DeepLinkTarget?> = remember { m
             contentWindowInsets = if (fullScreen.value) WindowInsets(0) else ScaffoldDefaults.contentWindowInsets,
             bottomBar = {
                 if (onTab && !fullScreen.value) {
-                    Column {
-                        NavigationBar(modifier = Modifier.height(68.dp), windowInsets = WindowInsets(0)) {
+                    Column(Modifier.background(NavigationBarDefaults.containerColor)) {
+                        NavigationBar(
+                            modifier = Modifier.height(68.dp),
+                            windowInsets = WindowInsets(0),
+                            containerColor = Color.Transparent,
+                        ) {
                             tabs.forEach { tab ->
                                 val selected =
                                     current?.hierarchy?.any { it.route?.startsWith(tab.route) == true } == true
@@ -253,12 +270,7 @@ private fun AppRoot(deepLinkTarget: MutableState<DeepLinkTarget?> = remember { m
                                 )
                             }
                         }
-                        Spacer(
-                            Modifier
-                                .fillMaxWidth()
-                                .windowInsetsPadding(WindowInsets.navigationBars)
-                                .background(NavigationBarDefaults.containerColor),
-                        )
+                        Spacer(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars))
                     }
                 }
             },
@@ -318,7 +330,19 @@ private fun AppRoot(deepLinkTarget: MutableState<DeepLinkTarget?> = remember { m
                         initialZone = entry.arguments?.getString("zone"),
                     )
                 }
-                composable(Dest.Settings.route) { SettingsScreen() }
+                composable(Dest.Settings.route) {
+                    SettingsScreen(onNavigate = { route -> nav.navigate(route) })
+                }
+                composable(SettingsRoutes.SERVERS) { ServersSettingsScreen(onBack = { nav.popBackStack() }) }
+                composable(SettingsRoutes.APPEARANCE) { AppearanceSettingsScreen(onBack = { nav.popBackStack() }) }
+                composable(SettingsRoutes.CAMERAS_VIEW) { CamerasViewSettingsScreen(onBack = { nav.popBackStack() }) }
+                composable(SettingsRoutes.STREAMING) { StreamingSettingsScreen(onBack = { nav.popBackStack() }) }
+                composable(SettingsRoutes.EVENTS) { EventsSettingsScreen(onBack = { nav.popBackStack() }) }
+                composable(SettingsRoutes.NOTIFICATIONS) { NotificationsSettingsScreen(onBack = { nav.popBackStack() }) }
+                composable(SettingsRoutes.DOWNLOADS) { DownloadsSettingsScreen(onBack = { nav.popBackStack() }) }
+                composable(SettingsRoutes.ADVANCED) { AdvancedSettingsScreen(onBack = { nav.popBackStack() }) }
+                composable(SettingsRoutes.DEVICE_CAPABILITIES) { DeviceCapabilitiesSettingsScreen(onBack = { nav.popBackStack() }) }
+                composable(SettingsRoutes.ABOUT) { AboutSettingsScreen(onBack = { nav.popBackStack() }) }
                 composable("event/{id}") { entry ->
                     val id = entry.arguments?.getString("id") ?: return@composable
                     EventDetailScreen(

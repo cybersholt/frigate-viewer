@@ -89,22 +89,25 @@ android {
         unitTests.isIncludeAndroidResources = true
     }
 
-    kotlin {
-        compilerOptions {
-            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-            freeCompilerArgs.addAll(
-                "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi",
-                "-opt-in=kotlin.RequiresOptIn",
-            )
-        }
-    }
-
     lint {
         // Don't fail debug CI on lint warnings; report still uploaded as artifact.
         // Release builds remain strict via lintRelease in the release task graph.
         abortOnError = false
         checkReleaseBuilds = true
         warningsAsErrors = false
+    }
+}
+
+// Gradle resolves `kotlin {}` here to the Project-level Kotlin extension regardless of
+// nesting (it was previously misleadingly nested inside `android {}` above, which looks
+// like ApplicationExtension.kotlin but isn't — moved to top level to match reality).
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        freeCompilerArgs.addAll(
+            "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi",
+            "-opt-in=kotlin.RequiresOptIn",
+        )
     }
 }
 

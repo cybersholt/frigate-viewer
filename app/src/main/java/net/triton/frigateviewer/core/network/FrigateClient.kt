@@ -106,17 +106,23 @@ class FrigateClient
                 return
             }
             val client = buildClient(server)
-            val retrofit =
-                Retrofit
-                    .Builder()
-                    .baseUrl(effectiveUrl)
-                    .client(client)
-                    .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
-                    .build()
-            servers[server.id] = server
-            clients[server.id] = client
-            apis[server.id] = retrofit.create(FrigateApi::class.java)
-            cachedEffectiveUrls[server.id] = effectiveUrl
+            try {
+                val retrofit =
+                    Retrofit
+                        .Builder()
+                        .baseUrl(effectiveUrl)
+                        .client(client)
+                        .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+                        .build()
+                servers[server.id] = server
+                clients[server.id] = client
+                apis[server.id] = retrofit.create(FrigateApi::class.java)
+                cachedEffectiveUrls[server.id] = effectiveUrl
+            } catch (e: Exception) {
+                // If the URL is malformed, we log it and avoid crashing the whole app.
+                // The user can then at least open settings and fix it.
+                android.util.Log.e("FrigateClient", "Failed to create API for server ${server.id} with URL $effectiveUrl", e)
+            }
         }
 
         private fun buildClient(server: Server): OkHttpClient {

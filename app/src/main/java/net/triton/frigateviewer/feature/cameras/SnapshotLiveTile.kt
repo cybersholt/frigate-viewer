@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,11 +30,34 @@ fun SnapshotLiveTile(
     cameraName: String,
     imageLoader: ImageLoader,
     showBoundingBoxes: Boolean = true,
+    snapshotUrl: String? = null,
+    showLastImageWhileLoading: Boolean = true,
     modifier: Modifier = Modifier,
-    onStateChanged: (CameraStreamState) -> Unit = {},
+    onStateChanged: (LiveStreamState) -> Unit = {},
 ) {
     var refreshTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var firstFrameLoaded by remember { mutableStateOf(false) }
+    var retryTrigger by remember { mutableIntStateOf(0) }
+    var liveState by remember { mutableStateOf<LiveStreamState>(LiveStreamState.Idle) }
+
+    LaunchedEffect(liveState) { onStateChanged(liveState) }
+
+    // Snapshot mode has no persistent connection to tear down — polling continues regardless
+    // of success/failure. Retry just resets the displayed state and lets the next poll resolve.
+    LaunchedEffect(retryTrigger) {
+        liveState = LiveStreamState.Connecting(0)
+        var elapsed = 0L
+        while (!firstFrameLoaded) {
+            delay(500)
+            if (firstFrameLoaded) break
+            elapsed += 500
+            if (elapsed >= 20_000) {
+                liveState = LiveStreamState.Error(StreamError.SOURCE_UNAVAILABLE)
+                return@LaunchedEffect
+            }
+            liveState = LiveStreamState.Connecting(elapsed)
+        }
+    }
 
     LaunchedEffect(baseUrl, cameraName) {
         while (true) {
@@ -67,9 +91,18 @@ fun SnapshotLiveTile(
                 lastPainter = it.painter
                 if (!firstFrameLoaded) {
                     firstFrameLoaded = true
-                    onStateChanged(CameraStreamState.Live)
+                    liveState = LiveStreamState.Playing
                 }
             },
+        )
+
+        StreamOverlay(
+            state = liveState,
+            posterUrl = snapshotUrl,
+            showPoster = false, // The AsyncImage above is our surface
+            videoRevealed = firstFrameLoaded,
+            onRetry = { retryTrigger++ },
+            modifier = Modifier.fillMaxSize(),
         )
     }
 }

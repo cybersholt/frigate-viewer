@@ -1,11 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
     <!--
-      Default: HTTPS only, system + user-installed CAs.
+      HTTPS preferred; cleartext (http://) is allowed app-wide because the "Local Server URL"
+      setting supports plain-HTTP local Frigate instances, and Android's network security
+      config has no mechanism to allow cleartext per-server at runtime (it's enforced at the
+      OS/socket layer before OkHttp ever sees the request — there is no dynamic per-host
+      override). system + user-installed CAs for HTTPS.
       Self-signed Frigate certs: user imports cert via Android Settings → Security → Encrypt & credentials → Install a certificate.
-      Cleartext per-host is opt-in via user setting (runtime override of OkHttp scheme), not in manifest.
     -->
-    <base-config cleartextTrafficPermitted="false">
+    <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />
             <certificates src="user" />
