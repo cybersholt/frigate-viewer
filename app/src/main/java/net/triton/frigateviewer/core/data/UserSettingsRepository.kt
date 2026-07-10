@@ -50,6 +50,8 @@ class UserSettingsRepository
         private val preferSubStreamGridKey = booleanPreferencesKey(KEY_PREFER_SUB_STREAM_GRID)
         private val preferSubStreamFullscreenKey = booleanPreferencesKey(KEY_PREFER_SUB_STREAM_FULLSCREEN)
         private val keepOffscreenTilesAliveKey = booleanPreferencesKey(KEY_KEEP_OFFSCREEN_TILES_ALIVE)
+        private val rtspReconnectAttemptsKey = intPreferencesKey(KEY_RTSP_RECONNECT_ATTEMPTS)
+        private val rtspReconnectBaseDelaySecondsKey = intPreferencesKey(KEY_RTSP_RECONNECT_BASE_DELAY_SECONDS)
 
         val preferSubStream: Flow<Boolean> = store.data.map { it[preferSubStreamKey] ?: false }
         val themeMode: Flow<String> = store.data.map { it[themeModeKey] ?: "SYSTEM" }
@@ -64,6 +66,12 @@ class UserSettingsRepository
         val autoRefreshInterval: Flow<Int> = store.data.map { it[autoRefreshIntervalKey] ?: 3 }
         val eventPhotoPreference: Flow<String> = store.data.map { it[eventPhotoPreferenceKey] ?: "snapshot" }
         val liveStreamOption: Flow<String> = store.data.map { it[liveStreamOptionKey] ?: "webrtc" }
+
+        /** Max RTSP auto-reconnect attempts before surfacing a terminal error. Range 0–10. */
+        val rtspReconnectAttempts: Flow<Int> = store.data.map { it[rtspReconnectAttemptsKey] ?: 2 }
+
+        /** Base delay (seconds) before the first RTSP reconnect attempt; doubles each subsequent attempt. */
+        val rtspReconnectBaseDelaySeconds: Flow<Int> = store.data.map { it[rtspReconnectBaseDelaySecondsKey] ?: 2 }
 
         val gridStreamType: Flow<String> = store.data.map { it[gridStreamTypeKey] ?: "snapshot" }
         val fullscreenStreamType: Flow<String> = store.data.map { it[fullscreenStreamTypeKey] ?: it[liveStreamOptionKey] ?: "webrtc" }
@@ -135,6 +143,11 @@ class UserSettingsRepository
         suspend fun setPreferSubStreamFullscreen(prefer: Boolean) = store.edit { it[preferSubStreamFullscreenKey] = prefer }
 
         suspend fun setKeepOffscreenTilesAlive(keep: Boolean) = store.edit { it[keepOffscreenTilesAliveKey] = keep }
+
+        suspend fun setRtspReconnectAttempts(attempts: Int) = store.edit { it[rtspReconnectAttemptsKey] = attempts.coerceIn(0, 10) }
+
+        suspend fun setRtspReconnectBaseDelaySeconds(seconds: Int) =
+            store.edit { it[rtspReconnectBaseDelaySecondsKey] = seconds.coerceIn(1, 30) }
 
         suspend fun setThemeMode(mode: String) = store.edit { it[themeModeKey] = mode }
 
@@ -237,5 +250,7 @@ class UserSettingsRepository
             private const val KEY_PREFER_SUB_STREAM_GRID = "prefer_sub_stream_grid_v1"
             private const val KEY_PREFER_SUB_STREAM_FULLSCREEN = "prefer_sub_stream_fullscreen_v1"
             private const val KEY_KEEP_OFFSCREEN_TILES_ALIVE = "keep_offscreen_tiles_alive_v1"
+            private const val KEY_RTSP_RECONNECT_ATTEMPTS = "rtsp_reconnect_attempts_v1"
+            private const val KEY_RTSP_RECONNECT_BASE_DELAY_SECONDS = "rtsp_reconnect_base_delay_seconds_v1"
         }
     }

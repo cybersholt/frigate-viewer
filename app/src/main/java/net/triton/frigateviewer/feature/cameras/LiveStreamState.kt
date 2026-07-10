@@ -1,5 +1,20 @@
 package net.triton.frigateviewer.feature.cameras
 
+import androidx.compose.runtime.staticCompositionLocalOf
+
+/** User-configurable RTSP auto-reconnect behavior (Settings → Streaming). */
+data class RtspReconnectSettings(
+    val maxAttempts: Int = 2,
+    val baseDelaySeconds: Int = 2,
+)
+
+/**
+ * Provided once near the CamerasScreen root so [RtspLiveTile] can read the user's configured
+ * reconnect behavior without threading two extra params through every intermediate composable
+ * (StreamContent, grid-tile wrappers, etc.) between CamerasViewModel's state and the player.
+ */
+val LocalRtspReconnectSettings = staticCompositionLocalOf { RtspReconnectSettings() }
+
 /**
  * Connection state for a single live-player instance (WebRTC/RTSP/Snapshot), owned by the
  * player composable and observed by [net.triton.frigateviewer.feature.cameras.StreamOverlay].

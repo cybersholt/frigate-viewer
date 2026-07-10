@@ -56,5 +56,39 @@ fun StreamingSettingsScreen(
             checked = state.autoLandscapeOnStream,
             onCheckedChange = vm::setAutoLandscapeOnStream,
         )
+
+        SettingsSectionHeader("RTSP Resilience")
+
+        SettingRow(title = "Reconnect attempts") {
+            var expanded by remember { mutableStateOf(false) }
+            TextButton(onClick = { expanded = true }) { Text("${state.rtspReconnectAttempts}") }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                (0..6).forEach { count ->
+                    DropdownMenuItem(
+                        text = { Text(if (count == 0) "Off" else "$count") },
+                        onClick = {
+                            vm.setRtspReconnectAttempts(count)
+                            expanded = false
+                        },
+                    )
+                }
+            }
+        }
+
+        SettingRow(title = "Time between attempts") {
+            var expanded by remember { mutableStateOf(false) }
+            TextButton(onClick = { expanded = true }) { Text("${state.rtspReconnectBaseDelaySeconds}s (doubles each retry)") }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                listOf(1, 2, 3, 5, 10, 15).forEach { seconds ->
+                    DropdownMenuItem(
+                        text = { Text("${seconds}s") },
+                        onClick = {
+                            vm.setRtspReconnectBaseDelaySeconds(seconds)
+                            expanded = false
+                        },
+                    )
+                }
+            }
+        }
     }
 }
