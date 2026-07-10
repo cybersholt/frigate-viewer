@@ -25,8 +25,8 @@ Native Android client for Frigate NVR. Rewritten in Kotlin to fix the JSON-parse
       FrigateApi.kt                   ← Retrofit interface (all endpoints)
       FrigateClient.kt                ← per-server OkHttp/Retrofit factory + PerServerAuthInterceptor + SessionCookieJar
                                          (cookies cached in-memory, persisted encrypted via CredentialStore)
-      AuthInterceptor.kt              ← AuthMode enum + TokenRefreshAuthenticator (defined but NOT wired into
-                                         FrigateClient's OkHttpClient.Builder — see Known gaps below)
+      AuthInterceptor.kt              ← AuthMode enum + TokenRefreshAuthenticator (per-server, wired into
+                                         FrigateClient's OkHttpClient.Builder as of 2026-07-10)
       SafeApiCall.kt                  ← the isSuccessful-gated funnel; ApiResult.kt is the sealed return type
       WifiMonitor.kt                  ← current SSID, used for local-network base-URL + RTSP LAN gating
       TrustConfig.kt                  ← per-host pinned cert / allow-untrusted
@@ -51,10 +51,11 @@ Native Android client for Frigate NVR. Rewritten in Kotlin to fix the JSON-parse
 ```
 
 ## Known gaps (found during 2026-07-03 bugfix pass, not yet resolved)
-- `TokenRefreshAuthenticator` (`core/network/AuthInterceptor.kt`) is fully implemented but never attached via
-  `.authenticator(...)` in `FrigateClient.buildClient()`. A 401 currently surfaces as `ApiResult.HttpError(401, ...)`
-  without an automatic re-login/retry. Low priority — auth failures are rare after initial setup — but wire it up
-  if silent JWT expiry becomes a reported issue.
+- ~~`TokenRefreshAuthenticator` never attached~~ — **fixed 2026-07-10.** Rebound to a specific `Server` (matching
+  `PerServerAuthInterceptor`'s pattern instead of the old activeServer()-lookup design) and wired via
+  `.authenticator(...)` in `FrigateClient.buildClient()`. A 401 now attempts one silent `POST api/login` refresh
+  + retry before surfacing as `ApiResult.HttpError(401, ...)`. Verified via smoke test (cameras/events/event-detail
+  all still load); the live "recovers from a real 401" path itself is not separately verified.
 - Frigate recordings have no "substream" VOD — `<camera>_sub` is a go2rtc *live*-restream name only. Don't reuse
   it for `/vod/.../index.m3u8` or `/api/events/.../clip.mp4` paths (confirmed via live 404 in production logs).
 

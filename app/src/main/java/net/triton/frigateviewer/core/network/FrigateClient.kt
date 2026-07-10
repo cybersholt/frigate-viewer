@@ -15,6 +15,7 @@ import kotlinx.serialization.json.Json
 import net.triton.frigateviewer.BuildConfig
 import net.triton.frigateviewer.core.data.CredentialStore
 import net.triton.frigateviewer.core.data.Server
+import net.triton.frigateviewer.core.model.LoginRequest
 import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
@@ -94,7 +95,7 @@ class FrigateClient
             }
 
         /** MUST be called while holding [mutex]. */
-        private fun ensureFor(
+        private suspend fun ensureFor(
             server: Server,
             ssid: String?,
         ) {
@@ -125,7 +126,7 @@ class FrigateClient
             }
         }
 
-        private fun buildClient(server: Server): OkHttpClient {
+        private suspend fun buildClient(server: Server): OkHttpClient {
             val logging =
                 HttpLoggingInterceptor().apply {
                     level =
@@ -144,14 +145,47 @@ class FrigateClient
                     .cookieJar(SessionCookieJar(server.id, credentialStore))
                     .addInterceptor(logging)
                     .addInterceptor(PerServerAuthInterceptor(server, credentialStore))
+                    .authenticator(TokenRefreshAuthenticator(server, credentialStore, ::refreshToken))
 
             if (server.allowUntrusted) {
                 TrustConfig.applyAllowUntrusted(builder)
             } else {
-                val pinned = runBlocking { credentialStore.pinnedCert(server.id) }
+                // ensureFor/buildClient are both suspend now (called only from the suspend
+                // mutex.withLock blocks in apiFor/clientFor/hasSessionCookie above), so this can
+                // call CredentialStore directly instead of runBlocking-wrapping it — the
+                // runBlocking here was flagged as dead weight, not a genuine sync-adapter need
+                // (contrast PerServerAuthInterceptor/SessionCookieJar below, which really do
+                // bridge a synchronous OkHttp SPI and keep their runBlocking for that reason).
+                val pinned = credentialStore.pinnedCert(server.id)
                 TrustConfig.applyPinnedCertificate(builder, pinned)
             }
             return builder.build()
+        }
+
+        /**
+         * Silent POST api/login refresh, used only by [TokenRefreshAuthenticator] on a 401.
+         * Duplicates the small user/pass-splitting step in
+         * [net.triton.frigateviewer.core.data.FrigateRepository.reloginIfNecessary] rather than
+         * calling into FrigateRepository directly — FrigateRepository already depends on
+         * FrigateClient, so the reverse dependency would be circular in the Hilt graph.
+         */
+        private suspend fun refreshToken(server: Server): Boolean {
+            val secret = credentialStore.rawSecret(server.id) ?: return false
+            if (secret.startsWith(CredentialStore.BEARER_PREFIX)) return false
+            val parts = secret.split(":", limit = 2)
+            val username = if (parts.size == 2) parts[0] else server.username ?: ""
+            val password = if (parts.size == 2) parts[1] else secret
+            val api = apiFor(server)
+            return when (val result = safeApiCall { api.login(LoginRequest(username, password)) }) {
+                is ApiResult.Success -> {
+                    result.data.token?.let { credentialStore.setBearer(server.id, it) }
+                    true
+                }
+
+                else -> {
+                    false
+                }
+            }
         }
     }
 
