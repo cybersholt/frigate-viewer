@@ -11,9 +11,11 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
@@ -142,6 +144,10 @@ fun WebRtcLiveTile(
     var scale by remember { mutableStateOf(1f) }
     var zoomOffset by remember { mutableStateOf(Offset.Zero) }
     var retryCount by remember { mutableStateOf(0) }
+    // Native frame aspect ratio, so the renderer can be sized to fit-within its container
+    // (letterboxed) at the Compose layout level — SurfaceViewRenderer.setScalingType alone
+    // doesn't reliably letterbox when the AndroidView itself is forced to fillMaxSize.
+    var videoAspectRatio by remember { mutableStateOf(16f / 9f) }
     var autoReconnectAttempts by remember { mutableStateOf(0) }
     var liveState by remember { mutableStateOf<LiveStreamState>(LiveStreamState.Idle) }
     var videoRevealed by remember { mutableStateOf(false) }
@@ -552,7 +558,7 @@ fun WebRtcLiveTile(
         }
     }
 
-    Box(
+    BoxWithConstraints(
         modifier =
             (if (isFullScreen) Modifier.fillMaxSize() else modifier)
                 .background(Color.Black)
@@ -569,12 +575,23 @@ fun WebRtcLiveTile(
                 },
         contentAlignment = Alignment.Center,
     ) {
+        // Fit-within sizing: letterbox the renderer to the video's real aspect ratio instead of
+        // stretching to fillMaxSize. SurfaceViewRenderer.setScalingType alone doesn't reliably
+        // letterbox when the AndroidView itself is forced to fill its container.
+        val fitHeightFromWidth = maxWidth / videoAspectRatio
+        val rendererModifier =
+            if (fitHeightFromWidth <= maxHeight) {
+                Modifier.width(maxWidth).height(fitHeightFromWidth)
+            } else {
+                Modifier.width(maxHeight * videoAspectRatio).height(maxHeight)
+            }
+
         // 1. WebRTC Renderer — always in tree so the surface exists before first frame.
         // We key it on the session to ensure a fresh renderer (and surface) if eglBase changes.
         key(baseUrl, cameraName, okHttpClient) {
             AndroidView(
                 modifier =
-                    Modifier.fillMaxSize().graphicsLayer {
+                    rendererModifier.graphicsLayer {
                         scaleX = scale
                         scaleY = scale
                         translationX = zoomOffset.x
@@ -595,10 +612,15 @@ fun WebRtcLiveTile(
                                     w: Int,
                                     h: Int,
                                     r: Int,
-                                ) {}
+                                ) {
+                                    if (w > 0 && h > 0) {
+                                        videoAspectRatio = w.toFloat() / h.toFloat()
+                                    }
+                                }
                             },
                         )
                         setEnableHardwareScaler(true)
+                        setScalingType(org.webrtc.RendererCommon.ScalingType.SCALE_ASPECT_FIT)
                         rendererHolder.set(this)
                     }
                 },
