@@ -21,11 +21,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
@@ -38,12 +34,6 @@ import java.util.Locale
 import kotlin.math.abs
 
 private val TimelineBackground = Color(0xFF121212)
-private val GapColor = Color(0xFF000000)
-private val SeverityAlertColor = Color(0xFFEF4444)
-private val SeverityDetectionColor = Color(0xFFF59E0B)
-private val SeveritySignificantMotionColor = Color(0xFFA16207)
-private val ScrubberColor = Color(0xFFE53935)
-private val GridLineColor = Color(0xFF333333)
 
 /**
  * Full-screen vertical timeline for Event Detail — Timeline view. Mirrors Frigate's own web
@@ -131,160 +121,20 @@ fun HorizontalTimeline(
                     }
                 },
         ) {
-            val w = size.width
-            val h = size.height
-            val centerX = w / 2f
-            val msPerPx = rangeMs.toFloat() / h
-            val maxBarHalfWidth = w * 0.38f
-
-            // viewEndMs → y=0 (top); older time → larger y (further down)
-            fun timeToY(timeMs: Long): Float = (viewEndMs - timeMs).toFloat() / msPerPx
-
-            // ── Recording-availability track: darken ranges with no footage ──
-            recordingGaps.forEach { gap ->
-                val gapStartMs = (gap.startTime * 1000).toLong()
-                val gapEndMs = (gap.endTime * 1000).toLong()
-                if (gapEndMs < oldestMs || gapStartMs > viewEndMs) return@forEach
-                val top = timeToY(gapEndMs.coerceAtMost(viewEndMs))
-                val bottom = timeToY(gapStartMs.coerceAtLeast(oldestMs))
-                drawRect(
-                    color = GapColor.copy(alpha = 0.5f),
-                    topLeft = Offset(0f, top.coerceIn(0f, h)),
-                    size =
-                        androidx.compose.ui.geometry
-                            .Size(w, (bottom - top).coerceIn(0f, h)),
-                )
-            }
-
-            // ── Bucket review segments into severity-ranked activity density ──
-            val numBuckets = 160
-            val bucketMs = rangeMs / numBuckets
-            val buckets = IntArray(numBuckets)
-            val bucketSeverityRank = IntArray(numBuckets)
-            reviewSegments.forEach { seg ->
-                val segMs = (seg.startTime * 1000).toLong()
-                if (segMs in oldestMs..viewEndMs) {
-                    val idx = ((viewEndMs - segMs) / bucketMs).toInt().coerceIn(0, numBuckets - 1)
-                    buckets[idx]++
-                    val rank =
-                        when (seg.severity) {
-                            "alert" -> 3
-                            "detection" -> 2
-                            else -> 1
-                        }
-                    if (rank > bucketSeverityRank[idx]) bucketSeverityRank[idx] = rank
-                }
-            }
-            val bucketPx = h / numBuckets.toFloat()
-
-            // Smooth with 1/(1+k²) kernel (radius 3) for silky peak→trough transitions
-            val smoothed =
-                FloatArray(numBuckets) { i ->
-                    var sum = 0f
-                    var wsum = 0f
-                    for (k in -3..3) {
-                        val w = 1f / (1f + k * k.toFloat())
-                        sum += buckets[(i + k).coerceIn(0, numBuckets - 1)] * w
-                        wsum += w
-                    }
-                    sum / wsum
-                }
-            val maxSmoothed = smoothed.max().coerceAtLeast(1f)
-            val minHalfW = 3f // baseline bar visible everywhere
-
-            // ── Activity bars: width ∝ smoothed intensity, color ∝ worst severity in bucket ──
-            smoothed.forEachIndexed { i, value ->
-                val intensity = value / maxSmoothed
-                val halfW = (maxBarHalfWidth * intensity).coerceAtLeast(minHalfW)
-                val alpha = if (intensity < 0.02f) 0.22f else 0.9f
-                val barY = i * bucketPx + bucketPx / 2f
-                val barColor =
-                    when (bucketSeverityRank[i]) {
-                        3 -> SeverityAlertColor
-                        2 -> SeverityDetectionColor
-                        else -> SeveritySignificantMotionColor
-                    }
-                drawLine(
-                    color = barColor.copy(alpha = alpha),
-                    start = Offset(centerX - halfW, barY),
-                    end = Offset(centerX + halfW, barY),
-                    strokeWidth = bucketPx.coerceIn(2f, 5f),
-                    cap = StrokeCap.Round,
-                )
-            }
-
-            // ── Time grid lines + labels ──
-            val intervalMs =
-                when {
-                    timeRangeHours <= 0.5f -> 2 * 60_000L
-                    timeRangeHours <= 2f -> 5 * 60_000L
-                    timeRangeHours <= 6f -> 15 * 60_000L
-                    timeRangeHours <= 24f -> 60 * 60_000L
-                    timeRangeHours <= 72f -> 4 * 3_600_000L
-                    else -> 12 * 3_600_000L
-                }
-            val showDayLabel = timeRangeHours > 24f
-            var gridMs = (viewEndMs / intervalMs) * intervalMs
-            while (gridMs >= oldestMs) {
-                val y = timeToY(gridMs)
-                if (y in 0f..h) {
-                    drawLine(GridLineColor, Offset(0f, y), Offset(w, y), 0.5f)
-                    drawIntoCanvas { canvas ->
-                        canvas.nativeCanvas.drawText(
-                            fmtGridTime(gridMs, showDayLabel),
-                            10f,
-                            (y - 5f).coerceAtLeast(labelPaint.textSize),
-                            labelPaint,
-                        )
-                    }
-                }
-                gridMs -= intervalMs
-            }
-
-            // ── Dotted centre vertical line ──
-            var dotY = 0f
-            while (dotY < h) {
-                drawLine(
-                    Color.White.copy(alpha = 0.18f),
-                    Offset(centerX, dotY),
-                    Offset(centerX, (dotY + 5f).coerceAtMost(h)),
-                    1f,
-                )
-                dotY += 10f
-            }
-
-            // ── Movable scrubber at the selected time ──
-            val scrubY = timeToY(scrubberTimeMs).coerceIn(0f, h)
-            drawLine(
-                ScrubberColor,
-                Offset(0f, scrubY),
-                Offset(w, scrubY),
-                2.5f,
-                cap = StrokeCap.Round,
+            drawActivityTimeline(
+                reviewSegments = reviewSegments,
+                recordingGaps = recordingGaps,
+                scrubberTimeMs = scrubberTimeMs,
+                viewEndMs = viewEndMs,
+                rangeMs = rangeMs,
+                timeRangeHours = timeRangeHours,
+                centerX = size.width / 2f,
+                maxBarHalfWidth = size.width * 0.38f,
+                numBuckets = 160,
+                labelPaint = labelPaint,
+                drawLabels = true,
+                labelX = 10f,
             )
-
-            // ── Time pill that follows the scrubber ──
-            val pillText = fmtScrubberTimeLong(scrubberTimeMs)
-            val pillPaint =
-                android.graphics.Paint().apply {
-                    textSize = 26f
-                    color = android.graphics.Color.WHITE
-                    isAntiAlias = true
-                }
-            val pillPad = 8f
-            val pillH = pillPaint.textSize + pillPad * 2
-            val pillW = pillPaint.measureText(pillText) + pillPad * 2
-            val pillLeft = centerX - pillW / 2
-            val pillTop = (scrubY - pillH - 4f).coerceIn(0f, h - pillH)
-            val bgPaint =
-                android.graphics.Paint().apply {
-                    color = android.graphics.Color.argb(220, 229, 57, 53)
-                    isAntiAlias = true
-                }
-            drawIntoCanvas { canvas ->
-                canvas.nativeCanvas.drawRoundRect(pillLeft, pillTop, pillLeft + pillW, pillTop + pillH, 8f, 8f, bgPaint)
-                canvas.nativeCanvas.drawText(pillText, pillLeft + pillPad, pillTop + pillPad + pillPaint.textSize * 0.85f, pillPaint)
-            }
         }
 
         // ── Zoom buttons ──

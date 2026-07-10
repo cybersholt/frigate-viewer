@@ -159,13 +159,15 @@ fun EventsScreen(
 
             TimelinePanel(
                 events = state.events,
+                reviewSegments = state.reviewSegments,
+                recordingGaps = state.recordingGaps,
                 scrubberTimeMs = state.scrubberTimeMs,
                 timeRangeHours = state.timeRangeHours,
                 gridState = gridState,
                 onScrub = vm::setScrubberTime,
                 onZoomIn = { vm.zoomTimeline(0.5f) },
                 onZoomOut = { vm.zoomTimeline(2f) },
-                modifier = Modifier.width(48.dp).fillMaxHeight(),
+                modifier = Modifier.width(64.dp).fillMaxHeight(),
             )
         }
     }

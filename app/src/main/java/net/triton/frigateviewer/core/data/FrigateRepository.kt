@@ -109,25 +109,31 @@ class FrigateRepository
             return safeApiCall { api.recordings(camera = camera, after = after, before = before) }
         }
 
-        /** Gaps in the recording track, for drawing "no recording" ranges on the timeline. */
+        /**
+         * Gaps in the recording track, for drawing "no recording" ranges on the timeline.
+         * [cameras] is a comma-separated list, or null for all cameras.
+         */
         suspend fun recordingGaps(
-            camera: String,
+            cameras: String? = null,
             after: Double? = null,
             before: Double? = null,
             scale: Int? = null,
         ): ApiResult<List<RecordingGap>> {
             val api = api() ?: return ApiResult.NetworkError(IllegalStateException("No active server"))
-            return safeApiCall { api.recordingGaps(cameras = camera, after = after, before = before, scale = scale) }
+            return safeApiCall { api.recordingGaps(cameras = cameras, after = after, before = before, scale = scale) }
         }
 
-        /** Severity-classified review segments (alert/detection/significant_motion). */
+        /**
+         * Severity-classified review segments (alert/detection/significant_motion).
+         * [cameras] is a comma-separated list, or null for all cameras.
+         */
         suspend fun review(
-            camera: String,
+            cameras: String? = null,
             after: Double? = null,
             before: Double? = null,
         ): ApiResult<List<ReviewSegment>> {
             val api = api() ?: return ApiResult.NetworkError(IllegalStateException("No active server"))
-            return safeApiCall { api.review(cameras = camera, after = after, before = before) }
+            return safeApiCall { api.review(cameras = cameras, after = after, before = before) }
         }
 
         suspend fun go2rtcStreams(forceRefresh: Boolean = false): ApiResult<Map<String, kotlinx.serialization.json.JsonElement>> {

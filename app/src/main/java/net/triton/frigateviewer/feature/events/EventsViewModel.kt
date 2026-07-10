@@ -16,6 +16,8 @@ import net.triton.frigateviewer.core.data.UserSettingsRepository
 import net.triton.frigateviewer.core.db.CachedEvent
 import net.triton.frigateviewer.core.db.EventDao
 import net.triton.frigateviewer.core.model.FrigateEvent
+import net.triton.frigateviewer.core.model.RecordingGap
+import net.triton.frigateviewer.core.model.ReviewSegment
 import net.triton.frigateviewer.core.network.ApiResult
 import net.triton.frigateviewer.core.network.WifiMonitor
 import javax.inject.Inject
@@ -42,6 +44,10 @@ data class EventsUiState(
     val scrubberTimeMs: Long = System.currentTimeMillis(),
     /** How many hours the timeline displays (zoom level). Range 1–720h (30 days). */
     val timeRangeHours: Float = 24f,
+    /** Severity-classified review segments backing the TimelinePanel activity waveform. */
+    val reviewSegments: List<ReviewSegment> = emptyList(),
+    /** Recording-gap ranges backing the TimelinePanel's darkened "no footage" bands. */
+    val recordingGaps: List<RecordingGap> = emptyList(),
 )
 
 @HiltViewModel
@@ -128,6 +134,7 @@ class EventsViewModel
                     selectedCameras = if (camera in current) current - camera else current + camera,
                 )
             applyFilters()
+            loadTimelineData()
         }
 
         fun toggleLabel(label: String) {
@@ -194,6 +201,57 @@ class EventsViewModel
                 fetchedWindowDays = neededDays.coerceAtMost(30)
                 refresh(isSilent = true)
             }
+            scheduleTimelineDataRefresh()
+        }
+
+        private var timelineDataJob: Job? = null
+
+        /**
+         * Fetches severity-classified review segments + recording gaps for the currently visible
+         * timeline window, across whichever cameras are selected (all cameras if none selected).
+         * Mirrors [net.triton.frigateviewer.feature.events.EventDetail]'s identical pattern.
+         */
+        fun loadTimelineData() {
+            val s = _state.value
+            val cameras = s.selectedCameras.ifEmpty { s.availableCameras.toSet() }
+            if (cameras.isEmpty()) return
+            val camerasParam = cameras.joinToString(",")
+            val rangeMs = (s.timeRangeHours * 3_600_000L).toLong()
+            val nowMs = System.currentTimeMillis()
+            val afterSec = (nowMs - rangeMs) / 1000.0
+            val beforeSec = nowMs / 1000.0
+            viewModelScope.launch {
+                when (val r = repo.review(camerasParam, after = afterSec, before = beforeSec)) {
+                    is ApiResult.Success -> {
+                        _state.value = _state.value.copy(reviewSegments = r.data)
+                    }
+
+                    else -> {}
+                }
+            }
+            viewModelScope.launch {
+                val scaleSeconds = (rangeMs / 1000L / 300L).toInt().coerceIn(1, 3600)
+                when (
+                    val r =
+                        repo.recordingGaps(camerasParam, after = afterSec, before = beforeSec, scale = scaleSeconds)
+                ) {
+                    is ApiResult.Success -> {
+                        _state.value = _state.value.copy(recordingGaps = r.data)
+                    }
+
+                    else -> {}
+                }
+            }
+        }
+
+        /** Debounced [loadTimelineData] for continuous zoom gestures. */
+        private fun scheduleTimelineDataRefresh() {
+            timelineDataJob?.cancel()
+            timelineDataJob =
+                viewModelScope.launch {
+                    delay(400)
+                    loadTimelineData()
+                }
         }
 
         private fun applyFilters() {
@@ -233,6 +291,7 @@ class EventsViewModel
                                 offlineCache = false,
                             )
                         if (server != null) dao.upsertAll(r.data.map { it.toCached(server.id) })
+                        loadTimelineData()
                     }
 
                     is ApiResult.HttpError -> {
