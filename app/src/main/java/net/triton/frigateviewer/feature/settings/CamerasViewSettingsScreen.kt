@@ -1,14 +1,16 @@
 package net.triton.frigateviewer.feature.settings
 
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CropFree
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.SyncAlt
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.ViewModule
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
@@ -20,47 +22,38 @@ fun CamerasViewSettingsScreen(
     val state by vm.state.collectAsStateWithLifecycle()
 
     SettingsSubPageScaffold(title = "Cameras View", onBack = onBack) {
+        SettingsSectionHeader("Refresh")
+
         SwitchSetting(
             title = "Auto-refresh snapshots",
+            icon = Icons.Filled.Refresh,
             checked = state.autoRefreshCameras,
             onCheckedChange = vm::setAutoRefreshCameras,
         )
 
-        SettingRow(title = "Refresh interval") {
-            var expanded by remember { mutableStateOf(false) }
-            TextButton(onClick = { expanded = true }) { Text("${state.autoRefreshInterval}s") }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                listOf(1, 3, 5, 10, 30).forEach { seconds ->
-                    DropdownMenuItem(
-                        text = { Text("${seconds}s") },
-                        onClick = {
-                            vm.setAutoRefreshInterval(seconds)
-                            expanded = false
-                        },
-                    )
-                }
-            }
-        }
+        PickerSettingRow(
+            title = "Refresh interval",
+            icon = Icons.Filled.Timer,
+            value = state.autoRefreshInterval,
+            options = listOf(1, 3, 5, 10, 30),
+            labelFor = { "${it}s" },
+            onSelect = vm::setAutoRefreshInterval,
+        )
 
-        SettingRow(title = "Grid stream type") {
-            var expanded by remember { mutableStateOf(false) }
-            TextButton(onClick = { expanded = true }) { Text(state.gridStreamType) }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                listOf("snapshot", "webrtc", "rtsp").forEach { type ->
-                    DropdownMenuItem(
-                        text = { Text(type) },
-                        onClick = {
-                            vm.setGridStreamType(type)
-                            expanded = false
-                        },
-                    )
-                }
-            }
-        }
+        SettingsSectionHeader("Stream")
+
+        PickerSettingRow(
+            title = "Grid stream type",
+            icon = Icons.Filled.Videocam,
+            value = state.gridStreamType,
+            options = listOf("snapshot", "webrtc", "rtsp"),
+            onSelect = vm::setGridStreamType,
+        )
 
         SwitchSetting(
             title = "Prefer sub stream (Grid)",
             description = "Uses the low-bandwidth sub stream in the grid if available.",
+            icon = Icons.Filled.Speed,
             checked = state.preferSubStreamGrid,
             onCheckedChange = vm::setPreferSubStreamGrid,
         )
@@ -68,29 +61,26 @@ fun CamerasViewSettingsScreen(
         SwitchSetting(
             title = "Keep offscreen tiles alive",
             description = "Maintains active connections to cameras even when scrolled out of view.",
+            icon = Icons.Filled.SyncAlt,
             checked = state.keepOffscreenTilesAlive,
             onCheckedChange = vm::setKeepOffscreenTilesAlive,
         )
 
-        SettingRow(title = "Grid columns") {
-            var expanded by remember { mutableStateOf(false) }
-            TextButton(onClick = { expanded = true }) { Text("${state.cameraGridColumns}x") }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                listOf(1, 2, 3).forEach { cols ->
-                    DropdownMenuItem(
-                        text = { Text("${cols}x") },
-                        onClick = {
-                            vm.setCameraGridColumns(cols)
-                            expanded = false
-                        },
-                    )
-                }
-            }
-        }
+        SettingsSectionHeader("Layout")
+
+        PickerSettingRow(
+            title = "Grid columns",
+            icon = Icons.Filled.ViewModule,
+            value = state.cameraGridColumns,
+            options = listOf(1, 2, 3),
+            labelFor = { "${it}x" },
+            onSelect = vm::setCameraGridColumns,
+        )
 
         SwitchSetting(
             title = "Show bounding boxes",
             description = "Overlay detected objects on the live stream.",
+            icon = Icons.Filled.CropFree,
             checked = state.showBoundingBoxes,
             onCheckedChange = vm::setShowBoundingBoxes,
         )
@@ -98,6 +88,7 @@ fun CamerasViewSettingsScreen(
         SwitchSetting(
             title = "Show last image while loading",
             description = "Display the cached snapshot behind the spinner while a live stream connects.",
+            icon = Icons.Filled.Image,
             checked = state.showLastImageWhileLoading,
             onCheckedChange = vm::setShowLastImageWhileLoading,
         )

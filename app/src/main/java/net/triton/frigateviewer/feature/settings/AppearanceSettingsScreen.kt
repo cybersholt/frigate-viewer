@@ -4,12 +4,15 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Brightness2
+import androidx.compose.material.icons.filled.Brightness6
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.RoundedCorner
+import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -35,95 +38,99 @@ fun AppearanceSettingsScreen(
     SettingsSubPageScaffold(title = "Appearance", onBack = onBack) {
         SettingsSectionHeader("Theme")
 
-        SettingRow(title = "Color mode") {
-            var expanded by remember { mutableStateOf(false) }
-            TextButton(onClick = { expanded = true }) { Text(state.themeMode) }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                ThemeMode.entries.forEach { mode ->
-                    DropdownMenuItem(
-                        text = { Text(mode.name) },
-                        onClick = {
-                            vm.setThemeMode(mode.name)
-                            expanded = false
-                        },
-                    )
-                }
-            }
-        }
-
-        AccentColorRow(
-            currentColor = state.accentColor,
-            customColors = state.customAccentColors,
-            onSelectColor = { vm.setAccentColor(it) },
-            onAddCustom = { showCustomColorPicker = true },
-            onRemoveCustom = { vm.removeCustomAccentColor(it) },
+        PickerSettingRow(
+            title = "Color mode",
+            icon = Icons.Filled.Brightness6,
+            value = state.themeMode,
+            options = ThemeMode.entries.map { it.name },
+            onSelect = vm::setThemeMode,
         )
+
+        SettingsCard {
+            AccentColorRow(
+                currentColor = state.accentColor,
+                customColors = state.customAccentColors,
+                onSelectColor = { vm.setAccentColor(it) },
+                onAddCustom = { showCustomColorPicker = true },
+                onRemoveCustom = { vm.removeCustomAccentColor(it) },
+            )
+        }
 
         SwitchSetting(
             title = "Use wallpaper color",
+            icon = Icons.Filled.Wallpaper,
             checked = state.useWallpaperColor,
             onCheckedChange = vm::setUseWallpaperColor,
         )
 
-        SettingRow(title = "Palette style") {
-            TextButton(onClick = { showPaletteSheet = true }) { Text(state.paletteStyle) }
-        }
+        SettingRow(
+            title = "Palette style",
+            icon = Icons.Filled.Palette,
+            value = state.paletteStyle,
+            onClick = { showPaletteSheet = true },
+        )
 
         SwitchSetting(
             title = "AMOLED black",
+            icon = Icons.Filled.Brightness2,
             checked = state.amoledBlack,
             onCheckedChange = vm::setAmoledBlack,
         )
 
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Contrast", style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    if (state.contrastLevel >= 0) "+${state.contrastLevel}" else "${state.contrastLevel}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+        SettingsCard {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Contrast", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        if (state.contrastLevel >= 0) "+${state.contrastLevel}" else "${state.contrastLevel}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Slider(
+                    value = state.contrastLevel.toFloat(),
+                    onValueChange = { vm.setContrastLevel(it.toInt()) },
+                    valueRange = -100f..100f,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
-            Slider(
-                value = state.contrastLevel.toFloat(),
-                onValueChange = { vm.setContrastLevel(it.toInt()) },
-                valueRange = -100f..100f,
-                modifier = Modifier.fillMaxWidth(),
-            )
         }
 
         SettingsSectionHeader("Card Style")
 
-        SettingRow(title = "Card shape") {
-            TextButton(onClick = { showShapeSheet = true }) {
-                Text(cardShapeOptions.find { it.radiusDp == state.cardCornerRadius }?.label ?: "Medium")
-            }
-        }
+        SettingRow(
+            title = "Card shape",
+            icon = Icons.Filled.RoundedCorner,
+            value = cardShapeOptions.find { it.radiusDp == state.cardCornerRadius }?.label ?: "Medium",
+            onClick = { showShapeSheet = true },
+        )
 
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Border width", style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    if (state.cardBorderWidth == 0) "Off" else "${state.cardBorderWidth}dp",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+        SettingsCard {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Border width", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        if (state.cardBorderWidth == 0) "Off" else "${state.cardBorderWidth}dp",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Slider(
+                    value = state.cardBorderWidth.toFloat(),
+                    onValueChange = { vm.setCardBorderWidth(it.toInt()) },
+                    valueRange = 0f..8f,
+                    steps = 7,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
-            Slider(
-                value = state.cardBorderWidth.toFloat(),
-                onValueChange = { vm.setCardBorderWidth(it.toInt()) },
-                valueRange = 0f..8f,
-                steps = 7,
-                modifier = Modifier.fillMaxWidth(),
-            )
         }
     }
 
