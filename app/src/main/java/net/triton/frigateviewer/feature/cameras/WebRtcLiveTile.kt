@@ -42,6 +42,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -654,7 +655,7 @@ fun WebRtcLiveTile(
         // Mute toggle
         IconButton(
             onClick = { isMuted = !isMuted },
-            modifier = Modifier.align(Alignment.BottomStart).padding(4.dp),
+            modifier = Modifier.align(Alignment.BottomStart).padding(4.dp).testTag("webrtc_mute_button"),
         ) {
             Icon(
                 imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
@@ -666,7 +667,7 @@ fun WebRtcLiveTile(
 
         IconButton(
             onClick = { isFullScreen = !isFullScreen },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 8.dp),
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 8.dp).testTag("webrtc_fullscreen_button"),
         ) {
             Icon(
                 imageVector = if (isFullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,

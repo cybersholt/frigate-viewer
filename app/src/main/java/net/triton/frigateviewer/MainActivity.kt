@@ -1,8 +1,12 @@
 package net.triton.frigateviewer
 
+import android.app.PictureInPictureParams
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -78,6 +82,18 @@ val LocalFullScreenMode =
         error("LocalFullScreenMode not provided")
     }
 
+/** Set by a focused live-view tile while composed, so [MainActivity.onUserLeaveHint] knows whether to auto-enter PiP. */
+val LocalPipEligible =
+    compositionLocalOf<MutableState<Boolean>> {
+        error("LocalPipEligible not provided")
+    }
+
+/** True while the Activity is actually in Picture-in-Picture mode — live tiles hide their chrome/overlays. */
+val LocalIsInPip = compositionLocalOf { false }
+
+/** Requests entry into Picture-in-Picture (the explicit button, distinct from the home-press auto-trigger). */
+val LocalEnterPipRequest = compositionLocalOf<() -> Unit> { {} }
+
 /** Parsed target from a `frigateviewer://` deep link (HA motion-alert notifications). */
 private data class DeepLinkTarget(
     val camera: String?,
@@ -115,6 +131,30 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var userSettingsRepo: UserSettingsRepository
 
     private val deepLinkTarget = mutableStateOf<DeepLinkTarget?>(null)
+    private val pipEligible = mutableStateOf(false)
+    private val isInPip = mutableStateOf(false)
+
+    private fun enterPipMode() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val params = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build()
+            runCatching { enterPictureInPictureMode(params) }
+        }
+    }
+
+    // Home-press/recents while a live view is focused enters PiP automatically, matching
+    // the OS convention for video apps (YouTube, Google Home, etc.).
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (pipEligible.value) enterPipMode()
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration,
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        isInPip.value = isInPictureInPictureMode
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -153,7 +193,12 @@ class MainActivity : ComponentActivity() {
                 cardCornerRadius = cardCornerRadius,
                 cardBorderWidth = cardBorderWidth,
             ) {
-                AppRoot(deepLinkTarget = deepLinkTarget)
+                AppRoot(
+                    deepLinkTarget = deepLinkTarget,
+                    pipEligible = pipEligible,
+                    isInPip = isInPip,
+                    onEnterPip = ::enterPipMode,
+                )
             }
         }
     }
@@ -202,7 +247,12 @@ private fun eventsRouteWith(
 }
 
 @Composable
-private fun AppRoot(deepLinkTarget: MutableState<DeepLinkTarget?> = remember { mutableStateOf(null) }) {
+private fun AppRoot(
+    deepLinkTarget: MutableState<DeepLinkTarget?> = remember { mutableStateOf(null) },
+    pipEligible: MutableState<Boolean> = remember { mutableStateOf(false) },
+    isInPip: MutableState<Boolean> = remember { mutableStateOf(false) },
+    onEnterPip: () -> Unit = {},
+) {
     val nav = rememberNavController()
     val backStack by nav.currentBackStackEntryAsState()
     val current = backStack?.destination
@@ -226,7 +276,12 @@ private fun AppRoot(deepLinkTarget: MutableState<DeepLinkTarget?> = remember { m
         deepLinkTarget.value = null
     }
 
-    CompositionLocalProvider(LocalFullScreenMode provides fullScreen) {
+    CompositionLocalProvider(
+        LocalFullScreenMode provides fullScreen,
+        LocalPipEligible provides pipEligible,
+        LocalIsInPip provides isInPip.value,
+        LocalEnterPipRequest provides onEnterPip,
+    ) {
         Scaffold(
             // m3 1.5.0 Scaffold pads content by displayCutout (union'd into the default
             // insets) — the cutout inset never reaches zero even with system bars hidden,
@@ -235,7 +290,7 @@ private fun AppRoot(deepLinkTarget: MutableState<DeepLinkTarget?> = remember { m
             containerColor = if (fullScreen.value) Color.Black else MaterialTheme.colorScheme.background,
             contentWindowInsets = if (fullScreen.value) WindowInsets(0) else ScaffoldDefaults.contentWindowInsets,
             bottomBar = {
-                if (onTab && !fullScreen.value) {
+                if (onTab && !fullScreen.value && !isInPip.value) {
                     Column(Modifier.background(NavigationBarDefaults.containerColor)) {
                         NavigationBar(
                             modifier = Modifier.height(68.dp),

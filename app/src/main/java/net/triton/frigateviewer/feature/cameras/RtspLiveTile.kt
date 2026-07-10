@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowInsetsCompat
@@ -55,8 +56,13 @@ import kotlinx.coroutines.launch
 import net.triton.frigateviewer.LocalFullScreenMode
 
 private const val TAG = "RtspLiveTile"
-private const val MAX_AUTO_RECONNECTS = 2
-private val BACKOFF_MS = longArrayOf(2_000L, 5_000L)
+private const val MAX_BACKOFF_MS = 30_000L
+
+/** Exponential backoff (base, base×2, base×4, ...) capped at [MAX_BACKOFF_MS]. */
+private fun backoffMs(
+    attempt: Int,
+    baseDelaySeconds: Int,
+): Long = (baseDelaySeconds * 1000L * (1L shl (attempt - 1))).coerceAtMost(MAX_BACKOFF_MS)
 
 private fun maskRtspUrl(url: String): String = url.replace(Regex("(rtsp://[^:@/]+):([^@]+)@"), "$1:***@")
 
@@ -90,6 +96,9 @@ fun RtspLiveTile(
     onStateChanged: (LiveStreamState) -> Unit = {},
     onFatal: () -> Unit = {},
 ) {
+    val reconnectSettings = LocalRtspReconnectSettings.current
+    val maxReconnectAttempts = reconnectSettings.maxAttempts
+    val reconnectBaseDelaySeconds = reconnectSettings.baseDelaySeconds
     val context = LocalContext.current
     val view = LocalView.current
     var retryTrigger by remember { mutableIntStateOf(0) }
@@ -105,11 +114,16 @@ fun RtspLiveTile(
     var liveState by remember { mutableStateOf<LiveStreamState>(LiveStreamState.Idle) }
     LaunchedEffect(liveState) { onStateChanged(liveState) }
 
+    // NETWORK and TIMEOUT are both treated as transient (a stalled/dropped connection commonly
+    // surfaces as either depending on exactly when the socket gives up) — SOURCE_UNAVAILABLE
+    // (bad HTTP status / no permission / cleartext blocked) and DECODE_FAILED are genuine
+    // config/format problems that retrying won't fix.
     fun handleFailure(reason: StreamError) {
-        if (reason == StreamError.NETWORK && autoReconnectAttempts < MAX_AUTO_RECONNECTS) {
+        val isTransient = reason == StreamError.NETWORK || reason == StreamError.TIMEOUT
+        if (isTransient && autoReconnectAttempts < maxReconnectAttempts) {
             autoReconnectAttempts++
             liveState = LiveStreamState.Reconnecting(autoReconnectAttempts)
-            val delayMs = BACKOFF_MS[autoReconnectAttempts - 1]
+            val delayMs = backoffMs(autoReconnectAttempts, reconnectBaseDelaySeconds)
             scope.launch {
                 delay(delayMs)
                 retryTrigger++
@@ -134,8 +148,7 @@ fun RtspLiveTile(
                 break
             }
             if (elapsed >= 20_000) {
-                liveState = LiveStreamState.Error(StreamError.TIMEOUT)
-                onFatal()
+                handleFailure(StreamError.TIMEOUT)
                 break
             }
             if (s is LiveStreamState.Connecting) {
@@ -322,7 +335,7 @@ fun RtspLiveTile(
         // Mute toggle
         IconButton(
             onClick = { isMuted = !isMuted },
-            modifier = Modifier.align(Alignment.BottomStart).padding(4.dp),
+            modifier = Modifier.align(Alignment.BottomStart).padding(4.dp).testTag("rtsp_mute_button"),
         ) {
             Icon(
                 imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
@@ -335,7 +348,7 @@ fun RtspLiveTile(
         // Fullscreen toggle
         IconButton(
             onClick = { isFullScreen = !isFullScreen },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 8.dp),
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 8.dp).testTag("rtsp_fullscreen_button"),
         ) {
             Icon(
                 imageVector = if (isFullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,

@@ -6,7 +6,12 @@ import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -32,8 +37,11 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -49,8 +57,11 @@ import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -61,10 +72,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -76,7 +89,10 @@ import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import net.triton.frigateviewer.LocalEnterPipRequest
 import net.triton.frigateviewer.LocalFullScreenMode
+import net.triton.frigateviewer.LocalIsInPip
+import net.triton.frigateviewer.LocalPipEligible
 import net.triton.frigateviewer.core.data.CredentialStore
 import net.triton.frigateviewer.core.image.FrigateImage
 import net.triton.frigateviewer.core.model.FrigateEvent
@@ -116,6 +132,10 @@ fun CamerasScreen(
     val frigateClient = entryPoint.frigateClient()
     var focused by remember { mutableStateOf<String?>(null) }
     var showEditSheet by remember { mutableStateOf(false) }
+    val rtspReconnectSettings =
+        remember(state.rtspReconnectAttempts, state.rtspReconnectBaseDelaySeconds) {
+            RtspReconnectSettings(state.rtspReconnectAttempts, state.rtspReconnectBaseDelaySeconds)
+        }
 
     // frigateviewer://live?camera= deep link — focus once the camera list has loaded
     // and actually contains the requested name (resolve against the real camera list).
@@ -138,162 +158,166 @@ fun CamerasScreen(
             inOrder + notInOrder
         }
 
-    Box(Modifier.fillMaxSize()) {
-        when {
-            state.loading && state.cameras.isEmpty() -> {
-                // Skeleton tiles — show last-known camera backgrounds where available
-                val knownNames = state.knownCameraNames
-                val skeletonCount =
-                    if (knownNames.isEmpty()) 6 else knownNames.size.coerceAtMost(9)
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(state.gridColumns),
-                    contentPadding = PaddingValues(12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    items(skeletonCount) { i ->
-                        val name = knownNames.getOrNull(i)
-                        Box(Modifier.fillMaxWidth()) {
-                            CameraSkeletonTile(
-                                modifier = Modifier.fillMaxWidth(),
-                                cameraName = name,
-                                baseUrl = state.effectiveBaseUrl ?: state.activeServer?.baseUrl(),
-                                imageLoader = if (name != null) imageLoader else null,
-                            )
-                            Row(
-                                modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                            ) {
-                                if (name != null) CameraPill(camera = name) else Spacer(Modifier.size(1.dp))
-                                StreamStatusBadge(
-                                    state =
-                                        if (name != null) {
-                                            CameraStreamState.LoadingWithCache(0L)
-                                        } else {
-                                            CameraStreamState.Skeleton
-                                        },
+    CompositionLocalProvider(LocalRtspReconnectSettings provides rtspReconnectSettings) {
+        Box(Modifier.fillMaxSize()) {
+            when {
+                state.loading && state.cameras.isEmpty() -> {
+                    // Skeleton tiles — show last-known camera backgrounds where available
+                    val knownNames = state.knownCameraNames
+                    val skeletonCount =
+                        if (knownNames.isEmpty()) 6 else knownNames.size.coerceAtMost(9)
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(state.gridColumns),
+                        contentPadding = PaddingValues(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        items(skeletonCount) { i ->
+                            val name = knownNames.getOrNull(i)
+                            Box(Modifier.fillMaxWidth()) {
+                                CameraSkeletonTile(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    cameraName = name,
+                                    baseUrl = state.effectiveBaseUrl ?: state.activeServer?.baseUrl(),
+                                    imageLoader = if (name != null) imageLoader else null,
                                 )
+                                Row(
+                                    modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    if (name != null) CameraPill(camera = name) else Spacer(Modifier.size(1.dp))
+                                    StreamStatusBadge(
+                                        state =
+                                            if (name != null) {
+                                                CameraStreamState.LoadingWithCache(0L)
+                                            } else {
+                                                CameraStreamState.Skeleton
+                                            },
+                                    )
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            state.noServerConfigured -> {
-                EmptyState(
-                    title = "No server configured",
-                    body = "Open Settings and add your Frigate server.",
-                )
-            }
-
-            state.errorMessage != null && state.cameras.isEmpty() -> {
-                ErrorState(state.errorMessage!!, onRetry = { vm.refresh() })
-            }
-
-            else -> {
-                if (focused != null) {
-                    BackHandler { focused = null }
-                    FocusedTile(
-                        cameraName = focused!!,
-                        server = state.activeServer,
-                        effectiveBaseUrl = state.effectiveBaseUrl,
-                        frigateClient = frigateClient,
-                        imageLoader = imageLoader,
-                        preferSubStream = state.preferSubStreamFullscreen,
-                        go2rtcStreams = state.go2rtcStreams,
-                        subStreamFallbacks = state.subStreamFallbacks,
-                        hideEventImage = state.hideEventImage,
-                        liveStreamOption = state.cameraStreamOverrides[focused!!] ?: state.fullscreenStreamType,
-                        isStreamOptionOverridden = state.cameraStreamOverrides.containsKey(focused!!),
-                        globalDefaultStreamOption = state.fullscreenStreamType,
-                        onSetStreamOverride = { mode -> vm.setCameraStreamOverride(focused!!, mode) },
-                        refreshTimestamp = state.refreshTimestamp,
-                        showBoundingBoxes = state.showBoundingBoxes,
-                        autoLandscapeOnStream = state.autoLandscapeOnStream,
-                        showLastImageWhileLoading = state.showLastImageWhileLoading,
-                        currentSsid = state.currentSsid,
-                        onSubStreamFallback = { vm.markSubStreamFallback(focused!!) },
-                        onClose = { focused = null },
+                state.noServerConfigured -> {
+                    EmptyState(
+                        title = "No server configured",
+                        body = "Open Settings and add your Frigate server.",
                     )
-                } else {
-                    Column(Modifier.fillMaxSize()) {
-                        // Header bar with hamburger
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(end = 4.dp),
-                            horizontalArrangement = Arrangement.End,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            IconButton(onClick = { showEditSheet = true }) {
-                                Icon(Icons.Filled.Menu, contentDescription = "Edit cameras")
-                            }
-                        }
-                        val gridState =
-                            androidx.compose.foundation.lazy.grid
-                                .rememberLazyGridState()
-                        PullToRefreshBox(
-                            isRefreshing = state.loading,
-                            onRefresh = { vm.refresh(forceCacheRefresh = true) },
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            LazyVerticalGrid(
-                                state = gridState,
-                                columns = GridCells.Fixed(state.gridColumns),
-                                contentPadding = PaddingValues(12.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.fillMaxSize(),
+                }
+
+                state.errorMessage != null && state.cameras.isEmpty() -> {
+                    ErrorState(state.errorMessage!!, onRetry = { vm.refresh() })
+                }
+
+                else -> {
+                    if (focused != null) {
+                        BackHandler { focused = null }
+                        FocusedTile(
+                            cameraName = focused!!,
+                            server = state.activeServer,
+                            effectiveBaseUrl = state.effectiveBaseUrl,
+                            frigateClient = frigateClient,
+                            imageLoader = imageLoader,
+                            preferSubStream = state.preferSubStreamFullscreen,
+                            go2rtcStreams = state.go2rtcStreams,
+                            subStreamFallbacks = state.subStreamFallbacks,
+                            hideEventImage = state.hideEventImage,
+                            liveStreamOption = state.cameraStreamOverrides[focused!!] ?: state.fullscreenStreamType,
+                            isStreamOptionOverridden = state.cameraStreamOverrides.containsKey(focused!!),
+                            globalDefaultStreamOption = state.fullscreenStreamType,
+                            onSetStreamOverride = { mode -> vm.setCameraStreamOverride(focused!!, mode) },
+                            refreshTimestamp = state.refreshTimestamp,
+                            showBoundingBoxes = state.showBoundingBoxes,
+                            autoLandscapeOnStream = state.autoLandscapeOnStream,
+                            showLastImageWhileLoading = state.showLastImageWhileLoading,
+                            currentSsid = state.currentSsid,
+                            onSubStreamFallback = { vm.markSubStreamFallback(focused!!) },
+                            allCameraNames = state.displayedCameras,
+                            onSwitchCamera = { name -> focused = name },
+                            onClose = { focused = null },
+                        )
+                    } else {
+                        Column(Modifier.fillMaxSize()) {
+                            // Header bar with hamburger
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(end = 4.dp),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                itemsIndexed(state.displayedCameras, key = { _, it -> it }) { index, name ->
-                                    val isActive by remember(state.keepOffscreenTilesAlive) {
-                                        androidx.compose.runtime.derivedStateOf {
-                                            if (state.keepOffscreenTilesAlive) return@derivedStateOf true
-                                            val visibleItems = gridState.layoutInfo.visibleItemsInfo
-                                            if (visibleItems.isEmpty()) return@derivedStateOf true
-                                            val first = visibleItems.first().index
-                                            val last = visibleItems.last().index
-                                            index in (first - 2)..(last + 2)
+                                IconButton(onClick = { showEditSheet = true }) {
+                                    Icon(Icons.Filled.Menu, contentDescription = "Edit cameras")
+                                }
+                            }
+                            val gridState =
+                                androidx.compose.foundation.lazy.grid
+                                    .rememberLazyGridState()
+                            PullToRefreshBox(
+                                isRefreshing = state.loading,
+                                onRefresh = { vm.refresh(forceCacheRefresh = true) },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                LazyVerticalGrid(
+                                    state = gridState,
+                                    columns = GridCells.Fixed(state.gridColumns),
+                                    contentPadding = PaddingValues(12.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.fillMaxSize(),
+                                ) {
+                                    itemsIndexed(state.displayedCameras, key = { _, it -> it }) { index, name ->
+                                        val isActive by remember(state.keepOffscreenTilesAlive) {
+                                            androidx.compose.runtime.derivedStateOf {
+                                                if (state.keepOffscreenTilesAlive) return@derivedStateOf true
+                                                val visibleItems = gridState.layoutInfo.visibleItemsInfo
+                                                if (visibleItems.isEmpty()) return@derivedStateOf true
+                                                val first = visibleItems.first().index
+                                                val last = visibleItems.last().index
+                                                index in (first - 2)..(last + 2)
+                                            }
                                         }
+                                        val labels =
+                                            remember(name, state.cameras, state.globalTrackedObjects) {
+                                                vm.labelsForCamera(name)
+                                            }
+                                        val zones =
+                                            remember(name, state.cameras) {
+                                                vm.zonesForCamera(name)
+                                            }
+                                        SwipeableCameraTile(
+                                            name = name,
+                                            baseUrl = state.effectiveBaseUrl,
+                                            server = state.activeServer,
+                                            frigateClient = frigateClient,
+                                            imageLoader = imageLoader,
+                                            refreshTimestamp = state.refreshTimestamp,
+                                            showBoundingBoxes = state.showBoundingBoxes,
+                                            swipeEnabled = state.showSwipeActions,
+                                            labels = labels,
+                                            zones = zones,
+                                            recentEvent = state.recentEvents[name],
+                                            recentEventFetched = state.recentEvents.containsKey(name),
+                                            gridStreamType = state.cameraStreamOverrides[name] ?: state.gridStreamType,
+                                            isStreamOptionOverridden = state.cameraStreamOverrides.containsKey(name),
+                                            globalDefaultStreamOption = state.gridStreamType,
+                                            onSetStreamOverride = { mode -> vm.setCameraStreamOverride(name, mode) },
+                                            preferSubStreamGrid = state.preferSubStreamGrid,
+                                            go2rtcStreams = state.go2rtcStreams,
+                                            subStreamFallbacks = state.subStreamFallbacks,
+                                            currentSsid = state.currentSsid,
+                                            showLastImageWhileLoading = state.showLastImageWhileLoading,
+                                            isActive = isActive,
+                                            onSubStreamFallback = { vm.markSubStreamFallback(name) },
+                                            onOpenCamera = { focused = name },
+                                            onFetchRecentEvent = { vm.fetchRecentEvent(name) },
+                                            onNavigateToEvents = onNavigateToEvents,
+                                        )
                                     }
-                                    val labels =
-                                        remember(name, state.cameras, state.globalTrackedObjects) {
-                                            vm.labelsForCamera(name)
-                                        }
-                                    val zones =
-                                        remember(name, state.cameras) {
-                                            vm.zonesForCamera(name)
-                                        }
-                                    SwipeableCameraTile(
-                                        name = name,
-                                        baseUrl = state.effectiveBaseUrl,
-                                        server = state.activeServer,
-                                        frigateClient = frigateClient,
-                                        imageLoader = imageLoader,
-                                        refreshTimestamp = state.refreshTimestamp,
-                                        showBoundingBoxes = state.showBoundingBoxes,
-                                        swipeEnabled = state.showSwipeActions,
-                                        labels = labels,
-                                        zones = zones,
-                                        recentEvent = state.recentEvents[name],
-                                        recentEventFetched = state.recentEvents.containsKey(name),
-                                        gridStreamType = state.cameraStreamOverrides[name] ?: state.gridStreamType,
-                                        isStreamOptionOverridden = state.cameraStreamOverrides.containsKey(name),
-                                        globalDefaultStreamOption = state.gridStreamType,
-                                        onSetStreamOverride = { mode -> vm.setCameraStreamOverride(name, mode) },
-                                        preferSubStreamGrid = state.preferSubStreamGrid,
-                                        go2rtcStreams = state.go2rtcStreams,
-                                        subStreamFallbacks = state.subStreamFallbacks,
-                                        currentSsid = state.currentSsid,
-                                        showLastImageWhileLoading = state.showLastImageWhileLoading,
-                                        isActive = isActive,
-                                        onSubStreamFallback = { vm.markSubStreamFallback(name) },
-                                        onOpenCamera = { focused = name },
-                                        onFetchRecentEvent = { vm.fetchRecentEvent(name) },
-                                        onNavigateToEvents = onNavigateToEvents,
-                                    )
                                 }
                             }
                         }
@@ -587,6 +611,7 @@ private fun SwipeableCameraTile(
             Modifier
                 .fillMaxSize()
                 .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+                .testTag("camera_tile_$name")
                 .then(
                     if (borderWidth.value > 0) {
                         Modifier.border(borderWidth, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.medium)
@@ -662,6 +687,8 @@ private fun FocusedTile(
     showLastImageWhileLoading: Boolean,
     currentSsid: String?,
     onSubStreamFallback: () -> Unit,
+    allCameraNames: List<String> = emptyList(),
+    onSwitchCamera: (String) -> Unit = {},
     onClose: () -> Unit,
 ) {
     val baseUrl = effectiveBaseUrl ?: server?.baseUrl()
@@ -676,15 +703,52 @@ private fun FocusedTile(
         value = if (server != null) frigateClient.clientFor(server) else null
     }
 
+    // A focused live view is always PiP-eligible (fullscreen or not) — matches YouTube/Google
+    // Home convention of allowing PiP any time a video is the user's current focus.
+    val pipEligible = LocalPipEligible.current
+    DisposableEffect(Unit) {
+        pipEligible.value = true
+        onDispose { pipEligible.value = false }
+    }
+    val isInPip = LocalIsInPip.current
+    val enterPip = LocalEnterPipRequest.current
+
+    // Quick per-session resolution override (HD/main vs SD/sub), independent of the global
+    // "Prefer sub stream" setting — resets whenever the focused camera changes.
+    var resolutionOverride by remember(cameraName) { mutableStateOf<Boolean?>(null) }
+    val effectivePreferSubStream = resolutionOverride ?: preferSubStream
+
     val subStreamName = "${cameraName}_sub"
+    val hasSubStream = go2rtcStreams.contains(subStreamName)
     val liveCameraName =
-        if (preferSubStream && go2rtcStreams.contains(subStreamName) &&
+        if (effectivePreferSubStream && hasSubStream &&
             subStreamFallbacks[cameraName] != true
         ) {
             subStreamName
         } else {
             cameraName
         }
+
+    // Mirrors StreamContent's identical off-LAN RTSP gating so the fullscreen protocol pill
+    // shows what's actually playing, not just the raw setting — StreamContent's own copy of
+    // this computation stays internal (only used for the badge layer StreamContent renders
+    // itself when NOT hideBadgeLayer), so it isn't exposed for FullscreenChrome to reuse directly.
+    val rtspOffLan =
+        remember(server, currentSsid) {
+            val lanOnlyHost = server?.rtspHost?.takeIf { it.isNotBlank() }
+            lanOnlyHost != null &&
+                server.localNetworkSsids.isNotEmpty() &&
+                currentSsid !in server.localNetworkSsids
+        }
+    val effectiveStreamOption = if (liveStreamOption == "rtsp" && rtspOffLan) "webrtc" else liveStreamOption
+    val streamTypeLabel =
+        when {
+            liveStreamOption == "rtsp" && rtspOffLan -> "WebRTC (RTSP: home network only)"
+            effectiveStreamOption == "rtsp" -> "RTSP"
+            effectiveStreamOption == "snapshot" -> "Snapshot"
+            else -> "WebRTC"
+        }
+
     val bboxParam = if (showBoundingBoxes) "&bbox=1" else ""
     val snapshotPath = "api/$cameraName/latest.jpg?h=720&t=$refreshTimestamp$bboxParam"
 
@@ -763,8 +827,28 @@ private fun FocusedTile(
                 showLastImageWhileLoading = showLastImageWhileLoading,
                 refreshTimestamp = refreshTimestamp,
                 onSubStreamFallback = onSubStreamFallback,
+                hideBadgeLayer = isFullScreen,
                 modifier = Modifier.fillMaxSize(),
             )
+
+            if (isFullScreen) {
+                FullscreenChrome(
+                    visible = !isInPip,
+                    cameraName = cameraName,
+                    hasSubStream = hasSubStream,
+                    isSubStreamActive = liveCameraName == subStreamName,
+                    onToggleResolution = { resolutionOverride = !effectivePreferSubStream },
+                    onBack = onClose,
+                    onEnterPip = enterPip,
+                    allCameraNames = allCameraNames,
+                    onSwitchCamera = onSwitchCamera,
+                    streamTypeLabel = streamTypeLabel,
+                    liveStreamOption = liveStreamOption,
+                    isStreamOptionOverridden = isStreamOptionOverridden,
+                    globalDefaultStreamOption = globalDefaultStreamOption,
+                    onSetStreamOverride = onSetStreamOverride,
+                )
+            }
         }
         if (!isFullScreen && !hideEventImage) {
             Box(Modifier.fillMaxWidth().padding(top = 8.dp)) {
@@ -778,6 +862,140 @@ private fun FocusedTile(
                     diskCacheKey = "snap_${cameraName}_$refreshTimestamp",
                     modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Fullscreen-only chrome layered above [StreamContent]: back arrow + camera name + a pulsing
+ * "LIVE" indicator up top, an HD/SD resolution toggle and an overflow menu (protocol switching,
+ * PiP entry, quick camera switching) down at the bottom corners — offset above the
+ * mute/fullscreen-exit buttons that [RtspLiveTile]/[WebRtcLiveTile] already render at the very
+ * bottom of the same corners. Owns the top strip exclusively while fullscreen — the caller
+ * passes `hideBadgeLayer = true` to [StreamContent] so its own camera-pill/protocol-badge Row
+ * doesn't render underneath and collide with this one. Renders nothing while [visible] is false
+ * (i.e. while actually in Picture-in-Picture — minimal chrome per Android PiP UX guidelines).
+ */
+@Composable
+private fun FullscreenChrome(
+    visible: Boolean,
+    cameraName: String,
+    hasSubStream: Boolean,
+    isSubStreamActive: Boolean,
+    onToggleResolution: () -> Unit,
+    onBack: () -> Unit,
+    onEnterPip: () -> Unit,
+    allCameraNames: List<String>,
+    onSwitchCamera: (String) -> Unit,
+    streamTypeLabel: String,
+    liveStreamOption: String,
+    isStreamOptionOverridden: Boolean,
+    globalDefaultStreamOption: String,
+    onSetStreamOverride: (String?) -> Unit,
+) {
+    if (!visible) return
+    var showOverflow by remember { mutableStateOf(false) }
+    val infiniteTransition = rememberInfiniteTransition(label = "liveDot")
+    val dotAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.4f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+        label = "liveDotAlpha",
+    )
+
+    Box(Modifier.fillMaxSize()) {
+        Row(
+            Modifier
+                .align(Alignment.TopStart)
+                .fillMaxWidth()
+                .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent)))
+                .padding(end = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack, modifier = Modifier.testTag("fullscreen_back_button")) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+            }
+            Text(
+                cameraName,
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.White,
+                maxLines = 1,
+                modifier = Modifier.weight(1f).testTag("fullscreen_camera_name"),
+            )
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.testTag("fullscreen_live_indicator"),
+                ) {
+                    Canvas(Modifier.size(8.dp)) { drawCircle(Color(0xFF4CAF50).copy(alpha = dotAlpha)) }
+                    Text("LIVE", style = MaterialTheme.typography.labelSmall, color = Color.White)
+                }
+                // Same tappable protocol pill grid tiles show (StreamTypeBadge) — kept here so
+                // fullscreen retains direct one-tap protocol switching, not just via the overflow menu.
+                StreamTypeBadge(
+                    label = streamTypeLabel,
+                    selectedMode = liveStreamOption,
+                    isOverridden = isStreamOptionOverridden,
+                    globalDefaultStreamOption = globalDefaultStreamOption,
+                    onSetStreamOverride = onSetStreamOverride,
+                    modifier = Modifier.testTag("fullscreen_protocol_pill"),
+                )
+            }
+        }
+
+        if (hasSubStream) {
+            TextButton(
+                onClick = onToggleResolution,
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(start = 4.dp, bottom = 48.dp)
+                        .testTag("fullscreen_resolution_toggle"),
+            ) {
+                Text(if (isSubStreamActive) "SD" else "HD", color = Color.White)
+            }
+        }
+
+        Box(Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 48.dp)) {
+            IconButton(onClick = { showOverflow = true }, modifier = Modifier.testTag("fullscreen_overflow_button")) {
+                Icon(Icons.Filled.MoreVert, contentDescription = "More options", tint = Color.White)
+            }
+            DropdownMenu(
+                expanded = showOverflow,
+                onDismissRequest = { showOverflow = false },
+                modifier = Modifier.testTag("fullscreen_overflow_menu"),
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Picture-in-picture") },
+                    leadingIcon = { Icon(Icons.Filled.PictureInPictureAlt, contentDescription = null) },
+                    onClick = {
+                        showOverflow = false
+                        onEnterPip()
+                    },
+                    modifier = Modifier.testTag("fullscreen_pip_menu_item"),
+                )
+                val otherCameras = allCameraNames.filter { it != cameraName }
+                if (otherCameras.isNotEmpty()) {
+                    HorizontalDivider()
+                    Text(
+                        "Switch camera",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    )
+                    otherCameras.forEach { name ->
+                        DropdownMenuItem(
+                            text = { Text(name) },
+                            onClick = {
+                                showOverflow = false
+                                onSwitchCamera(name)
+                            },
+                            modifier = Modifier.testTag("fullscreen_switch_camera_$name"),
+                        )
+                    }
+                }
             }
         }
     }
@@ -804,6 +1022,7 @@ private fun StreamContent(
     showLastImageWhileLoading: Boolean,
     refreshTimestamp: Long,
     onSubStreamFallback: () -> Unit = {},
+    hideBadgeLayer: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     var streamState by remember(liveStreamOption, liveCameraName) {
@@ -897,23 +1116,28 @@ private fun StreamContent(
             }
         }
 
-        // Badge layer — camera pill + status badge + protocol badge — floats above all stream types
-        StreamTileBadgeLayer(
-            streamState = streamState.toBadgeState(),
-            cameraName = cameraName,
-            streamTypeLabel =
-                when {
-                    liveStreamOption == "rtsp" && rtspOffLan -> "WebRTC (RTSP: home network only)"
-                    effectiveStreamOption == "rtsp" -> "RTSP"
-                    effectiveStreamOption == "snapshot" -> "Snapshot"
-                    else -> "WebRTC"
-                },
-            selectedMode = liveStreamOption,
-            isOverridden = isStreamOptionOverridden,
-            globalDefaultStreamOption = globalDefaultStreamOption,
-            onSetStreamOverride = onSetStreamOverride,
-            modifier = Modifier.fillMaxSize(),
-        )
+        // Badge layer — camera pill + status badge + protocol badge — floats above all stream
+        // types. Suppressed in true fullscreen: FullscreenChrome owns the top strip there
+        // (back arrow + name + LIVE dot), and protocol-switching moves into its overflow menu
+        // instead, so the two don't render duplicate/overlapping camera-name+status info.
+        if (!hideBadgeLayer) {
+            StreamTileBadgeLayer(
+                streamState = streamState.toBadgeState(),
+                cameraName = cameraName,
+                streamTypeLabel =
+                    when {
+                        liveStreamOption == "rtsp" && rtspOffLan -> "WebRTC (RTSP: home network only)"
+                        effectiveStreamOption == "rtsp" -> "RTSP"
+                        effectiveStreamOption == "snapshot" -> "Snapshot"
+                        else -> "WebRTC"
+                    },
+                selectedMode = liveStreamOption,
+                isOverridden = isStreamOptionOverridden,
+                globalDefaultStreamOption = globalDefaultStreamOption,
+                onSetStreamOverride = onSetStreamOverride,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
     }
 }
 

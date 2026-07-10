@@ -48,6 +48,8 @@ data class CamerasUiState(
     val hideEventImage: Boolean = false,
     val autoLandscapeOnStream: Boolean = false,
     val showLastImageWhileLoading: Boolean = true,
+    val rtspReconnectAttempts: Int = 2,
+    val rtspReconnectBaseDelaySeconds: Int = 2,
     val refreshTimestamp: Long = 0L,
     /** Persisted camera display order (empty = follow API order). */
     val cameraOrder: List<String> = emptyList(),
@@ -146,12 +148,16 @@ class CamerasViewModel
                     userSettingsRepo.autoLandscapeOnStream,
                     userSettingsRepo.cameraStreamOverrides,
                     userSettingsRepo.showLastImageWhileLoading,
-                ) { autoLandscape, overrides, showLastImage ->
+                    userSettingsRepo.rtspReconnectAttempts,
+                    userSettingsRepo.rtspReconnectBaseDelaySeconds,
+                ) { autoLandscape, overrides, showLastImage, reconnectAttempts, reconnectDelay ->
                     _state.value =
                         _state.value.copy(
                             autoLandscapeOnStream = autoLandscape,
                             cameraStreamOverrides = overrides,
                             showLastImageWhileLoading = showLastImage,
+                            rtspReconnectAttempts = reconnectAttempts,
+                            rtspReconnectBaseDelaySeconds = reconnectDelay,
                         )
                 }.collectLatest { }
             }
