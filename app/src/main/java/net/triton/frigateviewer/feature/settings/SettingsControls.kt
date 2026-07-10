@@ -12,6 +12,20 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 
+/**
+ * Small colored label grouping a section of rows within a sub-page — ported from PixelPlayer's
+ * `SettingsSubsection` title style (e.g. "Experiments" / "Maintenance" / "Diagnostics" in their
+ * Developer Options screen).
+ */
+@Composable
+internal fun SettingsSectionHeader(title: String) {
+    Text(
+        title.uppercase(),
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+    )
+}
+
 /** Shared row layout: a label on the left, arbitrary trailing content (dropdown, etc.) on the right. */
 @Composable
 internal fun SettingRow(

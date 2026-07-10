@@ -33,6 +33,8 @@ fun AppearanceSettingsScreen(
     var showCustomColorPicker by remember { mutableStateOf(false) }
 
     SettingsSubPageScaffold(title = "Appearance", onBack = onBack) {
+        SettingsSectionHeader("Theme")
+
         SettingRow(title = "Color mode") {
             var expanded by remember { mutableStateOf(false) }
             TextButton(onClick = { expanded = true }) { Text(state.themeMode) }
@@ -93,6 +95,8 @@ fun AppearanceSettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+
+        SettingsSectionHeader("Card Style")
 
         SettingRow(title = "Card shape") {
             TextButton(onClick = { showShapeSheet = true }) {
