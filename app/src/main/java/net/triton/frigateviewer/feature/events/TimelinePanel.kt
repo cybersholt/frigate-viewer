@@ -87,6 +87,7 @@ fun TimelinePanel(
                 .pointerInput(startMs, nowMs, rangeMs) {
                     awaitPointerEventScope {
                         var wasTouching = false
+                        var lastScrolledIdx = -1
                         while (true) {
                             val ev = awaitPointerEvent()
                             val change = ev.changes.firstOrNull() ?: continue
@@ -102,11 +103,13 @@ fun TimelinePanel(
                                     events.indexOfFirst {
                                         (it.startTime * 1000.0).toLong() <= timeMs
                                     }
-                                if (nearestIdx >= 0) {
+                                if (nearestIdx >= 0 && nearestIdx != lastScrolledIdx) {
+                                    lastScrolledIdx = nearestIdx
                                     scope.launch { gridState.scrollToItem(nearestIdx) }
                                 }
                             } else if (wasTouching) {
                                 wasTouching = false
+                                lastScrolledIdx = -1
                                 onTouchPreview(null)
                                 onTouchPositionChanged(null)
                             }

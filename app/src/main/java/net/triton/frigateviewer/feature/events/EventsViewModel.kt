@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import net.triton.frigateviewer.core.data.FrigateRepository
 import net.triton.frigateviewer.core.data.ServerRepository
 import net.triton.frigateviewer.core.data.UserSettingsRepository
@@ -60,6 +61,14 @@ data class EventsUiState(
     val scrubPreviewBitmap: Bitmap? = null,
 )
 
+private data class RefreshConfig(
+    val activeServerId: String?,
+    val autoRefresh: Boolean,
+    val autoRefreshInterval: Int,
+    val eventPhotoPreference: String,
+    val eventGridColumns: Int,
+)
+
 @HiltViewModel
 class EventsViewModel
     @Inject
@@ -77,6 +86,12 @@ class EventsViewModel
         private var refreshJob: Job? = null
         private var fetchedWindowDays = 7
 
+        // Navigating to another tab keeps this ViewModel (and its StateFlow) alive via
+        // Navigation-Compose's saveState/restoreState, so onCleared() never fires. Without this
+        // flag, startOrStopAutoRefresh()'s loop would keep polling forever regardless of which
+        // screen is actually visible. Screen calls setScreenVisible from a DisposableEffect.
+        private var screenVisible = true
+
         /** Single source of truth for camera display order — same list the Cameras grid uses. */
         private var cameraOrder: List<String> = emptyList()
 
@@ -89,15 +104,17 @@ class EventsViewModel
                     userSettingsRepo.eventPhotoPreference,
                     userSettingsRepo.eventGridColumns,
                 ) { activeId, auto, interval, pref, gridCols ->
+                    // Return the new settings as a bundle; don't update _state.value inside the
+                    // transform block, as it can cause excessive recompositions/loops.
+                    RefreshConfig(activeId, auto, interval, pref, gridCols)
+                }.collectLatest { config ->
                     _state.value =
                         _state.value.copy(
-                            autoRefresh = auto,
-                            autoRefreshInterval = interval,
-                            eventPhotoPreference = pref,
-                            eventGridColumns = gridCols,
+                            autoRefresh = config.autoRefresh,
+                            autoRefreshInterval = config.autoRefreshInterval,
+                            eventPhotoPreference = config.eventPhotoPreference,
+                            eventGridColumns = config.eventGridColumns,
                         )
-                    activeId
-                }.collectLatest {
                     refresh()
                     startOrStopAutoRefresh()
                 }
@@ -124,9 +141,16 @@ class EventsViewModel
             }
         }
 
+        /** Called from EventsScreen's DisposableEffect so polling stops when this tab isn't visible. */
+        fun setScreenVisible(visible: Boolean) {
+            if (screenVisible == visible) return
+            screenVisible = visible
+            startOrStopAutoRefresh()
+        }
+
         private fun startOrStopAutoRefresh() {
             refreshJob?.cancel()
-            if (_state.value.autoRefresh) {
+            if (_state.value.autoRefresh && screenVisible) {
                 refreshJob =
                     viewModelScope.launch {
                         while (true) {
@@ -394,18 +418,27 @@ class EventsViewModel
         fun refresh(isSilent: Boolean = false) {
             viewModelScope.launch {
                 val server = serverRepo.activeServer()
-                val baseUrl = server?.effectiveBaseUrl(wifiMonitor.ssid.value)
+                val ssid = wifiMonitor.ssid.value
+                val baseUrl = server?.effectiveBaseUrl(ssid)
 
                 if (server != null && !isSilent) {
-                    val cached = dao.list(server.id).map { it.toDomain() }
+                    // Mapping cache rows and building the filter lists must happen on Default
+                    // to avoid hitching the Main thread when the database grows.
+                    val cached =
+                        withContext(Dispatchers.Default) {
+                            dao.list(server.id).map { it.toDomain() }
+                        }
                     if (cached.isNotEmpty()) {
                         allEvents = cached
-                        updateAvailableFilters(cached)
+                        val filters = getFilters(cached)
                         _state.value =
                             _state.value.copy(
                                 events = filterEvents(cached),
                                 baseUrl = baseUrl,
                                 offlineCache = true,
+                                availableCameras = filters.cameras,
+                                availableLabels = filters.labels,
+                                availableZones = filters.zones,
                             )
                     }
                 }
@@ -414,16 +447,28 @@ class EventsViewModel
                 val windowSecs = (System.currentTimeMillis() / 1000.0) - fetchedWindowDays * 24 * 3600
                 when (val r = repo.events(limit = 3000, after = windowSecs)) {
                     is ApiResult.Success -> {
-                        allEvents = r.data
-                        updateAvailableFilters(r.data)
-                        _state.value =
-                            _state.value.copy(
-                                events = filterEvents(r.data),
-                                baseUrl = baseUrl,
-                                loading = false,
-                                offlineCache = false,
-                            )
-                        if (server != null) dao.upsertAll(r.data.map { it.toCached(server.id) })
+                        // For 3000+ items, parsing (via repo.events) and processing are heavy.
+                        // Offload all filtering, mapping, and DB preparation to background.
+                        withContext(Dispatchers.Default) {
+                            val data = r.data
+                            allEvents = data
+                            val filters = getFilters(data)
+                            val filtered = filterEvents(data)
+                            val dbRows = if (server != null) data.map { it.toCached(server.id) } else null
+
+                            _state.value =
+                                _state.value.copy(
+                                    events = filtered,
+                                    baseUrl = baseUrl,
+                                    loading = false,
+                                    offlineCache = false,
+                                    availableCameras = filters.cameras,
+                                    availableLabels = filters.labels,
+                                    availableZones = filters.zones,
+                                )
+
+                            if (dbRows != null) dao.upsertAll(dbRows)
+                        }
                         loadTimelineData()
                     }
 
@@ -442,7 +487,13 @@ class EventsViewModel
             }
         }
 
-        private fun updateAvailableFilters(events: List<FrigateEvent>) {
+        private data class AvailableFilters(
+            val cameras: List<String>,
+            val labels: List<String>,
+            val zones: List<String>,
+        )
+
+        private fun getFilters(events: List<FrigateEvent>): AvailableFilters {
             val seen = events.map { it.camera }.distinct()
             val cameras =
                 if (cameraOrder.isEmpty()) {
@@ -454,11 +505,16 @@ class EventsViewModel
                 }
             val labels = events.map { it.label }.distinct().sorted()
             val zones = events.flatMap { it.zones }.distinct().sorted()
+            return AvailableFilters(cameras, labels, zones)
+        }
+
+        private fun updateAvailableFilters(events: List<FrigateEvent>) {
+            val filters = getFilters(events)
             _state.value =
                 _state.value.copy(
-                    availableCameras = cameras,
-                    availableLabels = labels,
-                    availableZones = zones,
+                    availableCameras = filters.cameras,
+                    availableLabels = filters.labels,
+                    availableZones = filters.zones,
                 )
         }
 

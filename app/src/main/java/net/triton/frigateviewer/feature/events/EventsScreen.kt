@@ -40,6 +40,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -77,6 +78,15 @@ fun EventsScreen(
     vm: EventsViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+
+    // Tells the ViewModel when this tab is actually on screen, so its auto-refresh loop stops
+    // while another tab is showing instead of polling forever in the background (the ViewModel
+    // itself survives tab switches via Navigation-Compose's saveState/restoreState).
+    DisposableEffect(Unit) {
+        vm.setScreenVisible(true)
+        onDispose { vm.setScreenVisible(false) }
+    }
+
     val context = LocalContext.current
     val imageLoader =
         remember {

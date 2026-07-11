@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import net.triton.frigateviewer.BuildConfig
 import net.triton.frigateviewer.core.data.CredentialStore
@@ -83,7 +84,17 @@ class FrigateClient
         suspend fun hasSessionCookie(server: Server): Boolean =
             mutex.withLock {
                 ensureFor(server, null)
-                (clients[server.id]?.cookieJar as? SessionCookieJar)?.hasCookies() ?: false
+                // hasCookies() internally runBlocking-bridges into CredentialStore's suspend API
+                // (see SessionCookieJar.ensureLoaded — legitimate there because it also backs the
+                // synchronous OkHttp CookieJar SPI). That's only safe off the caller's thread: this
+                // suspend fun is reached from FrigateRepository.reloginIfNecessary() via ordinary
+                // viewModelScope.launch { } coroutines (Dispatchers.Main.immediate by default), so
+                // without this withContext, a cold-cache Keystore-backed decrypt genuinely blocks
+                // the main thread — reproduced as a real "Input dispatching timed out" ANR via a
+                // live bugreport (SessionCookieJar.ensureLoaded on the "main" thread's stack).
+                withContext(Dispatchers.IO) {
+                    (clients[server.id]?.cookieJar as? SessionCookieJar)?.hasCookies() ?: false
+                }
             }
 
         suspend fun invalidate(serverId: String) =

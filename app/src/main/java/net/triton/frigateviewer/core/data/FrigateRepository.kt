@@ -1,5 +1,7 @@
 package net.triton.frigateviewer.core.data
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import net.triton.frigateviewer.core.model.FrigateConfig
 import net.triton.frigateviewer.core.model.FrigateEvent
 import net.triton.frigateviewer.core.model.LoginRequest
@@ -169,11 +171,14 @@ class FrigateRepository
                 else -> {
                     when (val result = safeApiCall { api.previewClip(camera = camera, startTs = startTs, endTs = endTs) }) {
                         is ApiResult.Success -> {
-                            runCatching { result.data.bytes() }
-                                .fold(
-                                    onSuccess = { ApiResult.Success(it) },
-                                    onFailure = { ApiResult.NetworkError(it) },
-                                )
+                            // Large MP4 bytes must be read on IO, not the caller's thread (Main).
+                            withContext(Dispatchers.IO) {
+                                runCatching { result.data.bytes() }
+                                    .fold(
+                                        onSuccess = { ApiResult.Success(it) },
+                                        onFailure = { ApiResult.NetworkError(it) },
+                                    )
+                            }
                         }
 
                         is ApiResult.HttpError -> {

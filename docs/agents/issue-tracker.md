@@ -1,5 +1,10 @@
 # Issue tracker: GitHub
 
+> **Stale as of 2026-07-10**: Issues are currently **disabled** on `cybersholt/frigate-viewer` (`gh issue create`
+> fails with "the 'cybersholt/frigate-viewer' repository has disabled issues"). Until re-enabled, findings are
+> logged as markdown under `docs/qa/` and cross-referenced from `memory/project_state.md` → "Known gaps / not yet
+> done" instead. The conventions below still apply once Issues are turned back on.
+
 Issues and PRDs for this repo live as GitHub issues on `cybersholt/frigate-viewer` (the `origin` remote). Use the `gh` CLI for all operations.
 
 ## Conventions

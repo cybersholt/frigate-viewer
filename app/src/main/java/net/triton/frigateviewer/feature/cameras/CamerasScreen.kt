@@ -123,6 +123,15 @@ fun CamerasScreen(
     vm: CamerasViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+
+    // Tells the ViewModel when this tab is actually on screen, so its auto-refresh loop stops
+    // while another tab is showing instead of polling forever in the background (the ViewModel
+    // itself survives tab switches via Navigation-Compose's saveState/restoreState).
+    DisposableEffect(Unit) {
+        vm.setScreenVisible(true)
+        onDispose { vm.setScreenVisible(false) }
+    }
+
     val context = LocalContext.current
     val entryPoint =
         remember {

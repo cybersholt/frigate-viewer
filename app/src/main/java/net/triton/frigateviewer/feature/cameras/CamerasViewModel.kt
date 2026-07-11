@@ -80,6 +80,12 @@ class CamerasViewModel
         private var refreshJob: Job? = null
         private var isRefreshing = false
 
+        // Navigating to another tab keeps this ViewModel (and its StateFlow) alive via
+        // Navigation-Compose's saveState/restoreState, so onCleared() never fires. Without this
+        // flag, startOrStopAutoRefresh()'s loop would keep polling forever regardless of which
+        // screen is actually visible. Screen calls setScreenVisible from a DisposableEffect.
+        private var screenVisible = true
+
         init {
             // Load persisted camera-management prefs and last-known names on startup.
             viewModelScope.launch {
@@ -174,9 +180,16 @@ class CamerasViewModel
             }
         }
 
+        /** Called from CamerasScreen's DisposableEffect so polling stops when this tab isn't visible. */
+        fun setScreenVisible(visible: Boolean) {
+            if (screenVisible == visible) return
+            screenVisible = visible
+            startOrStopAutoRefresh()
+        }
+
         private fun startOrStopAutoRefresh() {
             refreshJob?.cancel()
-            if (_state.value.autoRefresh) {
+            if (_state.value.autoRefresh && screenVisible) {
                 refreshJob =
                     viewModelScope.launch {
                         while (true) {
