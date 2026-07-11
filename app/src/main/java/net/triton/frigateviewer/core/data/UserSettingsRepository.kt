@@ -64,6 +64,14 @@ class UserSettingsRepository
         private val rtspReconnectAttemptsKey = intPreferencesKey(KEY_RTSP_RECONNECT_ATTEMPTS)
         private val rtspReconnectBaseDelaySecondsKey = intPreferencesKey(KEY_RTSP_RECONNECT_BASE_DELAY_SECONDS)
 
+        private val notificationsEnabledKey = booleanPreferencesKey(KEY_NOTIFICATIONS_ENABLED)
+        private val notificationCameraFilterKey = stringPreferencesKey(KEY_NOTIFICATION_CAMERA_FILTER)
+        private val notificationLabelFilterKey = stringPreferencesKey(KEY_NOTIFICATION_LABEL_FILTER)
+        private val notificationZoneFilterKey = stringPreferencesKey(KEY_NOTIFICATION_ZONE_FILTER)
+        private val quietHoursEnabledKey = booleanPreferencesKey(KEY_QUIET_HOURS_ENABLED)
+        private val quietHoursStartMinutesKey = intPreferencesKey(KEY_QUIET_HOURS_START_MINUTES)
+        private val quietHoursEndMinutesKey = intPreferencesKey(KEY_QUIET_HOURS_END_MINUTES)
+
         val preferSubStream: Flow<Boolean> = store.data.map { it[preferSubStreamKey] ?: false }
         val themeMode: Flow<String> = store.data.map { it[themeModeKey] ?: "SYSTEM" }
         val accentColor: Flow<Long> = store.data.map { it[accentColorKey] ?: 0xFF6750A4 }
@@ -228,6 +236,52 @@ class UserSettingsRepository
 
         suspend fun setShowLastImageWhileLoading(show: Boolean) = store.edit { it[showLastImageWhileLoadingKey] = show }
 
+        /** Master switch for the MQTT event-notification pipeline. Default ON. */
+        val notificationsEnabled: Flow<Boolean> = store.data.map { it[notificationsEnabledKey] ?: true }
+
+        /** Cameras to notify for. Empty = all cameras (no filter). */
+        val notificationCameraFilter: Flow<Set<String>> =
+            store.data.map { prefs ->
+                prefs[notificationCameraFilterKey]?.split(",")?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
+            }
+
+        /** Object labels to notify for (e.g. "person", "car"). Empty = all labels (no filter). */
+        val notificationLabelFilter: Flow<Set<String>> =
+            store.data.map { prefs ->
+                prefs[notificationLabelFilterKey]?.split(",")?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
+            }
+
+        /** Zones to notify for. Empty = all zones (no filter). */
+        val notificationZoneFilter: Flow<Set<String>> =
+            store.data.map { prefs ->
+                prefs[notificationZoneFilterKey]?.split(",")?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
+            }
+
+        /** Silence notifications during a daily [quietHoursStartMinutes]-[quietHoursEndMinutes] window. Default OFF. */
+        val quietHoursEnabled: Flow<Boolean> = store.data.map { it[quietHoursEnabledKey] ?: false }
+
+        /** Minutes since local midnight. Default 22:00. May be greater than [quietHoursEndMinutes] (wraps past midnight). */
+        val quietHoursStartMinutes: Flow<Int> = store.data.map { it[quietHoursStartMinutesKey] ?: 1320 }
+
+        /** Minutes since local midnight. Default 07:00. */
+        val quietHoursEndMinutes: Flow<Int> = store.data.map { it[quietHoursEndMinutesKey] ?: 420 }
+
+        suspend fun setNotificationsEnabled(enabled: Boolean) = store.edit { it[notificationsEnabledKey] = enabled }
+
+        suspend fun setNotificationCameraFilter(cameras: Set<String>) =
+            store.edit { it[notificationCameraFilterKey] = cameras.joinToString(",") }
+
+        suspend fun setNotificationLabelFilter(labels: Set<String>) =
+            store.edit { it[notificationLabelFilterKey] = labels.joinToString(",") }
+
+        suspend fun setNotificationZoneFilter(zones: Set<String>) = store.edit { it[notificationZoneFilterKey] = zones.joinToString(",") }
+
+        suspend fun setQuietHoursEnabled(enabled: Boolean) = store.edit { it[quietHoursEnabledKey] = enabled }
+
+        suspend fun setQuietHoursStartMinutes(minutes: Int) = store.edit { it[quietHoursStartMinutesKey] = minutes.coerceIn(0, 1439) }
+
+        suspend fun setQuietHoursEndMinutes(minutes: Int) = store.edit { it[quietHoursEndMinutesKey] = minutes.coerceIn(0, 1439) }
+
         /**
          * Serializes every exportable preference to JSON (#15) — deliberately app-preferences-only:
          * servers and credentials live in `ServerRepository`/`CredentialStore`, a separate system,
@@ -316,6 +370,14 @@ class UserSettingsRepository
             private const val KEY_RTSP_RECONNECT_ATTEMPTS = "rtsp_reconnect_attempts_v1"
             private const val KEY_RTSP_RECONNECT_BASE_DELAY_SECONDS = "rtsp_reconnect_base_delay_seconds_v1"
 
+            private const val KEY_NOTIFICATIONS_ENABLED = "notifications_enabled_v1"
+            private const val KEY_NOTIFICATION_CAMERA_FILTER = "notification_camera_filter_v1"
+            private const val KEY_NOTIFICATION_LABEL_FILTER = "notification_label_filter_v1"
+            private const val KEY_NOTIFICATION_ZONE_FILTER = "notification_zone_filter_v1"
+            private const val KEY_QUIET_HOURS_ENABLED = "quiet_hours_enabled_v1"
+            private const val KEY_QUIET_HOURS_START_MINUTES = "quiet_hours_start_minutes_v1"
+            private const val KEY_QUIET_HOURS_END_MINUTES = "quiet_hours_end_minutes_v1"
+
             /** Bump on any breaking change to [EXPORTABLE_KEYS]' shape; [importPreferencesJson] rejects a mismatch. */
             private const val EXPORT_VERSION = 1
 
@@ -358,6 +420,13 @@ class UserSettingsRepository
                     KEY_KEEP_OFFSCREEN_TILES_ALIVE to PrefType.BOOL,
                     KEY_RTSP_RECONNECT_ATTEMPTS to PrefType.INT,
                     KEY_RTSP_RECONNECT_BASE_DELAY_SECONDS to PrefType.INT,
+                    KEY_NOTIFICATIONS_ENABLED to PrefType.BOOL,
+                    KEY_NOTIFICATION_CAMERA_FILTER to PrefType.STRING,
+                    KEY_NOTIFICATION_LABEL_FILTER to PrefType.STRING,
+                    KEY_NOTIFICATION_ZONE_FILTER to PrefType.STRING,
+                    KEY_QUIET_HOURS_ENABLED to PrefType.BOOL,
+                    KEY_QUIET_HOURS_START_MINUTES to PrefType.INT,
+                    KEY_QUIET_HOURS_END_MINUTES to PrefType.INT,
                 )
         }
     }

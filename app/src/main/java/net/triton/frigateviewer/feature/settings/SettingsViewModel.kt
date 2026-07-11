@@ -87,6 +87,14 @@ data class SettingsUiState(
     val cardBorderWidth: Int = 0,
     val customAccentColors: List<Long> = emptyList(),
     val showLastImageWhileLoading: Boolean = true,
+    val notificationsEnabled: Boolean = true,
+    val notificationCameraFilter: Set<String> = emptySet(),
+    val notificationLabelFilter: Set<String> = emptySet(),
+    val notificationZoneFilter: Set<String> = emptySet(),
+    val quietHoursEnabled: Boolean = false,
+    val quietHoursStartMinutes: Int = 1320,
+    val quietHoursEndMinutes: Int = 420,
+    val knownCameraNames: List<String> = emptyList(),
 )
 
 @HiltViewModel
@@ -136,6 +144,14 @@ class SettingsViewModel
                 userSettingsRepo.keepOffscreenTilesAlive,
                 userSettingsRepo.rtspReconnectAttempts,
                 userSettingsRepo.rtspReconnectBaseDelaySeconds,
+                userSettingsRepo.notificationsEnabled,
+                userSettingsRepo.notificationCameraFilter,
+                userSettingsRepo.notificationLabelFilter,
+                userSettingsRepo.notificationZoneFilter,
+                userSettingsRepo.quietHoursEnabled,
+                userSettingsRepo.quietHoursStartMinutes,
+                userSettingsRepo.quietHoursEndMinutes,
+                userSettingsRepo.lastKnownCameraNames,
             ) { args ->
                 @Suppress("UNCHECKED_CAST")
                 SettingsUiState(
@@ -167,6 +183,14 @@ class SettingsViewModel
                     keepOffscreenTilesAlive = args[25] as Boolean,
                     rtspReconnectAttempts = args[26] as Int,
                     rtspReconnectBaseDelaySeconds = args[27] as Int,
+                    notificationsEnabled = args[28] as Boolean,
+                    notificationCameraFilter = args[29] as Set<String>,
+                    notificationLabelFilter = args[30] as Set<String>,
+                    notificationZoneFilter = args[31] as Set<String>,
+                    quietHoursEnabled = args[32] as Boolean,
+                    quietHoursStartMinutes = args[33] as Int,
+                    quietHoursEndMinutes = args[34] as Int,
+                    knownCameraNames = args[35] as List<String>,
                 )
             }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
@@ -342,6 +366,21 @@ class SettingsViewModel
         fun setDateFormat(fmt: String) = viewModelScope.launch { userSettingsRepo.setDateFormat(fmt) }
 
         fun setContrastLevel(level: Int) = viewModelScope.launch { userSettingsRepo.setContrastLevel(level) }
+
+        fun setNotificationsEnabled(enabled: Boolean) = viewModelScope.launch { userSettingsRepo.setNotificationsEnabled(enabled) }
+
+        fun setNotificationCameraFilter(cameras: Set<String>) =
+            viewModelScope.launch { userSettingsRepo.setNotificationCameraFilter(cameras) }
+
+        fun setNotificationLabelFilter(labels: Set<String>) = viewModelScope.launch { userSettingsRepo.setNotificationLabelFilter(labels) }
+
+        fun setNotificationZoneFilter(zones: Set<String>) = viewModelScope.launch { userSettingsRepo.setNotificationZoneFilter(zones) }
+
+        fun setQuietHoursEnabled(enabled: Boolean) = viewModelScope.launch { userSettingsRepo.setQuietHoursEnabled(enabled) }
+
+        fun setQuietHoursStartMinutes(minutes: Int) = viewModelScope.launch { userSettingsRepo.setQuietHoursStartMinutes(minutes) }
+
+        fun setQuietHoursEndMinutes(minutes: Int) = viewModelScope.launch { userSettingsRepo.setQuietHoursEndMinutes(minutes) }
 
         fun setCardCornerRadius(radius: Int) = viewModelScope.launch { userSettingsRepo.setCardCornerRadius(radius) }
 

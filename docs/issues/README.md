@@ -103,11 +103,18 @@ That need never actually materialized — every session's live-device/emulator v
 has worked fine with plain screenshots + computed tap coordinates. User's call: not needed, don't keep it on the
 list. #21 removed from the table below (see `issues/backlog-2026-07-10.md#21` for the full note if reconsidered).
 
+**Resolved 2026-07-11 (#19):** Notifications gets the full set — master toggle, per-camera filter, label/zone
+filters (both free-text, no finite known list), quiet hours (with a hand-rolled `TimePicker`-in-`AlertDialog`,
+since Material3 has no ready-made `TimePickerDialog`). All wired live into `MqttForegroundService`'s
+notification-posting path. Downloads turned out to need nothing new — clip export already existed
+(`EventDetail.kt`'s "Export clip" via `DownloadManager`, just never documented) — so its settings page is now a
+short explanatory card instead of a placeholder. Verified live on the emulator: toggle persistence, quiet-hours
+time picker, camera multi-select sheet (populated with real known cameras), and label tag-add all round-tripped
+correctly. #19 removed from the table below.
+
 ## Features / enhancements
 
-| # | Title | Priority | Status | File |
-|---|-------|----------|--------|------|
-| 19 | Notifications and Downloads settings are placeholders — needs product scoping | Medium | 🔴 | `issues/backlog-2026-07-10.md#19` |
+_None open._
 
 ## Conventions
 

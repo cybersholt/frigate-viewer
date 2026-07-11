@@ -17,8 +17,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -28,7 +30,9 @@ import net.triton.frigateviewer.MainActivity
 import net.triton.frigateviewer.R
 import net.triton.frigateviewer.core.data.FrigateRepository
 import net.triton.frigateviewer.core.data.ServerRepository
+import net.triton.frigateviewer.core.data.UserSettingsRepository
 import net.triton.frigateviewer.core.network.ApiResult
+import java.time.LocalTime
 import java.util.UUID
 import javax.inject.Inject
 
@@ -51,6 +55,8 @@ class MqttForegroundService : Service() {
     @Inject lateinit var repo: FrigateRepository
 
     @Inject lateinit var json: Json
+
+    @Inject lateinit var userSettingsRepo: UserSettingsRepository
 
     private val scope = CoroutineScope(Dispatchers.IO + Job())
     private var mqtt: Mqtt5AsyncClient? = null
@@ -109,17 +115,79 @@ class MqttForegroundService : Service() {
     ) {
         val root = runCatching { json.parseToJsonElement(payload).jsonObject }.getOrNull() ?: return
         // Frigate events envelope: { type: "new"|"update"|"end", after: {...event...} }
+        // Frigate reviews envelope: same type/after shape, but label(s)/zones live under after.data.
         val after = (root["after"] as? JsonObject) ?: root
         val id = after["id"]?.jsonPrimitive?.contentOrNull ?: return
         val camera = after["camera"]?.jsonPrimitive?.contentOrNull ?: "camera"
-        val label = after["label"]?.jsonPrimitive?.contentOrNull ?: "object"
+        val label = extractLabel(after)
+        val zones = extractZones(after)
         val type = root["type"]?.jsonPrimitive?.contentOrNull ?: "event"
         if (type != "new") return // post only on first appearance
         synchronized(seenIds) {
             if (seenIds.containsKey(id)) return
             seenIds[id] = System.currentTimeMillis()
         }
-        postEventNotification(id, camera, label, baseUrl)
+        scope.launch {
+            if (shouldNotify(camera, label, zones)) {
+                postEventNotification(id, camera, label, baseUrl)
+            }
+        }
+    }
+
+    private fun extractLabel(after: JsonObject): String =
+        after["label"]?.jsonPrimitive?.contentOrNull
+            ?: (after["data"] as? JsonObject)
+                ?.get("objects")
+                ?.let { it as? JsonArray }
+                ?.firstOrNull()
+                ?.jsonPrimitive
+                ?.contentOrNull
+            ?: "object"
+
+    private fun extractZones(after: JsonObject): List<String> {
+        val topLevel = after["zones"] as? JsonArray
+        val nested = (after["data"] as? JsonObject)?.get("zones") as? JsonArray
+        return (topLevel ?: nested)?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList()
+    }
+
+    /** Applies the user's notification preferences (master switch, camera/label/zone filters, quiet hours). */
+    private suspend fun shouldNotify(
+        camera: String,
+        label: String,
+        zones: List<String>,
+    ): Boolean {
+        if (!userSettingsRepo.notificationsEnabled.first()) return false
+
+        val cameraFilter = userSettingsRepo.notificationCameraFilter.first()
+        if (cameraFilter.isNotEmpty() && camera !in cameraFilter) return false
+
+        val labelFilter = userSettingsRepo.notificationLabelFilter.first()
+        if (labelFilter.isNotEmpty() && label !in labelFilter) return false
+
+        val zoneFilter = userSettingsRepo.notificationZoneFilter.first()
+        if (zoneFilter.isNotEmpty() && zones.none { it in zoneFilter }) return false
+
+        if (userSettingsRepo.quietHoursEnabled.first()) {
+            val start = userSettingsRepo.quietHoursStartMinutes.first()
+            val end = userSettingsRepo.quietHoursEndMinutes.first()
+            if (isWithinQuietHours(start, end)) return false
+        }
+
+        return true
+    }
+
+    /** [startMinutes]/[endMinutes] are minutes since local midnight; the window wraps past midnight when start > end. */
+    private fun isWithinQuietHours(
+        startMinutes: Int,
+        endMinutes: Int,
+    ): Boolean {
+        val now = LocalTime.now()
+        val nowMinutes = now.hour * 60 + now.minute
+        return if (startMinutes <= endMinutes) {
+            nowMinutes in startMinutes until endMinutes
+        } else {
+            nowMinutes >= startMinutes || nowMinutes < endMinutes
+        }
     }
 
     private fun postEventNotification(

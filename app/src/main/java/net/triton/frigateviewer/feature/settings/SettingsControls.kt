@@ -1,27 +1,35 @@
 package net.triton.frigateviewer.feature.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -277,5 +285,141 @@ internal fun <T> PickerSettingRow(
             },
             onDismiss = { showSheet = false },
         )
+    }
+}
+
+/**
+ * A [SettingRow] whose value pill opens a checkbox multi-select bottom sheet over a known,
+ * finite option list (e.g. camera names already seen by the app). Empty selection means
+ * "no filter" (matches everything), shown as "All".
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun MultiSelectSettingRow(
+    title: String,
+    icon: ImageVector? = null,
+    allOptions: List<String>,
+    selected: Set<String>,
+    onApply: (Set<String>) -> Unit,
+) {
+    var showSheet by remember { mutableStateOf(false) }
+    val valueLabel = if (selected.isEmpty()) "All" else "${selected.size} selected"
+    SettingRow(title = title, icon = icon, value = valueLabel, onClick = { showSheet = true })
+    if (showSheet) {
+        var draft by remember(selected) { mutableStateOf(selected) }
+        ModalBottomSheet(onDismissRequest = { showSheet = false }) {
+            Column(
+                Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+                if (allOptions.isEmpty()) {
+                    Text(
+                        "No cameras known yet — open Cameras once to populate this list.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                allOptions.forEach { option ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { draft = if (option in draft) draft - option else draft + option },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(
+                            checked = option in draft,
+                            onCheckedChange = { checked -> draft = if (checked) draft + option else draft - option },
+                        )
+                        Text(option, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedButton(onClick = { draft = emptySet() }, modifier = Modifier.weight(1f)) { Text("Clear (All)") }
+                    Button(
+                        onClick = {
+                            onApply(draft)
+                            showSheet = false
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Apply") }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A [SettingRow] whose value pill opens a bottom sheet for adding/removing free-text tags —
+ * for filters with no known finite option list (e.g. object labels, zones — both are whatever
+ * strings the user's own Frigate config happens to define). Empty means "no filter" ("All"),
+ * mirroring [MultiSelectSettingRow]'s convention so the two read consistently side by side.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun TagInputSettingRow(
+    title: String,
+    icon: ImageVector? = null,
+    description: String? = null,
+    values: Set<String>,
+    onValuesChange: (Set<String>) -> Unit,
+) {
+    var showSheet by remember { mutableStateOf(false) }
+    val valueLabel = if (values.isEmpty()) "All" else "${values.size} selected"
+    SettingRow(title = title, icon = icon, value = valueLabel, onClick = { showSheet = true })
+    if (showSheet) {
+        var input by remember { mutableStateOf("") }
+        ModalBottomSheet(onDismissRequest = { showSheet = false }) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .imePadding()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                if (description != null) {
+                    Text(description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                values.forEach { tag ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(tag, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                        IconButton(onClick = { onValuesChange(values - tag) }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Remove")
+                        }
+                    }
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedTextField(
+                        value = input,
+                        onValueChange = { input = it },
+                        label = { Text("Add") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = {
+                        val trimmed = input.trim()
+                        if (trimmed.isNotBlank()) onValuesChange(values + trimmed)
+                        input = ""
+                    }) { Text("Add") }
+                }
+                Button(onClick = { showSheet = false }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 8.dp)) {
+                    Text("Done")
+                }
+            }
+        }
     }
 }
