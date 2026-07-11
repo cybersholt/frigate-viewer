@@ -21,6 +21,7 @@ import net.triton.frigateviewer.core.network.FrigateClient
 import net.triton.frigateviewer.core.network.WifiMonitor
 import net.triton.frigateviewer.core.network.safeApiCall
 import net.triton.frigateviewer.notification.ServiceController
+import java.security.cert.CertificateFactory
 import java.util.UUID
 import javax.inject.Inject
 
@@ -29,6 +30,13 @@ data class ConnectionTestResult(
     val serverId: String,
     val success: Boolean,
     val latencyMs: Long?,
+    val message: String,
+)
+
+/** Result of a "pin certificate" import/removal (Server edit sheet). */
+data class CertPinResult(
+    val serverId: String,
+    val success: Boolean,
     val message: String,
 )
 
@@ -42,7 +50,7 @@ data class ServerForm(
     val authMode: AuthMode = AuthMode.NONE,
     val username: String = "",
     val password: String = "",
-    val allowUntrusted: Boolean = false,
+    val hasPinnedCert: Boolean = false,
     val rtspPort: String = "8554",
     val rtspHost: String = "",
     val localNetworkUrl: String = "",
@@ -165,6 +173,13 @@ class SettingsViewModel
         @Suppress("unused")
         private val _testResult = MutableStateFlow<String?>(null)
 
+        private val _certPinResult = MutableStateFlow<CertPinResult?>(null)
+        val certPinResult: StateFlow<CertPinResult?> = _certPinResult.asStateFlow()
+
+        fun clearCertPinResult() {
+            _certPinResult.value = null
+        }
+
         /**
          * Builds the [Server] a [ServerForm] would save as, without persisting anything —
          * shared by [saveServer] and [testDraftConnection] so the host:port-extraction logic
@@ -194,7 +209,7 @@ class SettingsViewModel
                 basePath = basePath.trim(),
                 authMode = authMode,
                 username = username.ifBlank { null },
-                allowUntrusted = allowUntrusted,
+                hasPinnedCert = hasPinnedCert,
                 rtspPort = rtspPort.toIntOrNull() ?: 8554,
                 rtspHost = rtspHost.trim().ifBlank { null },
                 localNetworkUrl = localNetworkUrl.trim().ifBlank { null },
@@ -221,6 +236,36 @@ class SettingsViewModel
                     repo.login(server.id, form.username, form.password)
                 }
                 serviceController.start()
+            }
+        }
+
+        /**
+         * Validates [pem] as an X.509 certificate before pinning it for [serverId] — rejects a
+         * garbage/wrong file rather than silently storing something [TrustConfig] can't parse
+         * later. Invalidates the cached OkHttp client so the new pin takes effect immediately.
+         */
+        fun importPinnedCert(
+            serverId: String,
+            pem: ByteArray,
+        ) {
+            viewModelScope.launch {
+                val valid = runCatching { CertificateFactory.getInstance("X.509").generateCertificate(pem.inputStream()) }.isSuccess
+                if (!valid) {
+                    _certPinResult.value = CertPinResult(serverId, success = false, message = "Not a valid certificate file")
+                    return@launch
+                }
+                credentialStore.setPinnedCert(serverId, pem)
+                client.invalidate(serverId)
+                _certPinResult.value = CertPinResult(serverId, success = true, message = "Certificate pinned")
+            }
+        }
+
+        /** Clears [serverId]'s pinned certificate, if any. */
+        fun clearPinnedCert(serverId: String) {
+            viewModelScope.launch {
+                credentialStore.setPinnedCert(serverId, ByteArray(0))
+                client.invalidate(serverId)
+                _certPinResult.value = CertPinResult(serverId, success = true, message = "Certificate removed")
             }
         }
 

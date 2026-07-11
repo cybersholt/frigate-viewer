@@ -21,6 +21,9 @@ import net.triton.frigateviewer.core.network.ApiResult
 import net.triton.frigateviewer.core.network.WifiMonitor
 import javax.inject.Inject
 
+/** How often [CamerasViewModel.setFocusedCamera]'s poll re-checks the focused camera's most recent event. */
+private const val EVENT_POLL_INTERVAL_MS = 15_000L
+
 data class CamerasUiState(
     val loading: Boolean = false,
     val cameras: Map<String, CameraConfig> = emptyMap(),
@@ -63,6 +66,13 @@ data class CamerasUiState(
     val globalTrackedObjects: List<String> = emptyList(),
     /** Most recently fetched event per camera (populated lazily by swipe-left gesture). */
     val recentEvents: Map<String, FrigateEvent?> = emptyMap(),
+    /**
+     * Cameras with a currently-open (endTime == null) event, per the periodic check in
+     * [CamerasViewModel.pollFocusedCameraEvent] — today that's only ever the fullscreen-focused
+     * camera (see [CamerasViewModel.setFocusedCamera]), not every grid tile. Drives the "solid
+     * blue" LiveIndicatorDot state (#20).
+     */
+    val activeEventCameraNames: Set<String> = emptySet(),
 )
 
 @HiltViewModel
@@ -85,6 +95,9 @@ class CamerasViewModel
         // flag, startOrStopAutoRefresh()'s loop would keep polling forever regardless of which
         // screen is actually visible. Screen calls setScreenVisible from a DisposableEffect.
         private var screenVisible = true
+
+        private var focusedCamera: String? = null
+        private var eventPollJob: Job? = null
 
         init {
             // Load persisted camera-management prefs and last-known names on startup.
@@ -185,6 +198,48 @@ class CamerasViewModel
             if (screenVisible == visible) return
             screenVisible = visible
             startOrStopAutoRefresh()
+        }
+
+        /**
+         * Called from CamerasScreen whenever the fullscreen-focused camera changes (including to
+         * null on exit) — drives [pollFocusedCameraEvent] below. Scoped to the one camera actually
+         * being viewed in detail, not every grid tile, to avoid repeating this app's past
+         * auto-refresh traffic-leak mistake (see project_state.md, 2026-07-10 session) by polling
+         * cameras nobody's looking at.
+         */
+        fun setFocusedCamera(name: String?) {
+            if (focusedCamera == name) return
+            focusedCamera = name
+            eventPollJob?.cancel()
+            if (name == null) {
+                _state.value = _state.value.copy(activeEventCameraNames = emptySet())
+                return
+            }
+            eventPollJob =
+                viewModelScope.launch {
+                    while (true) {
+                        pollFocusedCameraEvent(name)
+                        // TODO(#20 follow-up): expose this interval in Developer Options once a
+                        // polling-rate control exists there, instead of the hardcoded constant
+                        // below — same idea as autoRefreshInterval, but for this poll specifically.
+                        delay(EVENT_POLL_INTERVAL_MS)
+                    }
+                }
+        }
+
+        private suspend fun pollFocusedCameraEvent(cameraName: String) {
+            if (!screenVisible) return
+            when (val r = repo.events(camera = cameraName, limit = 1)) {
+                is ApiResult.Success -> {
+                    val open = r.data.firstOrNull()?.endTime == null && r.data.isNotEmpty()
+                    _state.value =
+                        _state.value.copy(
+                            activeEventCameraNames = if (open) setOf(cameraName) else emptySet(),
+                        )
+                }
+
+                else -> {}
+            }
         }
 
         private fun startOrStopAutoRefresh() {

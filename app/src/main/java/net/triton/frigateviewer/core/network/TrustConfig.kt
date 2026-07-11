@@ -40,28 +40,4 @@ object TrustConfig {
         val sslContext = SSLContext.getInstance("TLS").apply { init(null, arrayOf(tm), null) }
         return builder.sslSocketFactory(sslContext.socketFactory, tm)
     }
-
-    fun applyAllowUntrusted(builder: OkHttpClient.Builder): OkHttpClient.Builder {
-        val tm =
-            object : X509TrustManager {
-                override fun checkClientTrusted(
-                    chain: Array<out X509Certificate>?,
-                    authType: String?,
-                ) {}
-
-                override fun checkServerTrusted(
-                    chain: Array<out X509Certificate>?,
-                    authType: String?,
-                ) {}
-
-                override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
-            }
-        val sslContext =
-            SSLContext.getInstance("TLS").apply {
-                init(null, arrayOf(tm), null)
-            }
-        return builder
-            .sslSocketFactory(sslContext.socketFactory, tm)
-            .hostnameVerifier { _, _ -> true }
-    }
 }

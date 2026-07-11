@@ -149,18 +149,14 @@ class FrigateClient
                     .addInterceptor(PerServerAuthInterceptor(server, credentialStore))
                     .authenticator(TokenRefreshAuthenticator(server, credentialStore, ::refreshToken))
 
-            if (server.allowUntrusted) {
-                TrustConfig.applyAllowUntrusted(builder)
-            } else {
-                // ensureFor/buildClient are both suspend now (called only from the suspend
-                // mutex.withLock blocks in apiFor/clientFor/hasSessionCookie above), so this can
-                // call CredentialStore directly instead of runBlocking-wrapping it — the
-                // runBlocking here was flagged as dead weight, not a genuine sync-adapter need
-                // (contrast PerServerAuthInterceptor/SessionCookieJar below, which really do
-                // bridge a synchronous OkHttp SPI and keep their runBlocking for that reason).
-                val pinned = credentialStore.pinnedCert(server.id)
-                TrustConfig.applyPinnedCertificate(builder, pinned)
-            }
+            // ensureFor/buildClient are both suspend now (called only from the suspend
+            // mutex.withLock blocks in apiFor/clientFor/hasSessionCookie above), so this can
+            // call CredentialStore directly instead of runBlocking-wrapping it — the
+            // runBlocking here was flagged as dead weight, not a genuine sync-adapter need
+            // (contrast PerServerAuthInterceptor/SessionCookieJar below, which really do
+            // bridge a synchronous OkHttp SPI and keep their runBlocking for that reason).
+            val pinned = credentialStore.pinnedCert(server.id)
+            TrustConfig.applyPinnedCertificate(builder, pinned)
             return builder.build()
         }
 

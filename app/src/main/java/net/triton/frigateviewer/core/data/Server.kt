@@ -15,8 +15,6 @@ data class Server(
     val username: String? = null,
     /** Whether the user has pinned a custom certificate for this host (stored separately). */
     val hasPinnedCert: Boolean = false,
-    /** Whether to allow untrusted (self-signed) certificates for this server. */
-    val allowUntrusted: Boolean = false,
     /** The RTSP port for this server (default is 8554). */
     val rtspPort: Int = 8554,
     /**
@@ -44,7 +42,7 @@ data class Server(
         // Omit port if it's the default for the protocol
         val isDefaultPort = (protocol == "https" && finalPort == 443) || (protocol == "http" && finalPort == 80)
         val portPart = if (finalPort != null && !isDefaultPort) ":$finalPort" else ""
-        
+
         val path = basePath.trim('/').let { if (it.isEmpty()) "" else "/$it" }
         return "$protocol://$cleanHost$portPart$path/"
     }

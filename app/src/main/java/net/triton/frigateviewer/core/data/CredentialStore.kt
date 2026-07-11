@@ -143,11 +143,16 @@ class CredentialStore
                 if (f.exists()) f.readBytes() else null
             }
 
+        /** Persists [pem] as [serverId]'s pinned certificate, or clears it when [pem] is empty. */
         suspend fun setPinnedCert(
             serverId: String,
             pem: ByteArray,
         ) = withContext(Dispatchers.IO) {
-            certFile(serverId).writeBytes(pem)
+            if (pem.isEmpty()) {
+                certFile(serverId).delete()
+            } else {
+                certFile(serverId).writeBytes(pem)
+            }
         }
 
         companion object {

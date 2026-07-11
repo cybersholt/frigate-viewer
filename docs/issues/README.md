@@ -30,24 +30,43 @@ unrelated leftover — app-wide cleartext traffic — found and tracked separate
 scaffolding (`EventsViewModel.delete`/`toggleRetain`). #4, #6, #7, #9, #11, #14, #23, #24, #25, #26, #27, #28,
 #29 removed from the table below.
 
-## Bugs
+**Resolved 2026-07-11 (audio-focus fix, #5, #10):** WebRTC audio-ducking bug fixed (explicit `AudioAttributes.
+USAGE_MEDIA` instead of WebRTC's default `USAGE_VOICE_COMMUNICATION`), user-confirmed on the real Pixel 8. **#5**
+resolved per product decision — fullscreen protocol picks are now session-only, never persist to the grid's
+per-camera override; found + fixed a related stuck-landscape bug along the way (`isFullScreen` ownership hoisted
+from the swappable Rtsp/WebRtc tiles up to `StreamContent`). **#10** mostly resolved — 3 of 4 checklist items
+verified live (preview-frame scrub, PiP auto-trigger on Home-press, fullscreen back-handling narrow path); the
+4th (`TokenRefreshAuthenticator` live-401 recovery) is left open as a documented, structurally-blocked gap — the
+test server's JWT auth is stateless (confirmed via safe curl checks), so forcing a real 401 requires either
+waiting out a real expiry or risky on-device credential tampering, neither attempted. #5 and #10 removed from
+the tables below; the 401-recovery detail lives in `project_state.md`'s 2026-07-11 session notes if picked back
+up later.
 
-| # | Title | Priority | Status | File |
-|---|-------|----------|--------|------|
-| 5 | Fullscreen protocol picker shares state with the grid (by-design, needs a decision) | Medium | 🔴 | `qa/2026-07-10-pixel8-qa-notes.md#5` |
+**Resolved 2026-07-11 (#12, tech debt):** Deleted `TrustConfig.applyAllowUntrusted()` and `Server.allowUntrusted`
+entirely (the real trust-all-certs hole). Built the previously-missing pinned-cert import UI in
+`ServersSettingsScreen.kt` ("Pinned certificate" — Import/Replace/Remove), wired to the `CredentialStore
+.setPinnedCert`/`FrigateClient.applyPinnedCertificate` plumbing that already existed but had zero callers.
+Verified live on the Pixel 8: reject-invalid-file, import-valid-cert, and remove all work correctly. The
+cleartext-traffic item (below) was reviewed in the same discussion and intentionally left as-is — it's a
+deliberate, already-documented trade-off (`network_security_config.xml`'s own comment explains it enables the
+real per-server "Use SSL" HTTP option for local Frigate instances), not a forgotten leftover; downgraded from
+"needs a fix" to "accepted, no action needed" rather than removed from the table, since it's still worth a human
+glance if requirements change. #12 removed from the table below.
 
-## Verification / audit
-
-| # | Title | Priority | Status | File |
-|---|-------|----------|--------|------|
-| 10 | Real-device verification checklist (preview-frame scrub, PiP auto-home-press, live-401 recovery, fullscreen-back narrow path) | Medium | 🔴 | `issues/backlog-2026-07-10.md#10` |
+**Resolved 2026-07-11 (#20):** Audited first — turned out **not** superseded by #25 (that's a static config flag,
+this is a live "event happening now" signal) and not actually data-blocked either (`FrigateEvent.endTime` was
+already nullable; just needed a poll instead of a one-shot fetch). Built per the user's spec: `LiveIndicatorDot`
+gained a solid-blue state for "an event is open right now," scoped to the fullscreen-focused camera only (15s
+poll, started/stopped via `CamerasViewModel.setFocusedCamera`). Verified live on the emulator (poll starts/stops
+correctly, correct interval, no crashes); Pixel 8 testing deferred per user request. A `TODO(#20 follow-up)`
+comment marks where a Developer Options polling-rate control should hook in once one exists. #20 removed from
+the table below.
 
 ## Tech debt
 
 | # | Title | Priority | Status | File |
 |---|-------|----------|--------|------|
-| 12 | `TrustConfig.applyAllowUntrusted()` violates the repo's own "no trust-all-certs" rule | High | 🔴 | `issues/backlog-2026-07-10.md#12` |
-| — | Cleartext traffic still enabled app-wide (`usesCleartextTraffic="true"`) — Task B leftover, found during #9 audit | Medium | 🔴 | `issues/backlog-2026-07-10.md#9` |
+| — | Cleartext traffic enabled app-wide (`usesCleartextTraffic="true"`) — accepted, documented trade-off (enables per-server plain-HTTP for local Frigate instances; not revertable without dropping that feature) | — | ✅ accepted | `issues/backlog-2026-07-10.md#9` |
 
 ## Features / enhancements
 
@@ -57,7 +76,6 @@ scaffolding (`EventsViewModel.delete`/`toggleRetain`). #4, #6, #7, #9, #11, #14,
 | 16 | Recent-events side panel next to live view | Low | 🔴 | `issues/backlog-2026-07-10.md#16` |
 | 17 | Timeline-strip side panel next to live view | Low | 🔴 | `issues/backlog-2026-07-10.md#17` |
 | 19 | Notifications and Downloads settings are placeholders — needs product scoping | Medium | 🔴 | `issues/backlog-2026-07-10.md#19` |
-| 20 | Recording indicator dot should reflect active-event state (superseded by fixed #25) | Low | 🔴 | `issues/backlog-2026-07-10.md#20` |
 
 ## Chores
 
@@ -65,12 +83,6 @@ scaffolding (`EventsViewModel.delete`/`toggleRetain`). #4, #6, #7, #9, #11, #14,
 |---|-------|----------|--------|------|
 | 18 | Settings visual redesign — extend to remaining sub-pages | Low | 🔴 | `issues/backlog-2026-07-10.md#18` |
 | 21 | Full testTag sweep | Low | 🔴 | `issues/backlog-2026-07-10.md#21` |
-
-## Not filed — needs discussion, not a tracked issue
-
-- **"The bubble"** — see `qa/2026-07-10-pixel8-qa-notes.md` bottom section. Confirmed no floating/live-video
-  overlay exists anywhere in the codebase; the only match is the timeline-scrub still-frame thumbnail. Needs a
-  conversation with the user before this becomes an issue.
 
 ## Conventions
 

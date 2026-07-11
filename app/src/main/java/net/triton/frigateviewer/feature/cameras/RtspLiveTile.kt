@@ -2,10 +2,7 @@
 
 package net.triton.frigateviewer.feature.cameras
 
-import android.app.Activity
-import android.content.pm.ActivityInfo
 import android.util.Log
-import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -37,12 +34,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -53,7 +47,6 @@ import androidx.media3.exoplayer.rtsp.RtspMediaSource
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import net.triton.frigateviewer.LocalFullScreenMode
 
 private const val TAG = "RtspLiveTile"
 private const val MAX_BACKOFF_MS = 30_000L
@@ -90,7 +83,8 @@ fun RtspLiveTile(
     url: String,
     modifier: Modifier = Modifier,
     snapshotUrl: String? = null,
-    autoLandscapeOnStream: Boolean = false,
+    isFullScreen: Boolean = false,
+    onToggleFullScreen: () -> Unit = {},
     showLastImageWhileLoading: Boolean = true,
     onStateChanged: (LiveStreamState) -> Unit = {},
     onFatal: () -> Unit = {},
@@ -99,15 +93,12 @@ fun RtspLiveTile(
     val maxReconnectAttempts = reconnectSettings.maxAttempts
     val reconnectBaseDelaySeconds = reconnectSettings.baseDelaySeconds
     val context = LocalContext.current
-    val view = LocalView.current
     var retryTrigger by remember { mutableIntStateOf(0) }
     var autoReconnectAttempts by remember { mutableIntStateOf(0) }
-    var isFullScreen by remember { mutableStateOf(false) }
     var isMuted by remember { mutableStateOf(true) }
     var scale by remember { mutableStateOf(1f) }
     var zoomOffset by remember { mutableStateOf(Offset.Zero) }
     var videoRevealed by remember { mutableStateOf(false) }
-    val fullScreenMode = LocalFullScreenMode.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     var liveState by remember { mutableStateOf<LiveStreamState>(LiveStreamState.Idle) }
@@ -217,43 +208,14 @@ fun RtspLiveTile(
         }
     playerRef = exoPlayer
 
-    LaunchedEffect(Unit) {
-        if (autoLandscapeOnStream) isFullScreen = true
-    }
-
-    LaunchedEffect(isFullScreen, autoLandscapeOnStream) {
-        val activity = context as? Activity ?: return@LaunchedEffect
-        activity.requestedOrientation =
-            if (isFullScreen && autoLandscapeOnStream) {
-                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            } else {
-                ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-            }
-    }
-
     LaunchedEffect(isMuted) {
         exoPlayer.volume = if (isMuted) 0f else 1f
     }
 
-    LaunchedEffect(isFullScreen) { fullScreenMode.value = isFullScreen }
-    DisposableEffect(Unit) { onDispose { fullScreenMode.value = false } }
-
-    DisposableEffect(isFullScreen) {
-        val window = (context as? Activity)?.window ?: return@DisposableEffect onDispose {}
-        val controller = WindowInsetsControllerCompat(window, view)
-        if (isFullScreen) {
-            controller.hide(WindowInsetsCompat.Type.systemBars())
-            controller.systemBarsBehavior =
-                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        } else {
-            controller.show(WindowInsetsCompat.Type.systemBars())
-        }
-        onDispose { controller.show(WindowInsetsCompat.Type.systemBars()) }
-    }
-
-    if (isFullScreen) {
-        BackHandler { isFullScreen = false }
-    }
+    // Fullscreen/orientation/system-bars ownership lives in StreamContent (the stable call
+    // site across protocol switches), not here — this composable is torn down and recreated
+    // whenever the user switches protocol, which previously reset that state and left the
+    // orientation lock stuck (see #5 verification session writeup).
 
     // Reconnect when returning from background: ExoPlayer stalls with a black
     // surface after the app is stopped. Bumping retryTrigger recreates the player.
@@ -361,7 +323,7 @@ fun RtspLiveTile(
 
         // Fullscreen toggle
         IconButton(
-            onClick = { isFullScreen = !isFullScreen },
+            onClick = onToggleFullScreen,
             modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 8.dp).testTag("rtsp_fullscreen_button"),
         ) {
             Icon(

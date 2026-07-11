@@ -1,9 +1,7 @@
 package net.triton.frigateviewer.feature.cameras
 
-import android.app.Activity
-import android.content.pm.ActivityInfo
+import android.media.AudioAttributes
 import android.util.Log
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -41,14 +39,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -64,7 +59,6 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
-import net.triton.frigateviewer.LocalFullScreenMode
 import net.triton.frigateviewer.core.data.CredentialStore
 import net.triton.frigateviewer.core.data.ServerRepository
 import okhttp3.OkHttpClient
@@ -84,6 +78,7 @@ import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
+import org.webrtc.audio.JavaAudioDeviceModule
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.roundToInt
 
@@ -116,14 +111,14 @@ fun WebRtcLiveTile(
     okHttpClient: OkHttpClient,
     snapshotUrl: String? = null,
     modifier: Modifier = Modifier,
-    autoLandscapeOnStream: Boolean = false,
+    isFullScreen: Boolean = false,
+    onToggleFullScreen: () -> Unit = {},
     showBoundingBoxes: Boolean = true,
     showLastImageWhileLoading: Boolean = true,
     onFatal: (String) -> Unit = {},
     onStateChanged: (LiveStreamState) -> Unit = {},
 ) {
     val context = LocalContext.current
-    val view = LocalView.current
     val eglBase = remember(baseUrl, cameraName, okHttpClient) { EglBase.create() }
     DisposableEffect(eglBase) {
         onDispose {
@@ -132,6 +127,7 @@ fun WebRtcLiveTile(
     }
 
     val pcfHolder = remember { AtomicReference<PeerConnectionFactory?>() }
+    val admHolder = remember { AtomicReference<JavaAudioDeviceModule?>() }
     val pcHolder = remember { AtomicReference<PeerConnection?>() }
     val wsGlobalHolder = remember { AtomicReference<WebSocket?>() }
     val wsStreamHolder = remember { AtomicReference<WebSocket?>() }
@@ -139,7 +135,6 @@ fun WebRtcLiveTile(
     val audioTrackHolder = remember { AtomicReference<org.webrtc.AudioTrack?>() }
     val pendingCandidates = remember { mutableListOf<IceCandidate>() }
 
-    var isFullScreen by remember { mutableStateOf(false) }
     var isMuted by remember { mutableStateOf(true) }
     var scale by remember { mutableStateOf(1f) }
     var zoomOffset by remember { mutableStateOf(Offset.Zero) }
@@ -152,7 +147,6 @@ fun WebRtcLiveTile(
     var liveState by remember { mutableStateOf<LiveStreamState>(LiveStreamState.Idle) }
     var videoRevealed by remember { mutableStateOf(false) }
     var objectStates by remember { mutableStateOf<List<FrigateObjectState>>(emptyList()) }
-    val fullScreenMode = LocalFullScreenMode.current
 
     LaunchedEffect(liveState) { onStateChanged(liveState) }
 
@@ -162,44 +156,12 @@ fun WebRtcLiveTile(
 
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
-    LaunchedEffect(Unit) {
-        if (autoLandscapeOnStream) isFullScreen = true
-    }
-
-    LaunchedEffect(isFullScreen, autoLandscapeOnStream) {
-        val activity = context as? Activity ?: return@LaunchedEffect
-        activity.requestedOrientation =
-            if (isFullScreen && autoLandscapeOnStream) {
-                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            } else {
-                ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-            }
-    }
-
     LaunchedEffect(isMuted) { audioTrackHolder.get()?.setEnabled(!isMuted) }
 
-    LaunchedEffect(isFullScreen) { fullScreenMode.value = isFullScreen }
-    DisposableEffect(Unit) { onDispose { fullScreenMode.value = false } }
-
-    DisposableEffect(isFullScreen) {
-        val window = (context as? Activity)?.window ?: return@DisposableEffect onDispose {}
-        val controller = WindowInsetsControllerCompat(window, view)
-        if (isFullScreen) {
-            controller.hide(WindowInsetsCompat.Type.systemBars())
-            controller.systemBarsBehavior =
-                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        } else {
-            controller.show(WindowInsetsCompat.Type.systemBars())
-        }
-        onDispose { controller.show(WindowInsetsCompat.Type.systemBars()) }
-    }
-
-    // System/predictive back must collapse fullscreen (restoring orientation via the
-    // isFullScreen effects above) before falling through to navigation, same as the
-    // fullscreen toggle button below — otherwise Back exits to the grid still landscape-locked.
-    if (isFullScreen) {
-        BackHandler { isFullScreen = false }
-    }
+    // Fullscreen/orientation/system-bars ownership lives in StreamContent (the stable call
+    // site across protocol switches), not here — this composable is torn down and recreated
+    // whenever the user switches protocol, which previously reset that state and left the
+    // orientation lock stuck (see #5 verification session writeup).
 
     // Reconnect when returning from background: the peer connection silently dies
     // while stopped (no WS failure fires), leaving a black frozen surface. Bumping
@@ -275,6 +237,7 @@ fun WebRtcLiveTile(
             wsGlobalHolder.getAndSet(null)?.close(1000, "retry")
             pcHolder.getAndSet(null)?.dispose()
             pcfHolder.getAndSet(null)?.dispose()
+            admHolder.getAndSet(null)?.release()
 
             videoRevealed = false
             liveState = LiveStreamState.Connecting(0)
@@ -332,9 +295,26 @@ fun WebRtcLiveTile(
                     PeerConnectionFactory.InitializationOptions.builder(context).createInitializationOptions(),
                 )
 
+                // WebRTC's default audio device module plays out with USAGE_VOICE_COMMUNICATION,
+                // which makes Android treat a muted camera tile like an active phone call —
+                // ducking/reprocessing other apps' audio even though this app emits no sound.
+                // Media-style attributes avoid that call-like audio focus/routing behavior.
+                val adm =
+                    JavaAudioDeviceModule
+                        .builder(context)
+                        .setAudioAttributes(
+                            AudioAttributes
+                                .Builder()
+                                .setUsage(AudioAttributes.USAGE_MEDIA)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
+                                .build(),
+                        ).createAudioDeviceModule()
+                admHolder.set(adm)
+
                 val pcf =
                     PeerConnectionFactory
                         .builder()
+                        .setAudioDeviceModule(adm)
                         .setVideoEncoderFactory(DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true))
                         .setVideoDecoderFactory(DefaultVideoDecoderFactory(eglBase.eglBaseContext))
                         .createPeerConnectionFactory()
@@ -555,6 +535,7 @@ fun WebRtcLiveTile(
             wsGlobalHolder.getAndSet(null)?.close(1000, "dispose")
             pcHolder.getAndSet(null)?.dispose()
             pcfHolder.getAndSet(null)?.dispose()
+            admHolder.getAndSet(null)?.release()
         }
     }
 
@@ -665,7 +646,7 @@ fun WebRtcLiveTile(
         }
 
         IconButton(
-            onClick = { isFullScreen = !isFullScreen },
+            onClick = onToggleFullScreen,
             modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 8.dp).testTag("webrtc_fullscreen_button"),
         ) {
             Icon(

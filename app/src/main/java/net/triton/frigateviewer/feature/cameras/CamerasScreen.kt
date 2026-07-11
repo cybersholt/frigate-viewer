@@ -2,6 +2,8 @@
 
 package net.triton.frigateviewer.feature.cameras
 
+import android.app.Activity
+import android.content.pm.ActivityInfo
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
@@ -82,10 +84,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.ImageLoader
@@ -161,6 +166,11 @@ fun CamerasScreen(
             consumedInitialFocus = true
         }
     }
+
+    // #20: the "is an event open right now" poll is scoped to whichever single camera is
+    // actually being viewed in fullscreen, not every grid tile — mirrors this app's
+    // screenVisible gating so it never polls a camera nobody's looking at.
+    LaunchedEffect(focused) { vm.setFocusedCamera(focused) }
 
     // Full ordered list for edit sheet (visible + hidden, in persisted order)
     val allCamerasOrdered =
@@ -241,10 +251,7 @@ fun CamerasScreen(
                             go2rtcStreams = state.go2rtcStreams,
                             subStreamFallbacks = state.subStreamFallbacks,
                             hideEventImage = state.hideEventImage,
-                            liveStreamOption = state.cameraStreamOverrides[focused!!] ?: state.fullscreenStreamType,
-                            isStreamOptionOverridden = state.cameraStreamOverrides.containsKey(focused!!),
-                            globalDefaultStreamOption = state.fullscreenStreamType,
-                            onSetStreamOverride = { mode -> vm.setCameraStreamOverride(focused!!, mode) },
+                            initialStreamOption = state.cameraStreamOverrides[focused!!] ?: state.fullscreenStreamType,
                             refreshTimestamp = state.refreshTimestamp,
                             showBoundingBoxes = state.showBoundingBoxes,
                             autoLandscapeOnStream = state.autoLandscapeOnStream,
@@ -254,6 +261,7 @@ fun CamerasScreen(
                             allCameraNames = state.displayedCameras,
                             onSwitchCamera = { name -> focused = name },
                             recordingEnabled = state.cameras[focused!!]?.record?.enabled == true,
+                            activeEventNow = state.activeEventCameraNames.contains(focused!!),
                             onClose = { focused = null },
                         )
                     } else {
@@ -696,10 +704,7 @@ private fun FocusedTile(
     go2rtcStreams: Set<String>,
     subStreamFallbacks: Map<String, Boolean>,
     hideEventImage: Boolean,
-    liveStreamOption: String,
-    isStreamOptionOverridden: Boolean,
-    globalDefaultStreamOption: String,
-    onSetStreamOverride: (String?) -> Unit,
+    initialStreamOption: String,
     refreshTimestamp: Long,
     showBoundingBoxes: Boolean,
     autoLandscapeOnStream: Boolean,
@@ -709,6 +714,7 @@ private fun FocusedTile(
     allCameraNames: List<String> = emptyList(),
     onSwitchCamera: (String) -> Unit = {},
     recordingEnabled: Boolean = false,
+    activeEventNow: Boolean = false,
     onClose: () -> Unit,
 ) {
     val baseUrl = effectiveBaseUrl ?: server?.baseUrl()
@@ -738,6 +744,13 @@ private fun FocusedTile(
     var resolutionOverride by remember(cameraName) { mutableStateOf<Boolean?>(null) }
     val effectivePreferSubStream = resolutionOverride ?: preferSubStream
 
+    // Session-only stream-protocol override (#5): picking a protocol from the fullscreen pill
+    // must NOT persist back to the grid's per-camera override — a fullscreen experiment
+    // shouldn't silently change the grid default. Resets whenever the focused camera changes,
+    // same as resolutionOverride above.
+    var streamOptionOverride by remember(cameraName) { mutableStateOf<String?>(null) }
+    val effectiveLiveStreamOption = streamOptionOverride ?: initialStreamOption
+
     val subStreamName = "${cameraName}_sub"
     val hasSubStream = go2rtcStreams.contains(subStreamName)
     val liveCameraName =
@@ -760,10 +773,10 @@ private fun FocusedTile(
                 server.localNetworkSsids.isNotEmpty() &&
                 currentSsid !in server.localNetworkSsids
         }
-    val effectiveStreamOption = if (liveStreamOption == "rtsp" && rtspOffLan) "webrtc" else liveStreamOption
+    val effectiveStreamOption = if (effectiveLiveStreamOption == "rtsp" && rtspOffLan) "webrtc" else effectiveLiveStreamOption
     val streamTypeLabel =
         when {
-            liveStreamOption == "rtsp" && rtspOffLan -> "WebRTC (RTSP: home network only)"
+            effectiveLiveStreamOption == "rtsp" && rtspOffLan -> "WebRTC (RTSP: home network only)"
             effectiveStreamOption == "rtsp" -> "RTSP"
             effectiveStreamOption == "snapshot" -> "Snapshot"
             else -> "WebRTC"
@@ -830,10 +843,10 @@ private fun FocusedTile(
         Box(if (isFullScreen) Modifier.fillMaxWidth().weight(1f) else Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
             var liveStreamState by remember { mutableStateOf<LiveStreamState>(LiveStreamState.Idle) }
             StreamContent(
-                liveStreamOption = liveStreamOption,
-                isStreamOptionOverridden = isStreamOptionOverridden,
-                globalDefaultStreamOption = globalDefaultStreamOption,
-                onSetStreamOverride = onSetStreamOverride,
+                liveStreamOption = effectiveLiveStreamOption,
+                isStreamOptionOverridden = streamOptionOverride != null,
+                globalDefaultStreamOption = initialStreamOption,
+                onSetStreamOverride = { mode -> streamOptionOverride = mode },
                 server = server,
                 okHttpClient = okHttpClient,
                 rtspUrl = rtspUrl,
@@ -865,11 +878,12 @@ private fun FocusedTile(
                     allCameraNames = allCameraNames,
                     onSwitchCamera = onSwitchCamera,
                     streamTypeLabel = streamTypeLabel,
-                    liveStreamOption = liveStreamOption,
-                    isStreamOptionOverridden = isStreamOptionOverridden,
-                    globalDefaultStreamOption = globalDefaultStreamOption,
-                    onSetStreamOverride = onSetStreamOverride,
+                    liveStreamOption = effectiveLiveStreamOption,
+                    isStreamOptionOverridden = streamOptionOverride != null,
+                    globalDefaultStreamOption = initialStreamOption,
+                    onSetStreamOverride = { mode -> streamOptionOverride = mode },
                     recordingEnabled = recordingEnabled,
+                    activeEventNow = activeEventNow,
                     liveStreamState = liveStreamState,
                 )
             }
@@ -918,6 +932,7 @@ private fun FullscreenChrome(
     globalDefaultStreamOption: String,
     onSetStreamOverride: (String?) -> Unit,
     recordingEnabled: Boolean = false,
+    activeEventNow: Boolean = false,
     liveStreamState: LiveStreamState = LiveStreamState.Idle,
 ) {
     if (!visible) return
@@ -957,7 +972,7 @@ private fun FullscreenChrome(
                     // the same right edge instead of LIVE overhanging past the pill's text.
                     modifier = Modifier.padding(end = 8.dp).testTag("fullscreen_live_indicator"),
                 ) {
-                    LiveIndicatorDot(recordingEnabled)
+                    LiveIndicatorDot(recordingEnabled, activeEventNow)
                     Text("LIVE", style = MaterialTheme.typography.labelSmall, color = Color.White)
                 }
                 // Same tappable protocol pill grid tiles show (StreamTypeBadge) — kept here so
@@ -1120,6 +1135,53 @@ private fun StreamContent(
     LaunchedEffect(streamState) { onStreamStateChanged(streamState) }
     val snapshotUrl = baseUrl?.trimEnd('/')?.plus("/") + snapshotPath
 
+    // Fullscreen/orientation-lock/system-bars state is owned HERE, not inside the swappable
+    // Rtsp/WebRtc leaf tiles below — StreamContent is the stable call site across protocol
+    // switches (only its `when` branch's child changes), whereas each leaf tile is fully torn
+    // down and recreated on a protocol switch. Owning it at the leaf level (the original
+    // design) meant switching protocol while fullscreen — most visibly to Snapshot, which has
+    // no fullscreen concept at all — silently reset this state: it spuriously exited fullscreen
+    // and left the orientation lock stuck in landscape, since nothing survived to unwind it.
+    // Mirrors the same fix already applied to `pipEligible` in FocusedTile.
+    val context = LocalContext.current
+    val view = LocalView.current
+    val fullScreenMode = LocalFullScreenMode.current
+    var isFullScreen by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        if (autoLandscapeOnStream) isFullScreen = true
+    }
+
+    LaunchedEffect(isFullScreen, autoLandscapeOnStream) {
+        val activity = context as? Activity ?: return@LaunchedEffect
+        activity.requestedOrientation =
+            if (isFullScreen && autoLandscapeOnStream) {
+                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            } else {
+                ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
+    }
+
+    LaunchedEffect(isFullScreen) { fullScreenMode.value = isFullScreen }
+    DisposableEffect(Unit) { onDispose { fullScreenMode.value = false } }
+
+    DisposableEffect(isFullScreen) {
+        val window = (context as? Activity)?.window ?: return@DisposableEffect onDispose {}
+        val controller = WindowInsetsControllerCompat(window, view)
+        if (isFullScreen) {
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        } else {
+            controller.show(WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose { controller.show(WindowInsetsCompat.Type.systemBars()) }
+    }
+
+    if (isFullScreen) {
+        BackHandler { isFullScreen = false }
+    }
+
     // The RTSP port is commonly only reachable via server.rtspHost, a LAN IP — off that
     // Wi-Fi network the connection will just hang/fail. Gate it and fall back to WebRTC
     // (which always goes through the public host over 443) instead of failing silently.
@@ -1152,7 +1214,8 @@ private fun StreamContent(
                         RtspLiveTile(
                             url = resolvedRtspUrl,
                             snapshotUrl = snapshotUrl,
-                            autoLandscapeOnStream = autoLandscapeOnStream,
+                            isFullScreen = isFullScreen,
+                            onToggleFullScreen = { isFullScreen = !isFullScreen },
                             showLastImageWhileLoading = showLastImageWhileLoading,
                             onStateChanged = { streamState = it },
                             onFatal = {
@@ -1188,7 +1251,8 @@ private fun StreamContent(
                         cameraName = liveCameraName,
                         okHttpClient = okHttpClient,
                         snapshotUrl = snapshotUrl,
-                        autoLandscapeOnStream = autoLandscapeOnStream,
+                        isFullScreen = isFullScreen,
+                        onToggleFullScreen = { isFullScreen = !isFullScreen },
                         showBoundingBoxes = showBoundingBoxes,
                         showLastImageWhileLoading = showLastImageWhileLoading,
                         onFatal = {
@@ -1229,12 +1293,21 @@ private fun StreamContent(
     }
 }
 
-/** Green pulsing dot normally; slow red blink when the camera has Frigate recording enabled. */
+/**
+ * Green pulsing dot normally; slow red pulse when the camera has Frigate recording enabled;
+ * solid blue (no pulse) when an event is actively open right now on this camera (#20) — that
+ * state wins over the other two since it's the most urgent/attention-grabbing.
+ */
 @Composable
 private fun LiveIndicatorDot(
     recordingEnabled: Boolean,
+    activeEventNow: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    if (activeEventNow) {
+        Canvas(modifier.size(8.dp)) { drawCircle(Color(0xFF2196F3)) }
+        return
+    }
     val infiniteTransition = rememberInfiniteTransition(label = "liveDot")
     val alpha by infiniteTransition.animateFloat(
         initialValue = if (recordingEnabled) 0.15f else 0.4f,

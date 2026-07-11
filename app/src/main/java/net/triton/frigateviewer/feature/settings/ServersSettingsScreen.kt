@@ -36,9 +36,11 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,6 +52,8 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import net.triton.frigateviewer.core.data.Server
 import net.triton.frigateviewer.core.network.AuthMode
 
@@ -61,6 +65,7 @@ fun ServersSettingsScreen(
     val state by vm.state.collectAsStateWithLifecycle()
     val currentSsid by vm.currentSsid.collectAsStateWithLifecycle()
     val connectionTest by vm.connectionTest.collectAsStateWithLifecycle()
+    val certPinResult by vm.certPinResult.collectAsStateWithLifecycle()
     var editing by remember { mutableStateOf<ServerForm?>(null) }
     var testingId by remember { mutableStateOf<String?>(null) }
 
@@ -87,7 +92,7 @@ fun ServersSettingsScreen(
                             basePath = srv.basePath,
                             authMode = srv.authMode,
                             username = srv.username.orEmpty(),
-                            allowUntrusted = srv.allowUntrusted,
+                            hasPinnedCert = srv.hasPinnedCert,
                             rtspPort = srv.rtspPort.toString(),
                             rtspHost = srv.rtspHost.orEmpty(),
                             localNetworkUrl = srv.localNetworkUrl.orEmpty(),
@@ -106,6 +111,10 @@ fun ServersSettingsScreen(
             connectionTest = connectionTest,
             onTest = { draft -> vm.testDraftConnection(draft) },
             onClearTest = { vm.clearConnectionTest() },
+            certPinResult = certPinResult,
+            onImportCert = { serverId, pem -> vm.importPinnedCert(serverId, pem) },
+            onRemoveCert = { serverId -> vm.clearPinnedCert(serverId) },
+            onClearCertPinResult = { vm.clearCertPinResult() },
             onPermissionGranted = { vm.refreshWifiSsid() },
             onDismiss = { editing = null },
             onSave = {
@@ -209,20 +218,54 @@ internal fun ServerFormSheet(
     connectionTest: ConnectionTestResult?,
     onTest: (ServerForm) -> Unit,
     onClearTest: () -> Unit,
+    certPinResult: CertPinResult? = null,
+    onImportCert: (String, ByteArray) -> Unit = { _, _ -> },
+    onRemoveCert: (String) -> Unit = {},
+    onClearCertPinResult: () -> Unit = {},
     onPermissionGranted: () -> Unit = {},
     onDismiss: () -> Unit,
     onSave: (ServerForm) -> Unit,
 ) {
     var current by remember { mutableStateOf(form) }
+    // The cert pin/remove actions below write straight to CredentialStore rather than staying a
+    // draft field like the rest of this form (there's no sane "undo" for a file already read off
+    // disk) — baselineForm tracks that immediately-committed state alongside `form` itself so the
+    // discard-confirmation dirty-check below doesn't warn about "unsaved changes" that are
+    // already permanent.
+    var baselineForm by remember { mutableStateOf(form) }
     var newSsidInput by remember { mutableStateOf("") }
     var testing by remember { mutableStateOf(false) }
+    var certError by remember { mutableStateOf<String?>(null) }
     // Cancel/tap-outside/swipe-down/back all funnel through onDismissRequest — if the form was
     // edited since opening, confirm before discarding instead of silently dropping the changes
     // (backlog #4: no way to tell whether a dismissed edit was ever applied).
     var showDiscardConfirm by remember { mutableStateOf(false) }
-    val attemptDismiss = { if (current != form) showDiscardConfirm = true else onDismiss() }
+    val attemptDismiss = { if (current != baselineForm) showDiscardConfirm = true else onDismiss() }
     val scroll = rememberScrollState()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(certPinResult) {
+        val result = certPinResult ?: return@LaunchedEffect
+        if (result.serverId != current.id) return@LaunchedEffect
+        if (result.success) {
+            current = current.copy(hasPinnedCert = result.message != "Certificate removed")
+            baselineForm = baselineForm.copy(hasPinnedCert = current.hasPinnedCert)
+            certError = null
+        } else {
+            certError = result.message
+        }
+        onClearCertPinResult()
+    }
+
+    val importCertLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri == null) return@rememberLauncherForActivityResult
+            scope.launch(Dispatchers.IO) {
+                val bytes = runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()
+                if (bytes != null) onImportCert(current.id, bytes) else certError = "Couldn't read that file"
+            }
+        }
     var hasLocationPermission by
         remember {
             mutableStateOf(
@@ -313,11 +356,11 @@ internal fun ServerFormSheet(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 AuthModeSelector(current.authMode) { current = current.copy(authMode = it) }
-                SwitchSetting(
-                    title = "Allow untrusted certs",
-                    description = "Allow self-signed certificates for this server.",
-                    checked = current.allowUntrusted,
-                    onCheckedChange = { current = current.copy(allowUntrusted = it) },
+                CertificatePinRow(
+                    hasPinnedCert = current.hasPinnedCert,
+                    error = certError,
+                    onImport = { importCertLauncher.launch(arrayOf("*/*")) },
+                    onRemove = { onRemoveCert(current.id) },
                 )
                 SwitchSetting(
                     title = "Use SSL (HTTPS)",
@@ -466,6 +509,38 @@ internal fun ServerFormSheet(
                 }
             },
         )
+    }
+}
+
+/**
+ * Replaces the old "Allow untrusted certs" toggle (a real accept-any-TLS-cert hole — see
+ * `core/network/TrustConfig.kt`). Self-signed Frigate deployments now go through an explicit
+ * per-server pinned PEM instead: the user exports their server's cert and imports it here: only
+ * that exact certificate is trusted, nothing else.
+ */
+@Composable
+private fun CertificatePinRow(
+    hasPinnedCert: Boolean,
+    error: String?,
+    onImport: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Pinned certificate", style = MaterialTheme.typography.bodyLarge)
+        Text(
+            if (hasPinnedCert) "A certificate is pinned for this server." else "No certificate pinned — needed only for self-signed servers.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onImport) { Text(if (hasPinnedCert) "Replace certificate" else "Import certificate") }
+            if (hasPinnedCert) {
+                TextButton(onClick = onRemove) { Text("Remove") }
+            }
+        }
+        if (error != null) {
+            Text(error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
     }
 }
 
