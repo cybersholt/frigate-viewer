@@ -9,6 +9,7 @@ import net.triton.frigateviewer.core.model.MotionActivity
 import net.triton.frigateviewer.core.model.RecordingGap
 import net.triton.frigateviewer.core.model.RecordingSegment
 import net.triton.frigateviewer.core.model.ReviewSegment
+import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.DELETE
@@ -16,6 +17,7 @@ import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Query
+import retrofit2.http.Streaming
 
 /**
  * Frigate REST surface (subset needed for v0.1).
@@ -112,14 +114,18 @@ interface FrigateApi {
     ): Response<List<MotionActivity>>
 
     /**
-     * Filenames of cached preview-frame thumbnails (single camera only — no comma-list
-     * support server-side) in `[startTs, endTs]`, sorted chronologically. This cache is
-     * short-lived (recent time only); returns an empty list outside the retention window.
+     * A single stitched low-res timelapse MP4 covering `[startTs, endTs]` for [camera] (single
+     * camera only). The server transparently handles both "recent" (raw cached preview frames,
+     * concatenated on the fly) and "historical" (pre-stitched `Previews` segments) time ranges —
+     * unlike the frames-list cache endpoint, this works for arbitrary history, not just the
+     * last few minutes. Client extracts a still frame at the scrubbed offset locally
+     * (`core/media/PreviewFrameExtractor.kt`) rather than re-requesting per touch-move.
      */
-    @GET("api/preview/{camera}/start/{startTs}/end/{endTs}/frames")
-    suspend fun previewFrames(
+    @Streaming
+    @GET("api/{camera}/start/{startTs}/end/{endTs}/preview.mp4")
+    suspend fun previewClip(
         @Path("camera") camera: String,
         @Path("startTs") startTs: Double,
         @Path("endTs") endTs: Double,
-    ): Response<List<String>>
+    ): Response<ResponseBody>
 }

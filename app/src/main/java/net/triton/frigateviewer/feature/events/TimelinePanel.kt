@@ -5,7 +5,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.LazyGridState
@@ -17,17 +16,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
-import coil3.ImageLoader
 import kotlinx.coroutines.launch
 import net.triton.frigateviewer.core.model.FrigateEvent
 import net.triton.frigateviewer.core.model.MotionActivity
@@ -42,7 +37,9 @@ private val TimelinePanelBackground = Color(0xFF121212)
  * sidebar-width strip. Mirrors Frigate's own `/review` page timeline column.
  *
  * Bidirectionally synced with [gridState]: scrolling the events grid moves the scrubber, and
- * tapping/dragging the strip scrolls the grid to the nearest event.
+ * tapping/dragging the strip scrolls the grid to the nearest event. The preview-frame thumbnail
+ * bubble is rendered by the caller (this strip is too narrow — 64dp — to host a 120dp-wide
+ * bubble itself without its size getting coerced down by the parent's width constraint).
  */
 @Composable
 fun TimelinePanel(
@@ -57,16 +54,13 @@ fun TimelinePanel(
     onZoomIn: () -> Unit,
     onZoomOut: () -> Unit,
     modifier: Modifier = Modifier,
-    previewFrameFileName: String? = null,
-    baseUrl: String? = null,
-    imageLoader: ImageLoader? = null,
     onTouchPreview: (Long?) -> Unit = {},
+    onTouchPositionChanged: (Float?) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val nowMs = remember { System.currentTimeMillis() }
     val rangeMs = (timeRangeHours * 3_600_000L).toLong()
     val startMs = nowMs - rangeMs
-    var previewFractionY by remember { mutableStateOf<Float?>(null) }
 
     // Grid scroll → scrubber: when the user scrolls the list, move the scrubber to match
     LaunchedEffect(gridState.firstVisibleItemIndex) {
@@ -92,6 +86,7 @@ fun TimelinePanel(
                 .fillMaxSize()
                 .pointerInput(startMs, nowMs, rangeMs) {
                     awaitPointerEventScope {
+                        var wasTouching = false
                         while (true) {
                             val ev = awaitPointerEvent()
                             val change = ev.changes.firstOrNull() ?: continue
@@ -100,8 +95,9 @@ fun TimelinePanel(
                                 val frac = (change.position.y / size.height).coerceIn(0f, 1f)
                                 val timeMs = nowMs - (frac * rangeMs).toLong()
                                 onScrub(timeMs)
-                                previewFractionY = frac
                                 onTouchPreview(timeMs)
+                                onTouchPositionChanged(frac)
+                                wasTouching = true
                                 val nearestIdx =
                                     events.indexOfFirst {
                                         (it.startTime * 1000.0).toLong() <= timeMs
@@ -109,9 +105,10 @@ fun TimelinePanel(
                                 if (nearestIdx >= 0) {
                                     scope.launch { gridState.scrollToItem(nearestIdx) }
                                 }
-                            } else if (previewFractionY != null) {
-                                previewFractionY = null
+                            } else if (wasTouching) {
+                                wasTouching = false
                                 onTouchPreview(null)
+                                onTouchPositionChanged(null)
                             }
                         }
                     }
@@ -150,23 +147,6 @@ fun TimelinePanel(
                 modifier = Modifier.size(28.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape),
             ) {
                 Icon(Icons.Filled.ZoomOut, contentDescription = "Zoom out", tint = Color.White, modifier = Modifier.size(16.dp))
-            }
-        }
-
-        // ── Preview-frame thumbnail bubble, floats left of this narrow strip while touching ──
-        previewFractionY?.let { frac ->
-            if (imageLoader != null) {
-                val bubbleWidth = 120.dp
-                val bubbleHeight = bubbleWidth * 9f / 16f
-                val offsetY = (maxHeight * frac - bubbleHeight / 2).coerceIn(0.dp, maxHeight - bubbleHeight)
-                PreviewThumbnailBubble(
-                    fileName = previewFrameFileName,
-                    baseUrl = baseUrl,
-                    imageLoader = imageLoader,
-                    offsetY = offsetY,
-                    bubbleWidth = bubbleWidth,
-                    modifier = Modifier.align(Alignment.TopStart).offset(x = -(bubbleWidth + 8.dp)),
-                )
             }
         }
     }

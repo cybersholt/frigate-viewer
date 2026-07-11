@@ -17,17 +17,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
-import coil3.ImageLoader
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -66,10 +63,8 @@ fun HorizontalTimeline(
     onPan: (Long) -> Unit,
     onZoomChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
-    previewFrameFileName: String? = null,
-    baseUrl: String? = null,
-    imageLoader: ImageLoader? = null,
     onTouchPreview: (Long?) -> Unit = {},
+    onTouchPositionChanged: (Float?) -> Unit = {},
 ) {
     val rangeMs = (timeRangeHours * 3_600_000L).toLong()
     val oldestMs = viewEndMs - rangeMs
@@ -80,7 +75,7 @@ fun HorizontalTimeline(
     val currentOnScrub by rememberUpdatedState(onScrub)
     val currentOnPan by rememberUpdatedState(onPan)
     val currentOnTouchPreview by rememberUpdatedState(onTouchPreview)
-    var previewFractionY by remember { mutableStateOf<Float?>(null) }
+    val currentOnTouchPositionChanged by rememberUpdatedState(onTouchPositionChanged)
 
     val labelPaint =
         remember {
@@ -105,8 +100,8 @@ fun HorizontalTimeline(
                         val down = awaitFirstDown(requireUnconsumed = false)
                         var isPanning = false
                         var lastY = down.position.y
-                        previewFractionY = down.position.y / size.height
                         currentOnTouchPreview(timeAtFraction(down.position.y / size.height))
+                        currentOnTouchPositionChanged(down.position.y / size.height)
                         while (true) {
                             val ev = awaitPointerEvent()
                             val change = ev.changes.firstOrNull { it.id == down.id } ?: break
@@ -132,12 +127,12 @@ fun HorizontalTimeline(
                                 // (toward now), drag up reveals further into the past.
                                 currentOnPan((dy * msPerPx).toLong())
                             }
-                            previewFractionY = change.position.y / size.height
                             currentOnTouchPreview(timeAtFraction(change.position.y / size.height))
+                            currentOnTouchPositionChanged(change.position.y / size.height)
                             lastY = change.position.y
                         }
-                        previewFractionY = null
                         currentOnTouchPreview(null)
+                        currentOnTouchPositionChanged(null)
                     }
                 },
         ) {
@@ -175,21 +170,6 @@ fun HorizontalTimeline(
                 modifier = Modifier.size(40.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape),
             ) {
                 Icon(Icons.Filled.ZoomOut, "Zoom out", tint = Color.White, modifier = Modifier.size(20.dp))
-            }
-        }
-
-        // ── Preview-frame thumbnail bubble, follows the finger while touching ──
-        previewFractionY?.let { frac ->
-            if (imageLoader != null) {
-                val bubbleHeight = 120.dp * 9f / 16f
-                val offsetY = (maxHeight * frac - bubbleHeight / 2).coerceIn(0.dp, maxHeight - bubbleHeight)
-                PreviewThumbnailBubble(
-                    fileName = previewFrameFileName,
-                    baseUrl = baseUrl,
-                    imageLoader = imageLoader,
-                    offsetY = offsetY,
-                    modifier = Modifier.align(Alignment.TopStart).padding(start = 90.dp),
-                )
             }
         }
     }

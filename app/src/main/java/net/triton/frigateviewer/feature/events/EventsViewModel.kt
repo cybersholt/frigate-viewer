@@ -1,8 +1,10 @@
 package net.triton.frigateviewer.feature.events
 
+import android.graphics.Bitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,12 +17,11 @@ import net.triton.frigateviewer.core.data.ServerRepository
 import net.triton.frigateviewer.core.data.UserSettingsRepository
 import net.triton.frigateviewer.core.db.CachedEvent
 import net.triton.frigateviewer.core.db.EventDao
+import net.triton.frigateviewer.core.media.extractFrame
 import net.triton.frigateviewer.core.model.FrigateEvent
 import net.triton.frigateviewer.core.model.MotionActivity
-import net.triton.frigateviewer.core.model.PreviewFrame
 import net.triton.frigateviewer.core.model.RecordingGap
 import net.triton.frigateviewer.core.model.ReviewSegment
-import net.triton.frigateviewer.core.model.parsePreviewFrames
 import net.triton.frigateviewer.core.network.ApiResult
 import net.triton.frigateviewer.core.network.WifiMonitor
 import javax.inject.Inject
@@ -53,13 +54,10 @@ data class EventsUiState(
     val recordingGaps: List<RecordingGap> = emptyList(),
     /** Fine-grained motion waveform (`api/review/activity/motion`) backing bar intensity. */
     val motionActivity: List<MotionActivity> = emptyList(),
-    /** Cached preview-frame thumbnails for whichever camera [previewFramesCamera] resolved to. */
-    val previewFrames: List<PreviewFrame> = emptyList(),
-    val previewFramesCamera: String? = null,
-    val previewFramesWindowStartMs: Long = 0L,
-    val previewFramesWindowEndMs: Long = 0L,
     /** Time under the finger while actively touching the timeline strip; null when not touching. */
     val scrubPreviewTimeMs: Long? = null,
+    /** Still frame extracted locally from the cached preview clip at [scrubPreviewTimeMs]. */
+    val scrubPreviewBitmap: Bitmap? = null,
 )
 
 @HiltViewModel
@@ -292,13 +290,19 @@ class EventsViewModel
                 }
         }
 
-        private var previewFramesJob: Job? = null
+        private var previewClipJob: Job? = null
+        private var frameExtractionJob: Job? = null
+        private var clearPreviewBitmapJob: Job? = null
+        private var previewClipBytes: ByteArray? = null
+        private var previewClipCamera: String? = null
+        private var previewClipWindowStartMs: Long = 0L
+        private var previewClipWindowEndMs: Long = 0L
 
         /**
          * Resolves which camera was likely active at [timeMs], using whichever activity data
          * (motion, then review) has a point closest to it — the strip mixes multiple cameras, so
          * unlike [net.triton.frigateviewer.feature.events.EventDetail] there's no single camera
-         * to fetch preview frames for without this lookup.
+         * to fetch a preview clip for without this lookup.
          */
         private fun resolveCameraNear(timeMs: Long): String? {
             val s = _state.value
@@ -319,37 +323,67 @@ class EventsViewModel
             return null
         }
 
-        /** Called continuously while a finger is on the timeline strip; see [EventDetailViewModel.updateScrubPreview]. */
+        /**
+         * Called continuously while a finger is on the timeline strip; see
+         * [EventDetailViewModel.updateScrubPreview] for the single-camera equivalent. Fetches a
+         * ±[PREVIEW_FRAME_WINDOW_HALF_MS] preview clip once per camera+window, then extracts a
+         * fresh still frame locally (no network) for every touch-move within that same window.
+         */
         fun updateScrubPreview(timeMs: Long?) {
             _state.value = _state.value.copy(scrubPreviewTimeMs = timeMs)
             if (timeMs == null) return
+            clearPreviewBitmapJob?.cancel()
             val camera = resolveCameraNear(timeMs) ?: return
-            val s = _state.value
-            if (camera == s.previewFramesCamera && timeMs in s.previewFramesWindowStartMs..s.previewFramesWindowEndMs) {
+            val cachedBytes = previewClipBytes
+            if (cachedBytes != null &&
+                camera == previewClipCamera &&
+                timeMs in previewClipWindowStartMs..previewClipWindowEndMs
+            ) {
+                extractAndPublishFrame(cachedBytes, timeMs)
                 return
             }
-            previewFramesJob?.cancel()
-            previewFramesJob =
+            previewClipJob?.cancel()
+            previewClipJob =
                 viewModelScope.launch {
                     delay(150)
                     val windowStart = timeMs - PREVIEW_FRAME_WINDOW_HALF_MS
                     val windowEnd = timeMs + PREVIEW_FRAME_WINDOW_HALF_MS
-                    when (
-                        val r =
-                            repo.previewFrames(camera, windowStart / 1000.0, windowEnd / 1000.0)
-                    ) {
+                    when (val r = repo.previewClip(camera, windowStart / 1000.0, windowEnd / 1000.0)) {
                         is ApiResult.Success -> {
-                            _state.value =
-                                _state.value.copy(
-                                    previewFrames = parsePreviewFrames(r.data, camera),
-                                    previewFramesCamera = camera,
-                                    previewFramesWindowStartMs = windowStart,
-                                    previewFramesWindowEndMs = windowEnd,
-                                )
+                            previewClipBytes = r.data
+                            previewClipCamera = camera
+                            previewClipWindowStartMs = windowStart
+                            previewClipWindowEndMs = windowEnd
+                            extractAndPublishFrame(r.data, timeMs)
                         }
 
-                        else -> {}
+                        else -> {
+                            previewClipBytes = null
+                            _state.value = _state.value.copy(scrubPreviewBitmap = null)
+                        }
                     }
+                }
+        }
+
+        private fun extractAndPublishFrame(
+            clipBytes: ByteArray,
+            timeMs: Long,
+        ) {
+            frameExtractionJob?.cancel()
+            frameExtractionJob =
+                viewModelScope.launch(Dispatchers.Default) {
+                    val offsetUs = (timeMs - previewClipWindowStartMs) * 1000
+                    val bitmap = extractFrame(clipBytes, offsetUs)
+                    _state.value = _state.value.copy(scrubPreviewBitmap = bitmap)
+                    // Grace period: touch usually releases well before this fetch+extract
+                    // pipeline finishes, so keep the bubble up for a bit instead of it never
+                    // getting a chance to show. A fresh touch cancels this (see updateScrubPreview).
+                    clearPreviewBitmapJob?.cancel()
+                    clearPreviewBitmapJob =
+                        viewModelScope.launch {
+                            delay(4000)
+                            _state.value = _state.value.copy(scrubPreviewBitmap = null)
+                        }
                 }
         }
 

@@ -12,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -104,6 +106,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -116,20 +119,15 @@ import net.triton.frigateviewer.LocalFullScreenMode
 import net.triton.frigateviewer.core.data.FrigateRepository
 import net.triton.frigateviewer.core.data.ServerRepository
 import net.triton.frigateviewer.core.image.FrigateImage
+import net.triton.frigateviewer.core.media.extractFrame
 import net.triton.frigateviewer.core.model.FrigateEvent
-import net.triton.frigateviewer.core.model.PreviewFrame
-import net.triton.frigateviewer.core.model.nearestTo
-import net.triton.frigateviewer.core.model.parsePreviewFrames
 import net.triton.frigateviewer.core.network.ApiResult
 import net.triton.frigateviewer.core.network.FrigateClient
 import java.util.Locale
 import javax.inject.Inject
 
-/** Half-width of the preview-frame fetch window on either side of a scrubbed time. */
+/** Half-width of the preview-clip fetch window on either side of a scrubbed time. */
 internal const val PREVIEW_FRAME_WINDOW_HALF_MS = 90_000L
-
-/** A cached frame further than this from the scrubbed time isn't shown — too misleading. */
-internal const val PREVIEW_FRAME_MAX_MATCH_MS = 15_000L
 
 enum class EventDetailView { TIMELINE, EVENTS, DETAIL }
 
@@ -166,12 +164,10 @@ data class EventDetailUiState(
     val recordingGaps: List<net.triton.frigateviewer.core.model.RecordingGap> = emptyList(),
     /** Fine-grained motion waveform (`api/review/activity/motion`) backing bar intensity. */
     val motionActivity: List<net.triton.frigateviewer.core.model.MotionActivity> = emptyList(),
-    /** Cached preview-frame thumbnails covering [previewFramesWindowStartMs, previewFramesWindowEndMs]. */
-    val previewFrames: List<PreviewFrame> = emptyList(),
-    val previewFramesWindowStartMs: Long = 0L,
-    val previewFramesWindowEndMs: Long = 0L,
     /** Time under the finger while actively touching the timeline; null when not touching. */
     val scrubPreviewTimeMs: Long? = null,
+    /** Still frame extracted locally from the cached preview clip at [scrubPreviewTimeMs]. */
+    val scrubPreviewBitmap: android.graphics.Bitmap? = null,
     /** [start, end) of the currently loaded hour-chunk VOD manifest (epoch seconds, UTC-aligned). */
     val recordingChunkAfter: Long = 0L,
     val recordingChunkBefore: Long = 0L,
@@ -332,41 +328,70 @@ class EventDetailViewModel
                 }
         }
 
-        private var previewFramesJob: Job? = null
+        private var previewClipJob: Job? = null
+        private var frameExtractionJob: Job? = null
+        private var clearPreviewBitmapJob: Job? = null
+        private var previewClipBytes: ByteArray? = null
+        private var previewClipWindowStartMs: Long = 0L
+        private var previewClipWindowEndMs: Long = 0L
 
         /**
          * Called continuously while a finger is on the timeline. [timeMs] is the time under the
-         * touch point, or null when the touch ends. Fetches a fresh window of cached preview-frame
-         * filenames only when [timeMs] falls outside the currently cached window — the cache is
-         * short-lived server-side (recent time only), so most scrub gestures reuse one fetch.
+         * touch point, or null when the touch ends. Fetches a fresh ±[PREVIEW_FRAME_WINDOW_HALF_MS]
+         * preview clip only when [timeMs] falls outside the currently cached window, then extracts
+         * a still frame locally (no network) for every touch-move within that window.
          */
         fun updateScrubPreview(timeMs: Long?) {
             _state.value = _state.value.copy(scrubPreviewTimeMs = timeMs)
             if (timeMs == null) return
-            val s = _state.value
-            val camera = s.event?.camera ?: return
-            if (timeMs in s.previewFramesWindowStartMs..s.previewFramesWindowEndMs) return
-            previewFramesJob?.cancel()
-            previewFramesJob =
+            clearPreviewBitmapJob?.cancel()
+            val camera = _state.value.event?.camera ?: return
+            val cachedBytes = previewClipBytes
+            if (cachedBytes != null && timeMs in previewClipWindowStartMs..previewClipWindowEndMs) {
+                extractAndPublishFrame(cachedBytes, timeMs)
+                return
+            }
+            previewClipJob?.cancel()
+            previewClipJob =
                 viewModelScope.launch {
                     delay(150)
                     val windowStart = timeMs - PREVIEW_FRAME_WINDOW_HALF_MS
                     val windowEnd = timeMs + PREVIEW_FRAME_WINDOW_HALF_MS
-                    when (
-                        val r =
-                            repo.previewFrames(camera, windowStart / 1000.0, windowEnd / 1000.0)
-                    ) {
+                    when (val r = repo.previewClip(camera, windowStart / 1000.0, windowEnd / 1000.0)) {
                         is ApiResult.Success -> {
-                            _state.value =
-                                _state.value.copy(
-                                    previewFrames = parsePreviewFrames(r.data, camera),
-                                    previewFramesWindowStartMs = windowStart,
-                                    previewFramesWindowEndMs = windowEnd,
-                                )
+                            previewClipBytes = r.data
+                            previewClipWindowStartMs = windowStart
+                            previewClipWindowEndMs = windowEnd
+                            extractAndPublishFrame(r.data, timeMs)
                         }
 
-                        else -> {}
+                        else -> {
+                            previewClipBytes = null
+                            _state.value = _state.value.copy(scrubPreviewBitmap = null)
+                        }
                     }
+                }
+        }
+
+        private fun extractAndPublishFrame(
+            clipBytes: ByteArray,
+            timeMs: Long,
+        ) {
+            frameExtractionJob?.cancel()
+            frameExtractionJob =
+                viewModelScope.launch(Dispatchers.Default) {
+                    val offsetUs = (timeMs - previewClipWindowStartMs) * 1000
+                    val bitmap = extractFrame(clipBytes, offsetUs)
+                    _state.value = _state.value.copy(scrubPreviewBitmap = bitmap)
+                    // Grace period: touch usually releases well before this fetch+extract
+                    // pipeline finishes, so keep the bubble up for a bit instead of it never
+                    // getting a chance to show. A fresh touch cancels this (see updateScrubPreview).
+                    clearPreviewBitmapJob?.cancel()
+                    clearPreviewBitmapJob =
+                        viewModelScope.launch {
+                            delay(4000)
+                            _state.value = _state.value.copy(scrubPreviewBitmap = null)
+                        }
                 }
         }
 
@@ -471,6 +496,7 @@ fun EventDetailScreen(
     val frigateClient = entryPoint.frigateClient()
     val serverRepo = entryPoint.serverRepository()
     val fullScreen = LocalFullScreenMode.current
+    var previewYFraction by remember { mutableStateOf<Float?>(null) }
 
     val okHttpClient by produceState<okhttp3.OkHttpClient?>(initialValue = null) {
         val server = serverRepo.activeServer()
@@ -730,46 +756,59 @@ fun EventDetailScreen(
 
                 // ── View content ──
                 if (!fullScreen.value) {
-                    when (state.selectedView) {
-                        EventDetailView.TIMELINE -> {
-                            HorizontalTimeline(
-                                reviewSegments = state.reviewSegments,
-                                recordingGaps = state.recordingGaps,
-                                motionActivity = state.motionActivity,
-                                scrubberTimeMs = state.scrubberTimeMs,
-                                timeRangeHours = state.timeRangeHours,
-                                viewEndMs = state.viewEndMs,
-                                onScrub = vm::setScrubberTime,
-                                onPan = vm::panView,
-                                onZoomChange = vm::zoomTimeline,
-                                modifier = Modifier.weight(1f).fillMaxWidth(),
-                                previewFrameFileName =
-                                    state.scrubPreviewTimeMs?.let { t ->
-                                        state.previewFrames.nearestTo(t, PREVIEW_FRAME_MAX_MATCH_MS)?.fileName
-                                    },
-                                baseUrl = state.baseUrl,
-                                imageLoader = imageLoader,
-                                onTouchPreview = vm::updateScrubPreview,
-                            )
+                    BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                        when (state.selectedView) {
+                            EventDetailView.TIMELINE -> {
+                                HorizontalTimeline(
+                                    reviewSegments = state.reviewSegments,
+                                    recordingGaps = state.recordingGaps,
+                                    motionActivity = state.motionActivity,
+                                    scrubberTimeMs = state.scrubberTimeMs,
+                                    timeRangeHours = state.timeRangeHours,
+                                    viewEndMs = state.viewEndMs,
+                                    onScrub = vm::setScrubberTime,
+                                    onPan = vm::panView,
+                                    onZoomChange = vm::zoomTimeline,
+                                    modifier = Modifier.fillMaxSize(),
+                                    onTouchPreview = vm::updateScrubPreview,
+                                    onTouchPositionChanged = { previewYFraction = it },
+                                )
+                            }
+
+                            EventDetailView.EVENTS -> {
+                                CameraEventsList(
+                                    events = state.cameraEvents,
+                                    loading = state.loadingCameraEvents,
+                                    currentEventId = ev.id,
+                                    baseUrl = state.baseUrl,
+                                    imageLoader = imageLoader,
+                                    onEventClick = onNavigateToEvent,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+
+                            EventDetailView.DETAIL -> {
+                                EventDetailTimeline(
+                                    events = state.cameraEvents,
+                                    currentEventId = ev.id,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
                         }
 
-                        EventDetailView.EVENTS -> {
-                            CameraEventsList(
-                                events = state.cameraEvents,
-                                loading = state.loadingCameraEvents,
-                                currentEventId = ev.id,
-                                baseUrl = state.baseUrl,
-                                imageLoader = imageLoader,
-                                onEventClick = onNavigateToEvent,
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-
-                        EventDetailView.DETAIL -> {
-                            EventDetailTimeline(
-                                events = state.cameraEvents,
-                                currentEventId = ev.id,
-                                modifier = Modifier.weight(1f),
+                        // ── Preview-frame thumbnail bubble while touching the timeline.
+                        // Rendered at this outer level (full width) rather than inside
+                        // HorizontalTimeline itself, which lets it follow the touch Y
+                        // without any parent-width-constraint risk. ──
+                        if (state.selectedView == EventDetailView.TIMELINE && state.scrubPreviewBitmap != null) {
+                            val bubbleHeight = 120.dp * 9f / 16f
+                            val offsetY =
+                                previewYFraction?.let { frac ->
+                                    (maxHeight * frac - bubbleHeight / 2).coerceIn(0.dp, maxHeight - bubbleHeight)
+                                } ?: (maxHeight / 2 - bubbleHeight / 2)
+                            PreviewThumbnailBubble(
+                                bitmap = state.scrubPreviewBitmap,
+                                modifier = Modifier.align(Alignment.TopCenter).offset(y = offsetY),
                             )
                         }
                     }

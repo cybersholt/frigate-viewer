@@ -151,15 +151,45 @@ class FrigateRepository
             return safeApiCall { api.motionActivity(cameras = cameras, after = after, before = before, scale = scale) }
         }
 
-        /** Cached preview-frame filenames for [camera] in `[startTs, endTs]`. Single camera only. */
-        suspend fun previewFrames(
+        /**
+         * A stitched low-res timelapse MP4 covering `[startTs, endTs]` for [camera] as raw bytes
+         * (single camera only). Works for both recent and historical time ranges — see
+         * `FrigateApi.previewClip`'s doc comment for why this replaced the frames-list cache.
+         */
+        suspend fun previewClip(
             camera: String,
             startTs: Double,
             endTs: Double,
-        ): ApiResult<List<String>> {
-            val api = api() ?: return ApiResult.NetworkError(IllegalStateException("No active server"))
-            return safeApiCall { api.previewFrames(camera = camera, startTs = startTs, endTs = endTs) }
-        }
+        ): ApiResult<ByteArray> =
+            when (val api = api()) {
+                null -> {
+                    ApiResult.NetworkError(IllegalStateException("No active server"))
+                }
+
+                else -> {
+                    when (val result = safeApiCall { api.previewClip(camera = camera, startTs = startTs, endTs = endTs) }) {
+                        is ApiResult.Success -> {
+                            runCatching { result.data.bytes() }
+                                .fold(
+                                    onSuccess = { ApiResult.Success(it) },
+                                    onFailure = { ApiResult.NetworkError(it) },
+                                )
+                        }
+
+                        is ApiResult.HttpError -> {
+                            result
+                        }
+
+                        is ApiResult.NetworkError -> {
+                            result
+                        }
+
+                        is ApiResult.ParseError -> {
+                            result
+                        }
+                    }
+                }
+            }
 
         suspend fun go2rtcStreams(forceRefresh: Boolean = false): ApiResult<Map<String, kotlinx.serialization.json.JsonElement>> {
             if (!forceRefresh && cachedStreams != null) return ApiResult.Success(cachedStreams!!)

@@ -3,6 +3,7 @@ package net.triton.frigateviewer.feature.events
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -61,7 +63,6 @@ import kotlinx.datetime.minus
 import kotlinx.datetime.toLocalDateTime
 import net.triton.frigateviewer.core.image.FrigateImage
 import net.triton.frigateviewer.core.model.FrigateEvent
-import net.triton.frigateviewer.core.model.nearestTo
 import net.triton.frigateviewer.ui.components.CameraPill
 import net.triton.frigateviewer.ui.components.SegmentedEventPill
 import java.util.Locale
@@ -83,6 +84,7 @@ fun EventsScreen(
         }
     var showFilter by remember { mutableStateOf(false) }
     val gridState = rememberLazyGridState()
+    var previewYFraction by remember { mutableStateOf<Float?>(null) }
 
     LaunchedEffect(initialCamera, initialLabel, initialZone) {
         vm.initFilters(initialCamera, initialLabel, initialZone)
@@ -113,72 +115,85 @@ fun EventsScreen(
             }
         }
 
-        Row(Modifier.weight(1f).fillMaxWidth()) {
-            Box(Modifier.weight(1f).fillMaxHeight()) {
-                when {
-                    state.loading && state.events.isEmpty() -> {
-                        CircularProgressIndicator(Modifier.align(Alignment.Center))
-                    }
-
-                    state.error != null && state.events.isEmpty() -> {
-                        Column(
-                            Modifier.align(Alignment.Center).padding(24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center,
-                        ) {
-                            Text("Couldn't load events", style = MaterialTheme.typography.titleLarge)
-                            Text(state.error!!, style = MaterialTheme.typography.bodyMedium)
-                            Button(onClick = { vm.refresh() }, modifier = Modifier.padding(top = 16.dp)) { Text("Retry") }
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            Row(Modifier.fillMaxSize()) {
+                Box(Modifier.weight(1f).fillMaxHeight()) {
+                    when {
+                        state.loading && state.events.isEmpty() -> {
+                            CircularProgressIndicator(Modifier.align(Alignment.Center))
                         }
-                    }
 
-                    state.events.isEmpty() -> {
-                        Text("No events", Modifier.align(Alignment.Center))
-                    }
+                        state.error != null && state.events.isEmpty() -> {
+                            Column(
+                                Modifier.align(Alignment.Center).padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center,
+                            ) {
+                                Text("Couldn't load events", style = MaterialTheme.typography.titleLarge)
+                                Text(state.error!!, style = MaterialTheme.typography.bodyMedium)
+                                Button(onClick = { vm.refresh() }, modifier = Modifier.padding(top = 16.dp)) { Text("Retry") }
+                            }
+                        }
 
-                    else -> {
-                        PullToRefreshBox(
-                            isRefreshing = state.loading,
-                            onRefresh = { vm.refresh() },
-                            modifier = Modifier.fillMaxSize(),
-                        ) {
-                            LazyVerticalGrid(
-                                columns = GridCells.Fixed(state.eventGridColumns),
-                                state = gridState,
-                                contentPadding = PaddingValues(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        state.events.isEmpty() -> {
+                            Text("No events", Modifier.align(Alignment.Center))
+                        }
+
+                        else -> {
+                            PullToRefreshBox(
+                                isRefreshing = state.loading,
+                                onRefresh = { vm.refresh() },
                                 modifier = Modifier.fillMaxSize(),
                             ) {
-                                items(state.events, key = { it.id }) { ev ->
-                                    EventCard(ev, state.baseUrl, imageLoader, state.dateFormat) { onEventClick(ev.id) }
+                                LazyVerticalGrid(
+                                    columns = GridCells.Fixed(state.eventGridColumns),
+                                    state = gridState,
+                                    contentPadding = PaddingValues(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.fillMaxSize(),
+                                ) {
+                                    items(state.events, key = { it.id }) { ev ->
+                                        EventCard(ev, state.baseUrl, imageLoader, state.dateFormat) { onEventClick(ev.id) }
+                                    }
                                 }
                             }
                         }
                     }
                 }
+
+                TimelinePanel(
+                    events = state.events,
+                    reviewSegments = state.reviewSegments,
+                    recordingGaps = state.recordingGaps,
+                    motionActivity = state.motionActivity,
+                    scrubberTimeMs = state.scrubberTimeMs,
+                    timeRangeHours = state.timeRangeHours,
+                    gridState = gridState,
+                    onScrub = vm::setScrubberTime,
+                    onZoomIn = { vm.zoomTimeline(0.5f) },
+                    onZoomOut = { vm.zoomTimeline(2f) },
+                    modifier = Modifier.width(64.dp).fillMaxHeight(),
+                    onTouchPreview = vm::updateScrubPreview,
+                    onTouchPositionChanged = { previewYFraction = it },
+                )
             }
 
-            TimelinePanel(
-                events = state.events,
-                reviewSegments = state.reviewSegments,
-                recordingGaps = state.recordingGaps,
-                motionActivity = state.motionActivity,
-                scrubberTimeMs = state.scrubberTimeMs,
-                timeRangeHours = state.timeRangeHours,
-                gridState = gridState,
-                onScrub = vm::setScrubberTime,
-                onZoomIn = { vm.zoomTimeline(0.5f) },
-                onZoomOut = { vm.zoomTimeline(2f) },
-                modifier = Modifier.width(64.dp).fillMaxHeight(),
-                previewFrameFileName =
-                    state.scrubPreviewTimeMs?.let { t ->
-                        state.previewFrames.nearestTo(t, PREVIEW_FRAME_MAX_MATCH_MS)?.fileName
-                    },
-                baseUrl = state.baseUrl,
-                imageLoader = imageLoader,
-                onTouchPreview = vm::updateScrubPreview,
-            )
+            // ── Preview-frame thumbnail bubble while touching the timeline strip. Rendered at
+            // this outer level (full row width) rather than inside TimelinePanel itself — that
+            // strip is only 64dp wide, which coerces a 120dp-wide bubble down to nothing.
+            // Horizontally centered across the whole row; vertically follows the touch. ──
+            if (state.scrubPreviewBitmap != null) {
+                val bubbleHeight = 120.dp * 9f / 16f
+                val offsetY =
+                    previewYFraction?.let { frac ->
+                        (maxHeight * frac - bubbleHeight / 2).coerceIn(0.dp, maxHeight - bubbleHeight)
+                    } ?: (maxHeight / 2 - bubbleHeight / 2)
+                PreviewThumbnailBubble(
+                    bitmap = state.scrubPreviewBitmap,
+                    modifier = Modifier.align(Alignment.TopCenter).offset(y = offsetY),
+                )
+            }
         }
     }
 
