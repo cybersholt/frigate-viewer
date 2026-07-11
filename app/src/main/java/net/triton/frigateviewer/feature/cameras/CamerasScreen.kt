@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,7 +32,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -247,6 +250,7 @@ fun CamerasScreen(
                             onSubStreamFallback = { vm.markSubStreamFallback(focused!!) },
                             allCameraNames = state.displayedCameras,
                             onSwitchCamera = { name -> focused = name },
+                            recordingEnabled = state.cameras[focused!!]?.record?.enabled == true,
                             onClose = { focused = null },
                         )
                     } else {
@@ -325,6 +329,7 @@ fun CamerasScreen(
                                             onOpenCamera = { focused = name },
                                             onFetchRecentEvent = { vm.fetchRecentEvent(name) },
                                             onNavigateToEvents = onNavigateToEvents,
+                                            recordingEnabled = state.cameras[name]?.record?.enabled == true,
                                         )
                                     }
                                 }
@@ -376,6 +381,7 @@ private fun SwipeableCameraTile(
     onOpenCamera: () -> Unit,
     onFetchRecentEvent: () -> Unit,
     onNavigateToEvents: (camera: String?, label: String?, zone: String?) -> Unit,
+    recordingEnabled: Boolean = false,
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -648,6 +654,7 @@ private fun SwipeableCameraTile(
                 showLastImageWhileLoading = showLastImageWhileLoading,
                 refreshTimestamp = refreshTimestamp,
                 onSubStreamFallback = onSubStreamFallback,
+                recordingEnabled = recordingEnabled,
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -698,6 +705,7 @@ private fun FocusedTile(
     onSubStreamFallback: () -> Unit,
     allCameraNames: List<String> = emptyList(),
     onSwitchCamera: (String) -> Unit = {},
+    recordingEnabled: Boolean = false,
     onClose: () -> Unit,
 ) {
     val baseUrl = effectiveBaseUrl ?: server?.baseUrl()
@@ -856,6 +864,7 @@ private fun FocusedTile(
                     isStreamOptionOverridden = isStreamOptionOverridden,
                     globalDefaultStreamOption = globalDefaultStreamOption,
                     onSetStreamOverride = onSetStreamOverride,
+                    recordingEnabled = recordingEnabled,
                 )
             }
         }
@@ -902,16 +911,10 @@ private fun FullscreenChrome(
     isStreamOptionOverridden: Boolean,
     globalDefaultStreamOption: String,
     onSetStreamOverride: (String?) -> Unit,
+    recordingEnabled: Boolean = false,
 ) {
     if (!visible) return
     var showOverflow by remember { mutableStateOf(false) }
-    val infiniteTransition = rememberInfiniteTransition(label = "liveDot")
-    val dotAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.4f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
-        label = "liveDotAlpha",
-    )
 
     Box(Modifier.fillMaxSize()) {
         Row(
@@ -919,6 +922,11 @@ private fun FullscreenChrome(
                 .align(Alignment.TopStart)
                 .fillMaxWidth()
                 .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent)))
+                // System bars are hidden in fullscreen but can reappear as a transient overlay on
+                // a swipe-down (BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE in WebRtcLiveTile/RtspLiveTile)
+                // — without this inset the status bar's own clock/battery/icons render on top of
+                // this row, illegible where they overlap (reported + reproduced via screenshot).
+                .windowInsetsPadding(WindowInsets.statusBars)
                 .padding(end = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -936,9 +944,12 @@ private fun FullscreenChrome(
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier.testTag("fullscreen_live_indicator"),
+                    // StreamTypeBadge below has an 8dp horizontal inset baked into its pill
+                    // background — match it here so "LIVE" and the protocol label's text share
+                    // the same right edge instead of LIVE overhanging past the pill's text.
+                    modifier = Modifier.padding(end = 8.dp).testTag("fullscreen_live_indicator"),
                 ) {
-                    Canvas(Modifier.size(8.dp)) { drawCircle(Color(0xFF4CAF50).copy(alpha = dotAlpha)) }
+                    LiveIndicatorDot(recordingEnabled)
                     Text("LIVE", style = MaterialTheme.typography.labelSmall, color = Color.White)
                 }
                 // Same tappable protocol pill grid tiles show (StreamTypeBadge) — kept here so
@@ -1022,6 +1033,7 @@ private fun StreamContent(
     rtspUrl: String?,
     currentSsid: String?,
     baseUrl: String?,
+    recordingEnabled: Boolean = false,
     snapshotPath: String,
     liveCameraName: String,
     cameraName: String,
@@ -1143,6 +1155,7 @@ private fun StreamContent(
                 selectedMode = liveStreamOption,
                 isOverridden = isStreamOptionOverridden,
                 globalDefaultStreamOption = globalDefaultStreamOption,
+                recordingEnabled = recordingEnabled,
                 onSetStreamOverride = onSetStreamOverride,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -1150,9 +1163,28 @@ private fun StreamContent(
     }
 }
 
+/** Green pulsing dot normally; slow red blink when the camera has Frigate recording enabled. */
+@Composable
+private fun LiveIndicatorDot(
+    recordingEnabled: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "liveDot")
+    val alpha by infiniteTransition.animateFloat(
+        initialValue = if (recordingEnabled) 0.15f else 0.4f,
+        targetValue = 1f,
+        animationSpec =
+            infiniteRepeatable(tween(if (recordingEnabled) 1400 else 900), RepeatMode.Reverse),
+        label = "liveDotAlpha",
+    )
+    val color = if (recordingEnabled) Color(0xFFE53935) else Color(0xFF4CAF50)
+    Canvas(modifier.size(8.dp)) { drawCircle(color.copy(alpha = alpha)) }
+}
+
 @Composable
 private fun StreamStatusBadge(
     state: CameraStreamState,
+    recordingEnabled: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val white70 = Color.White.copy(alpha = 0.70f)
@@ -1199,7 +1231,7 @@ private fun StreamStatusBadge(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Canvas(modifier = Modifier.size(8.dp)) { drawCircle(Color(0xFF4CAF50)) }
+                LiveIndicatorDot(recordingEnabled)
                 Text("Live", style = MaterialTheme.typography.labelSmall, color = Color.White)
             }
         }
@@ -1217,6 +1249,7 @@ private fun StreamTileBadgeLayer(
     isOverridden: Boolean,
     globalDefaultStreamOption: String,
     onSetStreamOverride: (String?) -> Unit,
+    recordingEnabled: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier) {
@@ -1234,7 +1267,7 @@ private fun StreamTileBadgeLayer(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 CameraPill(camera = cameraName)
-                StreamStatusBadge(state = streamState)
+                StreamStatusBadge(state = streamState, recordingEnabled = recordingEnabled)
             }
             StreamTypeBadge(
                 label = streamTypeLabel,

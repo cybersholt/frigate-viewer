@@ -66,7 +66,7 @@ fun AppearanceSettingsScreen(
         SettingRow(
             title = "Palette style",
             icon = Icons.Filled.Palette,
-            value = state.paletteStyle,
+            value = paletteStyleLabel(state.paletteStyle),
             onClick = { showPaletteSheet = true },
         )
 

@@ -11,7 +11,17 @@ emulator-only). Investigated via 4 parallel `Explore` agents; no fixes applied y
 
 ---
 
-## 1. [Critical] Server Edit → Test deletes the server's real saved credentials
+## 1. [Critical] Server Edit → Test deletes the server's real saved credentials — FIXED, verified
+
+**Fix**: `testDraftConnection()` now always mints a fresh throwaway UUID for the credential-store/`FrigateClient`
+cache key instead of reusing `form.id` (which is the real server's id when editing). When editing with the
+password field left blank, it clones the already-saved secret under the throwaway id (read-only against the real
+id) so the test is still authenticated — matching what Save already does when the field is left blank. The
+`finally` cleanup now only deletes the throwaway id, never the real one.
+
+**Verified**: reproduced the exact original repro on the emulator — Edit → Test ("Server reachable", 878ms) →
+Cancel → Edit again → Test ("Server reachable", 826ms, not a 401) → confirmed Cameras grid still loads all 4
+channels live afterward, proving the real server's session was never touched.
 
 **Not previously known** — new bug, introduced by the 2026-07-10 "server-test-on-draft" session (see
 `project_state.md` line ~82), which correctly built the *Add*-server draft-test flow but has a latent bug in

@@ -76,6 +76,10 @@ private val paletteStyleInfo: Map<PaletteStyle, Pair<String, String>> =
             ("Content" to "Derived from content rather than a fixed seed. Best when using wallpaper or image-based theming."),
     )
 
+/** Display label for a stored [PaletteStyle] name (e.g. "TonalSpot" -> "Tonal Spot"), for use
+ *  outside this file's own picker sheet — e.g. the value pill on the Appearance settings row. */
+fun paletteStyleLabel(value: String): String = paletteStyleInfo[PaletteStyle.entries.find { it.name == value }]?.first ?: value
+
 data class CardShapeOption(
     val label: String,
     val radiusDp: Int,

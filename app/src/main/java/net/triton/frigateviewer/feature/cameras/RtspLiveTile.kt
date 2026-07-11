@@ -310,6 +310,13 @@ fun RtspLiveTile(
                     resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
                 }
             },
+            // factory only runs once per AndroidView slot — without this, switching cameras or
+            // retrying (both of which remember() a brand-new exoPlayer instance keyed on
+            // url/retryTrigger) leaves this PlayerView bound to the old, released player, so the
+            // visible frame silently freezes on whatever was last rendered instead of showing the
+            // new stream (confirmed live: camera-switch title updates but video stays on the old
+            // camera's frame, burned-in "CH 1" watermark visible after switching to ch2).
+            update = { it.player = exoPlayer },
             modifier =
                 Modifier.fillMaxSize().graphicsLayer {
                     scaleX = scale

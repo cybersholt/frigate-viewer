@@ -345,24 +345,38 @@ class SettingsViewModel
         /**
          * Same connectivity probe as [testConnection], but for an in-progress (unsaved)
          * [ServerForm] — lets the add/edit sheet's Test button work before the user hits Save.
-         * The draft's own [ServerForm.id] (a fresh UUID, never persisted) doubles as a safe,
-         * collision-free throwaway key: a password is written under it only long enough to run
-         * one request (so Basic-auth-protected servers are actually exercised, same as a saved
-         * server would be), then both the credential and the cached [FrigateClient] entry are
-         * torn down in `finally` regardless of outcome — nothing about the draft survives the test.
+         *
+         * MUST NOT use [form].id as the throwaway key: when editing an *existing* server,
+         * `form.id` is that server's real, already-saved id (see `onEdit` in
+         * ServersSettingsScreen.kt) — reusing it here used to mean this function's `finally`
+         * block deleted the real server's saved password/session/cert on every single Test tap,
+         * whether or not anything was actually saved (docs/qa/2026-07-10-pixel8-qa-notes.md #1).
+         * Always mint a fresh, disposable id instead so a draft test can never touch the real
+         * server's credentials, regardless of whether this is an Add or an Edit.
          */
         fun testDraftConnection(form: ServerForm) {
             viewModelScope.launch {
-                val draftServer = form.toDraftServer()
-                if (form.password.isNotBlank()) {
-                    val raw =
-                        if (form.authMode == AuthMode.BASIC) {
-                            "${form.username}:${form.password}"
-                        } else {
-                            form.password
-                        }
-                    credentialStore.setPassword(draftServer.id, raw)
-                }
+                val testId = UUID.randomUUID().toString()
+                val draftServer = form.toDraftServer().copy(id = testId)
+                val wroteTempSecret =
+                    if (form.password.isNotBlank()) {
+                        val raw =
+                            if (form.authMode == AuthMode.BASIC) {
+                                "${form.username}:${form.password}"
+                            } else {
+                                form.password
+                            }
+                        credentialStore.setPassword(testId, raw)
+                        true
+                    } else {
+                        // Editing an existing server with the password field left blank (i.e.
+                        // "keep the current password", same convention saveServer follows) —
+                        // clone its already-saved secret under the throwaway id so the test is
+                        // actually authenticated. Read-only against the real id; never written.
+                        val existingSecret = credentialStore.rawSecret(form.id)
+                        if (existingSecret != null) credentialStore.setPassword(testId, existingSecret)
+                        existingSecret != null
+                    }
                 try {
                     val start = System.currentTimeMillis()
                     val api = client.apiFor(draftServer, wifiMonitor.ssid.value)
@@ -371,24 +385,24 @@ class SettingsViewModel
                     _connectionTest.value =
                         when (result) {
                             is ApiResult.Success -> {
-                                ConnectionTestResult(draftServer.id, true, elapsed, "Reachable")
+                                ConnectionTestResult(form.id, true, elapsed, "Reachable")
                             }
 
                             is ApiResult.HttpError -> {
-                                ConnectionTestResult(draftServer.id, false, elapsed, "HTTP ${result.code}: ${result.message}")
+                                ConnectionTestResult(form.id, false, elapsed, "HTTP ${result.code}: ${result.message}")
                             }
 
                             is ApiResult.NetworkError -> {
-                                ConnectionTestResult(draftServer.id, false, null, result.cause.message ?: "Network error")
+                                ConnectionTestResult(form.id, false, null, result.cause.message ?: "Network error")
                             }
 
                             is ApiResult.ParseError -> {
-                                ConnectionTestResult(draftServer.id, false, elapsed, "Server returned an unexpected response")
+                                ConnectionTestResult(form.id, false, elapsed, "Server returned an unexpected response")
                             }
                         }
                 } finally {
-                    credentialStore.delete(draftServer.id)
-                    client.invalidate(draftServer.id)
+                    if (wroteTempSecret) credentialStore.delete(testId)
+                    client.invalidate(testId)
                 }
             }
         }

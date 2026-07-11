@@ -91,7 +91,11 @@ internal fun SettingRow(
     onClick: () -> Unit,
 ) {
     SettingsCard {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             if (icon != null) SettingsRowIcon(icon)
             Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             Surface(
@@ -99,7 +103,6 @@ internal fun SettingRow(
                 shape = RoundedCornerShape(50),
                 color = MaterialTheme.colorScheme.surface,
                 contentColor = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.align(Alignment.CenterVertically),
             ) {
                 Text(
                     value,
@@ -121,7 +124,11 @@ internal fun SwitchSetting(
     onCheckedChange: (Boolean) -> Unit,
 ) {
     SettingsCard {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             if (icon != null) SettingsRowIcon(icon)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(title, style = MaterialTheme.typography.titleMedium)
@@ -129,7 +136,7 @@ internal fun SwitchSetting(
                     Text(description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            Switch(checked = checked, onCheckedChange = onCheckedChange, modifier = Modifier.align(Alignment.CenterVertically))
+            Switch(checked = checked, onCheckedChange = onCheckedChange)
         }
     }
 }

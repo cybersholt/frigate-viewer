@@ -42,7 +42,7 @@ data class CameraConfig(
     @SerialName("ffmpeg") val ffmpeg: JsonElement? = null,
     @SerialName("detect") val detect: DetectConfig? = null,
     @SerialName("snapshots") val snapshots: JsonElement? = null,
-    @SerialName("record") val record: JsonElement? = null,
+    @SerialName("record") val record: RecordConfig? = null,
     @SerialName("live") val live: LiveConfig? = null,
     /** Zone name → zone config (we only need the names for UI). */
     @SerialName("zones") val zones: Map<String, JsonElement> = emptyMap(),
@@ -54,6 +54,11 @@ data class CameraConfig(
 data class CameraObjectsConfig(
     val track: List<String> = emptyList(),
     val filters: JsonElement? = null,
+)
+
+@Serializable
+data class RecordConfig(
+    val enabled: Boolean = false,
 )
 
 @Serializable
