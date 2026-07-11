@@ -42,10 +42,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -81,6 +83,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -825,6 +828,7 @@ private fun FocusedTile(
             }
         }
         Box(if (isFullScreen) Modifier.fillMaxWidth().weight(1f) else Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
+            var liveStreamState by remember { mutableStateOf<LiveStreamState>(LiveStreamState.Idle) }
             StreamContent(
                 liveStreamOption = liveStreamOption,
                 isStreamOptionOverridden = isStreamOptionOverridden,
@@ -845,6 +849,7 @@ private fun FocusedTile(
                 refreshTimestamp = refreshTimestamp,
                 onSubStreamFallback = onSubStreamFallback,
                 hideBadgeLayer = isFullScreen,
+                onStreamStateChanged = { liveStreamState = it },
                 modifier = Modifier.fillMaxSize(),
             )
 
@@ -865,6 +870,7 @@ private fun FocusedTile(
                     globalDefaultStreamOption = globalDefaultStreamOption,
                     onSetStreamOverride = onSetStreamOverride,
                     recordingEnabled = recordingEnabled,
+                    liveStreamState = liveStreamState,
                 )
             }
         }
@@ -912,9 +918,11 @@ private fun FullscreenChrome(
     globalDefaultStreamOption: String,
     onSetStreamOverride: (String?) -> Unit,
     recordingEnabled: Boolean = false,
+    liveStreamState: LiveStreamState = LiveStreamState.Idle,
 ) {
     if (!visible) return
     var showOverflow by remember { mutableStateOf(false) }
+    var showStreamInfo by remember { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize()) {
         Row(
@@ -996,6 +1004,15 @@ private fun FullscreenChrome(
                     },
                     modifier = Modifier.testTag("fullscreen_pip_menu_item"),
                 )
+                DropdownMenuItem(
+                    text = { Text("Stream info") },
+                    leadingIcon = { Icon(Icons.Filled.Info, contentDescription = null) },
+                    onClick = {
+                        showOverflow = false
+                        showStreamInfo = true
+                    },
+                    modifier = Modifier.testTag("fullscreen_stream_info_menu_item"),
+                )
                 val otherCameras = allCameraNames.filter { it != cameraName }
                 if (otherCameras.isNotEmpty()) {
                     HorizontalDivider()
@@ -1018,8 +1035,58 @@ private fun FullscreenChrome(
                 }
             }
         }
+
+        if (showStreamInfo) {
+            AlertDialog(
+                onDismissRequest = { showStreamInfo = false },
+                title = { Text("Stream info") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        StreamInfoRow("Camera", cameraName)
+                        StreamInfoRow("Protocol", streamTypeLabel)
+                        if (hasSubStream) {
+                            StreamInfoRow("Resolution", if (isSubStreamActive) "SD (sub stream)" else "HD (main stream)")
+                        }
+                        StreamInfoRow("Status", liveStreamStateLabel(liveStreamState))
+                        StreamInfoRow("Recording", if (recordingEnabled) "Enabled" else "Disabled")
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showStreamInfo = false }) { Text("Close") }
+                },
+                modifier = Modifier.testTag("fullscreen_stream_info_dialog"),
+            )
+        }
     }
 }
+
+@Composable
+private fun StreamInfoRow(
+    label: String,
+    value: String,
+) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/**
+ * Human-readable status for the "Stream info" dialog — deliberately coarse (connection lifecycle,
+ * not bitrate/resolution-in-pixels/buffer-depth telemetry). Real per-frame stats would need new
+ * plumbing from ExoPlayer's Format/track listeners and WebRTC's getStats() API; out of scope for
+ * this pass (backlog #8 flagged bitrate/buffer state as a nice-to-have, not required).
+ */
+private fun liveStreamStateLabel(state: LiveStreamState): String =
+    when (state) {
+        is LiveStreamState.Idle -> "Idle"
+        is LiveStreamState.Connecting -> "Connecting (${state.elapsedMs / 1000}s)"
+        is LiveStreamState.Negotiating -> "Negotiating"
+        is LiveStreamState.Buffering -> "Buffering"
+        is LiveStreamState.Playing -> "Playing"
+        is LiveStreamState.Reconnecting -> "Reconnecting (attempt ${state.attempt})"
+        is LiveStreamState.Error -> "Error: ${state.reason}"
+    }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -1044,11 +1111,13 @@ private fun StreamContent(
     refreshTimestamp: Long,
     onSubStreamFallback: () -> Unit = {},
     hideBadgeLayer: Boolean = false,
+    onStreamStateChanged: (LiveStreamState) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var streamState by remember(liveStreamOption, liveCameraName) {
         mutableStateOf<LiveStreamState>(LiveStreamState.Idle)
     }
+    LaunchedEffect(streamState) { onStreamStateChanged(streamState) }
     val snapshotUrl = baseUrl?.trimEnd('/')?.plus("/") + snapshotPath
 
     // The RTSP port is commonly only reachable via server.rtspHost, a LAN IP — off that
@@ -1083,7 +1152,6 @@ private fun StreamContent(
                         RtspLiveTile(
                             url = resolvedRtspUrl,
                             snapshotUrl = snapshotUrl,
-                            snapshotCachedAt = refreshTimestamp,
                             autoLandscapeOnStream = autoLandscapeOnStream,
                             showLastImageWhileLoading = showLastImageWhileLoading,
                             onStateChanged = { streamState = it },
@@ -1109,7 +1177,6 @@ private fun StreamContent(
                         imageLoader = imageLoader,
                         showBoundingBoxes = showBoundingBoxes,
                         snapshotUrl = snapshotUrl,
-                        showLastImageWhileLoading = showLastImageWhileLoading,
                         onStateChanged = { streamState = it },
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -1121,7 +1188,6 @@ private fun StreamContent(
                         cameraName = liveCameraName,
                         okHttpClient = okHttpClient,
                         snapshotUrl = snapshotUrl,
-                        snapshotCachedAt = refreshTimestamp,
                         autoLandscapeOnStream = autoLandscapeOnStream,
                         showBoundingBoxes = showBoundingBoxes,
                         showLastImageWhileLoading = showLastImageWhileLoading,

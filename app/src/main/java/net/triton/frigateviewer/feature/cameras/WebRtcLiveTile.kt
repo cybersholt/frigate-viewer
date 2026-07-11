@@ -115,7 +115,6 @@ fun WebRtcLiveTile(
     cameraName: String,
     okHttpClient: OkHttpClient,
     snapshotUrl: String? = null,
-    snapshotCachedAt: Long = 0L,
     modifier: Modifier = Modifier,
     autoLandscapeOnStream: Boolean = false,
     showBoundingBoxes: Boolean = true,

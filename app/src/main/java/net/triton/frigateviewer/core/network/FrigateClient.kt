@@ -4,9 +4,6 @@ import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFact
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -39,7 +36,8 @@ import javax.inject.Singleton
  *   - pinned cert change
  *   - explicit invalidate after credential rotation
  *
- * All ViewModels go through [active] which returns a FrigateApi bound to the active server.
+ * All ViewModels go through [apiFor] to get a FrigateApi bound to a specific server. The real
+ * "active server" selection lives in `ServerRepository.setActive`/`activeServer()` — not here.
  */
 @Singleton
 class FrigateClient
@@ -53,13 +51,6 @@ class FrigateClient
         private val clients = ConcurrentHashMap<String, OkHttpClient>()
         private val cachedEffectiveUrls = ConcurrentHashMap<String, String>()
         private val mutex = Mutex()
-
-        private val _activeServerFlow = MutableStateFlow<Server?>(null)
-        val activeServerFlow: StateFlow<Server?> = _activeServerFlow.asStateFlow()
-
-        suspend fun setActive(server: Server?) {
-            _activeServerFlow.value = server
-        }
 
         suspend fun apiFor(
             server: Server,

@@ -31,7 +31,6 @@ fun SnapshotLiveTile(
     imageLoader: ImageLoader,
     showBoundingBoxes: Boolean = true,
     snapshotUrl: String? = null,
-    showLastImageWhileLoading: Boolean = true,
     modifier: Modifier = Modifier,
     onStateChanged: (LiveStreamState) -> Unit = {},
 ) {
@@ -70,7 +69,10 @@ fun SnapshotLiveTile(
         val bboxParam = if (showBoundingBoxes) "&bbox=1" else ""
         val url = "${baseUrl.trimEnd('/')}/api/$cameraName/latest.jpg?h=480&t=$refreshTime$bboxParam"
 
-        // Not keyed on url — holds the last successful frame while the next loads.
+        // Not keyed on url — holds the last successful frame while the next loads. Always on,
+        // unlike RTSP/WebRTC's `showLastImageWhileLoading` setting — this is what makes snapshot
+        // polling no-blink (see project history), not an optional poster; Snapshot mode doesn't
+        // take that setting at all.
         var lastPainter by remember { mutableStateOf<Painter?>(null) }
 
         AsyncImage(

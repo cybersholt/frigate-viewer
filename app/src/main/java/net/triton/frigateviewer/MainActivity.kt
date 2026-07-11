@@ -41,8 +41,10 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -57,14 +59,17 @@ import androidx.navigation.navArgument
 import com.materialkolor.PaletteStyle
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
+import net.triton.frigateviewer.core.crash.CrashReportStore
 import net.triton.frigateviewer.core.data.UserSettingsRepository
 import net.triton.frigateviewer.feature.cameras.CamerasScreen
+import net.triton.frigateviewer.feature.crash.CrashReportScreen
 import net.triton.frigateviewer.feature.events.EventDetailScreen
 import net.triton.frigateviewer.feature.events.EventsScreen
 import net.triton.frigateviewer.feature.settings.AboutSettingsScreen
 import net.triton.frigateviewer.feature.settings.AdvancedSettingsScreen
 import net.triton.frigateviewer.feature.settings.AppearanceSettingsScreen
 import net.triton.frigateviewer.feature.settings.CamerasViewSettingsScreen
+import net.triton.frigateviewer.feature.settings.DeveloperOptionsSettingsScreen
 import net.triton.frigateviewer.feature.settings.DeviceCapabilitiesSettingsScreen
 import net.triton.frigateviewer.feature.settings.DownloadsSettingsScreen
 import net.triton.frigateviewer.feature.settings.EventsSettingsScreen
@@ -253,6 +258,21 @@ private fun AppRoot(
     isInPip: MutableState<Boolean> = remember { mutableStateOf(false) },
     onEnterPip: () -> Unit = {},
 ) {
+    // Checked once per cold launch; if a crash was persisted last run, show its details instead
+    // of the normal nav graph until dismissed. See core/crash/CrashHandler.kt.
+    val context = LocalContext.current
+    var crashCheckDone by remember { mutableStateOf(false) }
+    var crashReport by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        crashReport = CrashReportStore.readAndClear(context)
+        crashCheckDone = true
+    }
+    if (!crashCheckDone) return
+    if (crashReport != null) {
+        CrashReportScreen(crashText = crashReport!!, onDismiss = { crashReport = null })
+        return
+    }
+
     val nav = rememberNavController()
     val backStack by nav.currentBackStackEntryAsState()
     val current = backStack?.destination
@@ -397,6 +417,7 @@ private fun AppRoot(
                 composable(SettingsRoutes.DOWNLOADS) { DownloadsSettingsScreen(onBack = { nav.popBackStack() }) }
                 composable(SettingsRoutes.ADVANCED) { AdvancedSettingsScreen(onBack = { nav.popBackStack() }) }
                 composable(SettingsRoutes.DEVICE_CAPABILITIES) { DeviceCapabilitiesSettingsScreen(onBack = { nav.popBackStack() }) }
+                composable(SettingsRoutes.DEVELOPER_OPTIONS) { DeveloperOptionsSettingsScreen(onBack = { nav.popBackStack() }) }
                 composable(SettingsRoutes.ABOUT) { AboutSettingsScreen(onBack = { nav.popBackStack() }) }
                 composable("event/{id}") { entry ->
                     val id = entry.arguments?.getString("id") ?: return@composable

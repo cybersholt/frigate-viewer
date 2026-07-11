@@ -98,7 +98,12 @@ fun StreamOverlay(
             is LiveStreamState.Playing -> { /* video surface visible, no overlay */ }
 
             is LiveStreamState.Error -> {
-                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)))
+                // Fully opaque (not the translucent scrim other states use) — this is the
+                // terminal "we've declared this stream dead" state. A stalled RTSP connection can
+                // silently resume rendering after the fact (see handleFailure's playerRef.stop()
+                // in RtspLiveTile), and a translucent overlay let those stray frames show through
+                // underneath "Live view unavailable" (backlog #6).
+                Box(Modifier.fillMaxSize().background(Color.Black))
                 Column(
                     Modifier.align(Alignment.Center).padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,

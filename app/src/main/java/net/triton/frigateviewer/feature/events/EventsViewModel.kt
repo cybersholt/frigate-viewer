@@ -528,6 +528,11 @@ class EventsViewModel
             }
         }
 
+        // delete()/toggleRetain() below are intentionally-scaffolded, unreferenced public API —
+        // no swipe/long-press UI calls them yet (confirmed via dead-code audit, backlog #14).
+        // Left in place for a future events-list action menu rather than deleted; if/when that UI
+        // ships, also fix the swallowed `else -> {}` branches to surface failures instead of
+        // silently no-oping (CLAUDE.md rule: every ApiResult branch must update UI state or log).
         fun delete(id: String) {
             viewModelScope.launch {
                 when (repo.deleteEvent(id)) {

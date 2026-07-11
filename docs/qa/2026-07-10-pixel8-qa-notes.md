@@ -140,7 +140,21 @@ logcat shows no sign of the app switching to the local URL or gating RTSP for LA
 
 ---
 
-## 4. [Medium] Server edit sheet silently discards unsaved changes (incl. Local Network SSIDs)
+## 4. [Medium] Server edit sheet silently discards unsaved changes (incl. Local Network SSIDs) — FIXED, verified
+
+**Fix**: `ServerFormSheet` now compares `current` (the in-progress form) against the original `form` param it was
+opened with. Cancel, tap-outside, swipe-down, and back gesture all funnel through `ModalBottomSheet`'s
+`onDismissRequest`, which now goes through a new `attemptDismiss` lambda: if `current != form`, show an
+`AlertDialog` ("Discard changes?" / "Keep editing" / "Discard") instead of dismissing immediately; only tapping
+"Discard" actually closes the sheet and drops the edit. No changes → dismisses immediately as before.
+
+**Verified on emulator**: Servers > Edit "Home" > appended a character to Name > Cancel → "Discard changes?"
+dialog appeared → "Keep editing" → returned to the form with the edit still present → Cancel again → "Discard" →
+sheet closed, server list still shows the original unmodified name ("Home 🏡", not "Home 🏡X") — confirming the
+edit was genuinely discarded, not silently saved or left ambiguous.
+
+<details>
+<summary>Original findings (superseded by the fix above)</summary>
 
 **Repro**: Server > edit > Local Network > remove an SSID > add it back > dismiss the sheet via Cancel/tap-outside
 /swipe-down (not Save) > reopen > list looks unchanged, no way to tell if the edit was ever applied or discarded.
@@ -153,6 +167,8 @@ so a genuine "didn't stick" report is indistinguishable from "I forgot to tap Sa
 
 **Fix direction**: either a confirmation prompt on non-Save dismissal with unsaved changes, or a visible "unsaved
 changes" indicator.
+
+</details>
 
 ---
 
@@ -179,7 +195,25 @@ doesn't silently change the grid's default?
 
 ---
 
-## 6. [High] RTSP tile can show "Live view unavailable" while video keeps playing behind it
+## 6. [High] RTSP tile can show "Live view unavailable" while video keeps playing behind it — FIXED, not live-repro'd
+
+**Fix applied** (follow-up session): both documented root causes below addressed directly.
+1. `RtspLiveTile.kt` — added a `playerRef` holder (declared before `handleFailure`, which itself is declared
+   before the `ExoPlayer` exists since the player's own error listener needs to call it) so `handleFailure()` now
+   calls `playerRef?.stop()` before flipping `liveState` to `Reconnecting`/`Error`. Previously a declared
+   timeout/error never touched the actual player — it could keep buffering and silently resume rendering frames
+   after the UI had already declared it dead.
+2. `StreamOverlay.kt` — the `Error` state's background changed from `Color.Black.copy(alpha = 0.55f)` to fully
+   opaque `Color.Black`, so even if a stray frame did render, it can't show through the "Live view unavailable"
+   card.
+
+**Not reproduced live this session** — the original repro needed a specific unhealthy camera on the real Pixel 8
+(logcat captures below); the test server's cameras are all healthy, so the failure path itself couldn't be
+forced. Smoke-tested instead: normal RTSP fullscreen playback (ch1, live, unmuted toggle, badge) still works with
+no regression after the change. `./gradlew :app:compileDebugKotlin` clean.
+
+<details>
+<summary>Original findings (superseded by the fix above)</summary>
 
 Logcat: `pixel 8 ch1 playing then unavai while still playing.logcat`, `ch1 live fail 2.logcat`.
 
@@ -194,6 +228,8 @@ Logcat: `pixel 8 ch1 playing then unavai while still playing.logcat`, `ch1 live 
 
 **Fix direction**: have the timeout/error path actually pause or release the player, not just flip UI state; or
 make the "unavailable" overlay opaque so a disagreement between player state and UI state isn't visible.
+
+</details>
 
 ---
 
@@ -216,11 +252,24 @@ actually rebinds the view to the new player instance.
 
 ---
 
-## 8. [Low, feature request] Stream stats/info option in the live playback 3-dot menu
+## 8. [Low, feature request] Stream stats/info option in the live playback 3-dot menu — FIXED, verified
 
-Would show protocol/resolution/bitrate/buffer state directly on the live view — useful for diagnosing exactly the
-kind of buffering/"unavailable" issues in #6/#7 without pulling logcat. Not investigated further (pure feature
-request, no current implementation to reference).
+**Implementation**: added a "Stream info" item to the fullscreen overflow menu (`FullscreenChrome` in
+`CamerasScreen.kt`), next to "Picture-in-picture". Opens an `AlertDialog` showing Camera, Protocol (RTSP/WebRTC/
+Snapshot), Resolution (HD main / SD sub, when the camera has a sub stream), Status, and Recording
+(enabled/disabled). Status is genuinely live — threaded the existing `LiveStreamState` (Idle/Connecting/
+Negotiating/Buffering/Playing/Reconnecting/Error, already tracked internally by `StreamContent` for the
+badge/overlay) up through a new `onStreamStateChanged` callback → `FocusedTile` → `FullscreenChrome`, rather than
+inventing new state.
+
+**Scope note**: deliberately coarse (connection lifecycle: Playing/Buffering/Reconnecting/Error), not
+frame-level bitrate/buffer-depth/pixel-resolution telemetry — that would need new plumbing into ExoPlayer's
+`Format`/track listeners and WebRTC's `getStats()` API, a bigger lift than this "Low priority, not investigated"
+item justified. Flagged in a code comment for a future pass if real bitrate stats are wanted.
+
+**Verified on emulator**: ch1 fullscreen → overflow menu → "Stream info" → dialog shows Camera=ch1,
+Protocol=RTSP, Resolution=HD (main stream), Status=Playing, Recording=Enabled — all fields correct against the
+actual live state. Close button dismisses cleanly. `./gradlew :app:compileDebugKotlin` clean.
 
 ---
 

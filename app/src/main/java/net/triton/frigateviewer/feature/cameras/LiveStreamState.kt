@@ -63,5 +63,5 @@ fun LiveStreamState.toBadgeState(): CameraStreamState =
 
         is LiveStreamState.Playing -> CameraStreamState.Live
 
-        is LiveStreamState.Error -> CameraStreamState.Offline(reason.name)
+        is LiveStreamState.Error -> CameraStreamState.Offline
     }

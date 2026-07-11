@@ -216,6 +216,11 @@ internal fun ServerFormSheet(
     var current by remember { mutableStateOf(form) }
     var newSsidInput by remember { mutableStateOf("") }
     var testing by remember { mutableStateOf(false) }
+    // Cancel/tap-outside/swipe-down/back all funnel through onDismissRequest — if the form was
+    // edited since opening, confirm before discarding instead of silently dropping the changes
+    // (backlog #4: no way to tell whether a dismissed edit was ever applied).
+    var showDiscardConfirm by remember { mutableStateOf(false) }
+    val attemptDismiss = { if (current != form) showDiscardConfirm = true else onDismiss() }
     val scroll = rememberScrollState()
     val context = LocalContext.current
     var hasLocationPermission by
@@ -238,13 +243,30 @@ internal fun ServerFormSheet(
             if (granted) onPermissionGranted()
         }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    if (showDiscardConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDiscardConfirm = false },
+            title = { Text("Discard changes?") },
+            text = { Text("You have unsaved changes to this server. Discard them?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDiscardConfirm = false
+                    onDismiss()
+                }) { Text("Discard") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDiscardConfirm = false }) { Text("Keep editing") }
+            },
+        )
+    }
+
+    ModalBottomSheet(onDismissRequest = attemptDismiss) {
         Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding()) {
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Cancel") }
+                OutlinedButton(onClick = attemptDismiss, modifier = Modifier.weight(1f)) { Text("Cancel") }
                 OutlinedButton(
                     onClick = {
                         testing = true

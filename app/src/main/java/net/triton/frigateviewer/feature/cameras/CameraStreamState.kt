@@ -9,9 +9,7 @@ sealed class CameraStreamState {
 
     object Live : CameraStreamState()
 
-    data class Offline(
-        val reason: String? = null,
-    ) : CameraStreamState()
+    object Offline : CameraStreamState()
 }
 
 internal fun formatTimeAgo(epochMillis: Long): String {

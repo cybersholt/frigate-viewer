@@ -8,6 +8,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.EventNote
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Download
@@ -43,6 +44,7 @@ object SettingsRoutes {
     const val DOWNLOADS = "settings/downloads"
     const val ADVANCED = "settings/advanced"
     const val DEVICE_CAPABILITIES = "settings/device_capabilities"
+    const val DEVELOPER_OPTIONS = "settings/developer_options"
     const val ABOUT = "settings/about"
 }
 
@@ -140,6 +142,13 @@ fun SettingsScreen(
                 iconContainerColor = cs.tertiaryContainer,
                 title = "Device Capabilities",
                 onClick = { onNavigate(SettingsRoutes.DEVICE_CAPABILITIES) },
+            )
+            SettingsNavRow(
+                icon = Icons.Filled.BugReport,
+                iconTint = cs.onSecondaryContainer,
+                iconContainerColor = cs.secondaryContainer,
+                title = "Developer Options",
+                onClick = { onNavigate(SettingsRoutes.DEVELOPER_OPTIONS) },
             )
             SettingsNavRow(
                 icon = Icons.Filled.Info,

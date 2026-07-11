@@ -306,7 +306,19 @@ private fun formatEventTime(
     val amPm = if (ldt.hour < 12) "AM" else "PM"
     val timeStr = String.format(Locale.US, "%d:%02d %s", displayHour, ldt.minute, amPm)
     val durationSecs = ev.endTime?.let { (it - ev.startTime).toInt().coerceAtLeast(0) }
-    val durationStr = durationSecs?.let { String.format(Locale.US, "%d:%02d", it / 60, it % 60) }
+    // Minutes must roll into hours (backlog #11) — a raw M:SS on a 2h50m44s event rendered as
+    // the nonsensical "170:44" instead of "2:50:44".
+    val durationStr =
+        durationSecs?.let {
+            val hours = it / 3600
+            val minutes = (it % 3600) / 60
+            val seconds = it % 60
+            if (hours > 0) {
+                String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
+            } else {
+                String.format(Locale.US, "%d:%02d", minutes, seconds)
+            }
+        }
 
     return if (dateFormat == "numeric") {
         val numeric =

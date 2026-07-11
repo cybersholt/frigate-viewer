@@ -90,7 +90,6 @@ fun RtspLiveTile(
     url: String,
     modifier: Modifier = Modifier,
     snapshotUrl: String? = null,
-    snapshotCachedAt: Long = 0L,
     autoLandscapeOnStream: Boolean = false,
     showLastImageWhileLoading: Boolean = true,
     onStateChanged: (LiveStreamState) -> Unit = {},
@@ -114,11 +113,18 @@ fun RtspLiveTile(
     var liveState by remember { mutableStateOf<LiveStreamState>(LiveStreamState.Idle) }
     LaunchedEffect(liveState) { onStateChanged(liveState) }
 
+    // Holds the current ExoPlayer so handleFailure (defined before the player exists, since the
+    // player's own error listener needs to call it) can stop it. Without this, declaring
+    // Reconnecting/Error only flips the Compose state — the still-alive player keeps buffering
+    // and can silently resume rendering frames behind the (translucent) error overlay.
+    var playerRef by remember { mutableStateOf<ExoPlayer?>(null) }
+
     // NETWORK and TIMEOUT are both treated as transient (a stalled/dropped connection commonly
     // surfaces as either depending on exactly when the socket gives up) — SOURCE_UNAVAILABLE
     // (bad HTTP status / no permission / cleartext blocked) and DECODE_FAILED are genuine
     // config/format problems that retrying won't fix.
     fun handleFailure(reason: StreamError) {
+        playerRef?.stop()
         val isTransient = reason == StreamError.NETWORK || reason == StreamError.TIMEOUT
         if (isTransient && autoReconnectAttempts < maxReconnectAttempts) {
             autoReconnectAttempts++
@@ -209,6 +215,7 @@ fun RtspLiveTile(
                 playWhenReady = true
             }
         }
+    playerRef = exoPlayer
 
     LaunchedEffect(Unit) {
         if (autoLandscapeOnStream) isFullScreen = true

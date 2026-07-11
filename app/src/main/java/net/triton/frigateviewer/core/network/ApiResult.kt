@@ -39,6 +39,4 @@ sealed interface ApiResult<out T> {
             is NetworkError -> this
             is ParseError -> this
         }
-
-    fun getOrNull(): T? = (this as? Success)?.data
 }

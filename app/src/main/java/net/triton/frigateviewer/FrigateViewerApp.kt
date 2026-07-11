@@ -4,11 +4,15 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import dagger.hilt.android.HiltAndroidApp
+import net.triton.frigateviewer.core.crash.CrashHandler
 
 @HiltAndroidApp
 class FrigateViewerApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        Thread.setDefaultUncaughtExceptionHandler(
+            CrashHandler(applicationContext, Thread.getDefaultUncaughtExceptionHandler()),
+        )
         createNotificationChannels()
     }
 
