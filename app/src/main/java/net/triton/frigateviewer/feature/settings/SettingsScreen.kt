@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.SettingsBackupRestore
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.MaterialTheme
@@ -42,6 +43,7 @@ object SettingsRoutes {
     const val EVENTS = "settings/events"
     const val NOTIFICATIONS = "settings/notifications"
     const val DOWNLOADS = "settings/downloads"
+    const val BACKUP = "settings/backup"
     const val ADVANCED = "settings/advanced"
     const val DEVICE_CAPABILITIES = "settings/device_capabilities"
     const val DEVELOPER_OPTIONS = "settings/developer_options"
@@ -127,6 +129,14 @@ fun SettingsScreen(
                 iconContainerColor = cs.primaryContainer,
                 title = "Downloads",
                 onClick = { onNavigate(SettingsRoutes.DOWNLOADS) },
+            )
+            SettingsNavRow(
+                icon = Icons.Filled.SettingsBackupRestore,
+                iconTint = cs.onSecondaryContainer,
+                iconContainerColor = cs.secondaryContainer,
+                title = "Backup & Restore",
+                subtitle = "Export/import app preferences",
+                onClick = { onNavigate(SettingsRoutes.BACKUP) },
             )
             SettingsNavRow(
                 icon = Icons.Filled.Build,

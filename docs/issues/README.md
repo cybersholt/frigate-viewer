@@ -62,6 +62,16 @@ correctly, correct interval, no crashes); Pixel 8 testing deferred per user requ
 comment marks where a Developer Options polling-rate control should hook in once one exists. #20 removed from
 the table below.
 
+**Resolved 2026-07-11 (#15, scoped down):** Scoped to app preferences only, per explicit product decision —
+servers and credentials are never included (separate system, separate trust boundary). New "Backup & Restore"
+settings page (`BackupSettingsScreen.kt`) exports appearance/camera-grid/streaming/events preferences to a
+user-chosen JSON file (SAF `CreateDocument`) and imports them back (SAF `OpenDocument`), via
+`UserSettingsRepository.exportPreferencesJson()`/`importPreferencesJson()` (a versioned `EXPORTABLE_KEYS`
+manifest, deliberately excluding `KEY_LAST_KNOWN_CAMERA_NAMES`). Verified full round-trip live on the emulator:
+exported, hand-edited `camera_grid_columns_v1` from 1→3 in the exported file, imported it back, and confirmed
+the Cameras View settings page now shows "Grid columns: 3x" — proving the import genuinely writes values, not
+just shows a success toast. #15 removed from the table below.
+
 ## Tech debt
 
 | # | Title | Priority | Status | File |
@@ -72,7 +82,6 @@ the table below.
 
 | # | Title | Priority | Status | File |
 |---|-------|----------|--------|------|
-| 15 | Export/import settings | Medium | 🔴 | `issues/backlog-2026-07-10.md#15` |
 | 16 | Recent-events side panel next to live view | Low | 🔴 | `issues/backlog-2026-07-10.md#16` |
 | 17 | Timeline-strip side panel next to live view | Low | 🔴 | `issues/backlog-2026-07-10.md#17` |
 | 19 | Notifications and Downloads settings are placeholders — needs product scoping | Medium | 🔴 | `issues/backlog-2026-07-10.md#19` |

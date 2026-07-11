@@ -292,6 +292,12 @@ class SettingsViewModel
             }
         }
 
+        /** Builds the app-preferences export (#15) — servers/credentials are never included. */
+        suspend fun exportSettingsJson(): String = userSettingsRepo.exportPreferencesJson()
+
+        /** Restores app preferences from a previously exported file. Returns false if invalid/unrecognized. */
+        suspend fun importSettingsJson(json: String): Boolean = userSettingsRepo.importPreferencesJson(json)
+
         fun setPreferSubStreamGrid(prefer: Boolean) = viewModelScope.launch { userSettingsRepo.setPreferSubStreamGrid(prefer) }
 
         fun setPreferSubStreamFullscreen(prefer: Boolean) = viewModelScope.launch { userSettingsRepo.setPreferSubStreamFullscreen(prefer) }

@@ -68,6 +68,7 @@ import net.triton.frigateviewer.feature.events.EventsScreen
 import net.triton.frigateviewer.feature.settings.AboutSettingsScreen
 import net.triton.frigateviewer.feature.settings.AdvancedSettingsScreen
 import net.triton.frigateviewer.feature.settings.AppearanceSettingsScreen
+import net.triton.frigateviewer.feature.settings.BackupSettingsScreen
 import net.triton.frigateviewer.feature.settings.CamerasViewSettingsScreen
 import net.triton.frigateviewer.feature.settings.DeveloperOptionsSettingsScreen
 import net.triton.frigateviewer.feature.settings.DeviceCapabilitiesSettingsScreen
@@ -415,6 +416,7 @@ private fun AppRoot(
                 composable(SettingsRoutes.EVENTS) { EventsSettingsScreen(onBack = { nav.popBackStack() }) }
                 composable(SettingsRoutes.NOTIFICATIONS) { NotificationsSettingsScreen(onBack = { nav.popBackStack() }) }
                 composable(SettingsRoutes.DOWNLOADS) { DownloadsSettingsScreen(onBack = { nav.popBackStack() }) }
+                composable(SettingsRoutes.BACKUP) { BackupSettingsScreen(onBack = { nav.popBackStack() }) }
                 composable(SettingsRoutes.ADVANCED) { AdvancedSettingsScreen(onBack = { nav.popBackStack() }) }
                 composable(SettingsRoutes.DEVICE_CAPABILITIES) { DeviceCapabilitiesSettingsScreen(onBack = { nav.popBackStack() }) }
                 composable(SettingsRoutes.DEVELOPER_OPTIONS) { DeveloperOptionsSettingsScreen(onBack = { nav.popBackStack() }) }

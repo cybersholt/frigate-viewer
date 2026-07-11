@@ -8,7 +8,18 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -217,6 +228,58 @@ class UserSettingsRepository
 
         suspend fun setShowLastImageWhileLoading(show: Boolean) = store.edit { it[showLastImageWhileLoadingKey] = show }
 
+        /**
+         * Serializes every exportable preference to JSON (#15) — deliberately app-preferences-only:
+         * servers and credentials live in `ServerRepository`/`CredentialStore`, a separate system,
+         * and are never touched here. [KEY_LAST_KNOWN_CAMERA_NAMES] is excluded too — it's a
+         * skeleton-placeholder cache, not a real user preference, and restoring stale camera names
+         * on a different install/server would be actively wrong.
+         */
+        suspend fun exportPreferencesJson(): String {
+            val prefs = store.data.first()
+            val obj =
+                buildJsonObject {
+                    put("version", EXPORT_VERSION)
+                    putJsonObject("preferences") {
+                        for ((keyName, type) in EXPORTABLE_KEYS) {
+                            when (type) {
+                                PrefType.BOOL -> prefs[booleanPreferencesKey(keyName)]?.let { put(keyName, it) }
+                                PrefType.INT -> prefs[intPreferencesKey(keyName)]?.let { put(keyName, it) }
+                                PrefType.LONG -> prefs[longPreferencesKey(keyName)]?.let { put(keyName, it) }
+                                PrefType.STRING -> prefs[stringPreferencesKey(keyName)]?.let { put(keyName, it) }
+                            }
+                        }
+                    }
+                }
+            return obj.toString()
+        }
+
+        /**
+         * Restores preferences from [json] (produced by [exportPreferencesJson]). Returns false
+         * (no changes applied) if the file isn't a recognized export — an unknown/future version,
+         * or missing the expected shape — rather than partially applying something unvalidated.
+         */
+        suspend fun importPreferencesJson(json: String): Boolean {
+            val root = runCatching { Json.parseToJsonElement(json).jsonObject }.getOrNull() ?: return false
+            val version = root["version"]?.jsonPrimitive?.intOrNull ?: return false
+            if (version != EXPORT_VERSION) return false
+            val preferences = root["preferences"]?.jsonObject ?: return false
+            store.edit { mutablePrefs ->
+                for ((keyName, type) in EXPORTABLE_KEYS) {
+                    val value = preferences[keyName] ?: continue
+                    runCatching {
+                        when (type) {
+                            PrefType.BOOL -> mutablePrefs[booleanPreferencesKey(keyName)] = value.jsonPrimitive.boolean
+                            PrefType.INT -> mutablePrefs[intPreferencesKey(keyName)] = value.jsonPrimitive.int
+                            PrefType.LONG -> mutablePrefs[longPreferencesKey(keyName)] = value.jsonPrimitive.long
+                            PrefType.STRING -> mutablePrefs[stringPreferencesKey(keyName)] = value.jsonPrimitive.content
+                        }
+                    }
+                }
+            }
+            return true
+        }
+
         companion object {
             private const val KEY_PREFER_SUB_STREAM = "prefer_sub_stream_v1"
             private const val KEY_THEME_MODE = "theme_mode_v1"
@@ -252,5 +315,51 @@ class UserSettingsRepository
             private const val KEY_KEEP_OFFSCREEN_TILES_ALIVE = "keep_offscreen_tiles_alive_v1"
             private const val KEY_RTSP_RECONNECT_ATTEMPTS = "rtsp_reconnect_attempts_v1"
             private const val KEY_RTSP_RECONNECT_BASE_DELAY_SECONDS = "rtsp_reconnect_base_delay_seconds_v1"
+
+            /** Bump on any breaking change to [EXPORTABLE_KEYS]' shape; [importPreferencesJson] rejects a mismatch. */
+            private const val EXPORT_VERSION = 1
+
+            /**
+             * Every preference [exportPreferencesJson]/[importPreferencesJson] round-trip — add new
+             * keys here when adding a new setting above. [KEY_LAST_KNOWN_CAMERA_NAMES] is
+             * intentionally absent (see [exportPreferencesJson]'s doc).
+             */
+            private val EXPORTABLE_KEYS: Map<String, PrefType> =
+                mapOf(
+                    KEY_PREFER_SUB_STREAM to PrefType.BOOL,
+                    KEY_THEME_MODE to PrefType.STRING,
+                    KEY_ACCENT_COLOR to PrefType.LONG,
+                    KEY_USE_WALLPAPER_COLOR to PrefType.BOOL,
+                    KEY_PALETTE_STYLE to PrefType.STRING,
+                    KEY_AMOLED_BLACK to PrefType.BOOL,
+                    KEY_AUTO_REFRESH_CAMERAS to PrefType.BOOL,
+                    KEY_CAMERA_GRID_COLUMNS to PrefType.INT,
+                    KEY_HIDE_EVENT_IMAGE_IN_STREAM to PrefType.BOOL,
+                    KEY_AUTO_LANDSCAPE_ON_STREAM to PrefType.BOOL,
+                    KEY_AUTO_REFRESH_INTERVAL to PrefType.INT,
+                    KEY_EVENT_PHOTO_PREFERENCE to PrefType.STRING,
+                    KEY_LIVE_STREAM_OPTION to PrefType.STRING,
+                    KEY_SHOW_BOUNDING_BOXES to PrefType.BOOL,
+                    KEY_EVENT_GRID_COLUMNS to PrefType.INT,
+                    KEY_DATE_FORMAT to PrefType.STRING,
+                    KEY_CAMERA_ORDER to PrefType.STRING,
+                    KEY_HIDDEN_CAMERAS to PrefType.STRING,
+                    KEY_SHOW_CAMERA_SWIPE_ACTIONS to PrefType.BOOL,
+                    KEY_CONTRAST_LEVEL to PrefType.INT,
+                    KEY_CARD_CORNER_RADIUS to PrefType.INT,
+                    KEY_CARD_BORDER_WIDTH to PrefType.INT,
+                    KEY_CUSTOM_ACCENT_COLORS to PrefType.STRING,
+                    KEY_CAMERA_STREAM_OVERRIDES to PrefType.STRING,
+                    KEY_SHOW_LAST_IMAGE_WHILE_LOADING to PrefType.BOOL,
+                    KEY_GRID_STREAM_TYPE to PrefType.STRING,
+                    KEY_FULLSCREEN_STREAM_TYPE to PrefType.STRING,
+                    KEY_PREFER_SUB_STREAM_GRID to PrefType.BOOL,
+                    KEY_PREFER_SUB_STREAM_FULLSCREEN to PrefType.BOOL,
+                    KEY_KEEP_OFFSCREEN_TILES_ALIVE to PrefType.BOOL,
+                    KEY_RTSP_RECONNECT_ATTEMPTS to PrefType.INT,
+                    KEY_RTSP_RECONNECT_BASE_DELAY_SECONDS to PrefType.INT,
+                )
         }
     }
+
+private enum class PrefType { BOOL, INT, LONG, STRING }
