@@ -17,6 +17,9 @@ import net.triton.frigateviewer.core.data.ServerRepository
 import net.triton.frigateviewer.core.data.UserSettingsRepository
 import net.triton.frigateviewer.core.model.CameraConfig
 import net.triton.frigateviewer.core.model.FrigateEvent
+import net.triton.frigateviewer.core.model.MotionActivity
+import net.triton.frigateviewer.core.model.RecordingGap
+import net.triton.frigateviewer.core.model.ReviewSegment
 import net.triton.frigateviewer.core.network.ApiResult
 import net.triton.frigateviewer.core.network.WifiMonitor
 import javax.inject.Inject
@@ -73,6 +76,14 @@ data class CamerasUiState(
      * blue" LiveIndicatorDot state (#20).
      */
     val activeEventCameraNames: Set<String> = emptySet(),
+    /** Recent-events side panel (#16/#17) — list mode data for whichever camera has the panel open. */
+    val sidePanelEvents: List<FrigateEvent> = emptyList(),
+    val sidePanelEventsLoading: Boolean = false,
+    /** Recent-events side panel — timeline mode data, fetched lazily on first switch to Timeline. */
+    val sidePanelReviewSegments: List<ReviewSegment> = emptyList(),
+    val sidePanelRecordingGaps: List<RecordingGap> = emptyList(),
+    val sidePanelMotionActivity: List<MotionActivity> = emptyList(),
+    val sidePanelTimelineLoading: Boolean = false,
 )
 
 @HiltViewModel
@@ -413,6 +424,61 @@ class CamerasViewModel
         /** Clear a cached recent-event so the next swipe refetches. */
         fun clearRecentEvent(cameraName: String) {
             _state.value = _state.value.copy(recentEvents = _state.value.recentEvents - cameraName)
+        }
+
+        private var sidePanelCameraName: String? = null
+
+        /** Fetch a recent-events list for [cameraName]'s live-view side panel (#16), List mode. */
+        fun loadSidePanelEvents(cameraName: String) {
+            if (sidePanelCameraName == cameraName && _state.value.sidePanelEvents.isNotEmpty()) return
+            sidePanelCameraName = cameraName
+            viewModelScope.launch {
+                _state.value = _state.value.copy(sidePanelEventsLoading = true)
+                when (val r = repo.events(camera = cameraName, limit = 25)) {
+                    is ApiResult.Success -> {
+                        _state.value =
+                            _state.value.copy(sidePanelEvents = r.data, sidePanelEventsLoading = false)
+                    }
+
+                    else -> {
+                        _state.value = _state.value.copy(sidePanelEventsLoading = false)
+                    }
+                }
+            }
+        }
+
+        /** Fetch review/recording-gap/motion data for [cameraName]'s side panel (#17), Timeline mode. */
+        fun loadSidePanelTimeline(
+            cameraName: String,
+            timeRangeHours: Float,
+        ) {
+            viewModelScope.launch {
+                _state.value = _state.value.copy(sidePanelTimelineLoading = true)
+                val nowSec = System.currentTimeMillis() / 1000.0
+                val afterSec = nowSec - timeRangeHours * 3_600.0
+                val reviewResult = repo.review(cameras = cameraName, after = afterSec, before = nowSec)
+                val gapsResult = repo.recordingGaps(cameras = cameraName, after = afterSec, before = nowSec)
+                val motionResult = repo.motionActivity(cameras = cameraName, after = afterSec, before = nowSec)
+                _state.value =
+                    _state.value.copy(
+                        sidePanelReviewSegments = (reviewResult as? ApiResult.Success)?.data ?: emptyList(),
+                        sidePanelRecordingGaps = (gapsResult as? ApiResult.Success)?.data ?: emptyList(),
+                        sidePanelMotionActivity = (motionResult as? ApiResult.Success)?.data ?: emptyList(),
+                        sidePanelTimelineLoading = false,
+                    )
+            }
+        }
+
+        /** Reset the side panel's cached data — called when the fullscreen-focused camera changes/closes. */
+        fun clearSidePanel() {
+            sidePanelCameraName = null
+            _state.value =
+                _state.value.copy(
+                    sidePanelEvents = emptyList(),
+                    sidePanelReviewSegments = emptyList(),
+                    sidePanelRecordingGaps = emptyList(),
+                    sidePanelMotionActivity = emptyList(),
+                )
         }
 
         /**

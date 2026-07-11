@@ -62,6 +62,17 @@ correctly, correct interval, no crashes); Pixel 8 testing deferred per user requ
 comment marks where a Developer Options polling-rate control should hook in once one exists. #20 removed from
 the table below.
 
+**Resolved 2026-07-11 (#16, #17):** Built together — one new side panel (`LiveEventsPanel.kt`), shown next to
+the live view only in fullscreen landscape (matches the reference wishlist screenshots, `todo_005/006.png`),
+with a Material3 segmented-button toggle between List mode (#16 — a scrollable recent-events list with
+thumbnail/label/time/duration, plus a label filter) and Timeline mode (#17 — a compact vertical activity
+timeline, reusing `feature/events/TimelineRenderer.kt`'s internal `drawActivityTimeline` so it never drifts from
+the Events screen's own timeline). Per explicit user direction, doesn't recreate the mockup pixel-for-pixel —
+built with this app's own Material3 components instead. Verified live on the emulator: real events with
+thumbnails/bounding boxes in List mode, real activity waveform + scrubber in Timeline mode, label filter, and
+"View all events" navigating to the Events tab filtered to the camera (reusing the same `onNavigateToEvents`
+callback the grid tiles' existing swipe-left panel already uses). #16 and #17 removed from the tables below.
+
 **Resolved 2026-07-11 (#15, scoped down):** Scoped to app preferences only, per explicit product decision —
 servers and credentials are never included (separate system, separate trust boundary). New "Backup & Restore"
 settings page (`BackupSettingsScreen.kt`) exports appearance/camera-grid/streaming/events preferences to a
@@ -82,8 +93,6 @@ just shows a success toast. #15 removed from the table below.
 
 | # | Title | Priority | Status | File |
 |---|-------|----------|--------|------|
-| 16 | Recent-events side panel next to live view | Low | 🔴 | `issues/backlog-2026-07-10.md#16` |
-| 17 | Timeline-strip side panel next to live view | Low | 🔴 | `issues/backlog-2026-07-10.md#17` |
 | 19 | Notifications and Downloads settings are placeholders — needs product scoping | Medium | 🔴 | `issues/backlog-2026-07-10.md#19` |
 
 ## Chores

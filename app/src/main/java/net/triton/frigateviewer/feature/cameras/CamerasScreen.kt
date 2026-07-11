@@ -4,6 +4,7 @@ package net.triton.frigateviewer.feature.cameras
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
@@ -82,6 +83,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -170,7 +172,10 @@ fun CamerasScreen(
     // #20: the "is an event open right now" poll is scoped to whichever single camera is
     // actually being viewed in fullscreen, not every grid tile — mirrors this app's
     // screenVisible gating so it never polls a camera nobody's looking at.
-    LaunchedEffect(focused) { vm.setFocusedCamera(focused) }
+    LaunchedEffect(focused) {
+        vm.setFocusedCamera(focused)
+        vm.clearSidePanel()
+    }
 
     // Full ordered list for edit sheet (visible + hidden, in persisted order)
     val allCamerasOrdered =
@@ -262,6 +267,15 @@ fun CamerasScreen(
                             onSwitchCamera = { name -> focused = name },
                             recordingEnabled = state.cameras[focused!!]?.record?.enabled == true,
                             activeEventNow = state.activeEventCameraNames.contains(focused!!),
+                            sidePanelEvents = state.sidePanelEvents,
+                            sidePanelEventsLoading = state.sidePanelEventsLoading,
+                            sidePanelReviewSegments = state.sidePanelReviewSegments,
+                            sidePanelRecordingGaps = state.sidePanelRecordingGaps,
+                            sidePanelMotionActivity = state.sidePanelMotionActivity,
+                            sidePanelTimelineLoading = state.sidePanelTimelineLoading,
+                            onRequestSidePanelEvents = { vm.loadSidePanelEvents(focused!!) },
+                            onRequestSidePanelTimeline = { hours -> vm.loadSidePanelTimeline(focused!!, hours) },
+                            onOpenEvents = { onNavigateToEvents(focused, null, null) },
                             onClose = { focused = null },
                         )
                     } else {
@@ -715,6 +729,15 @@ private fun FocusedTile(
     onSwitchCamera: (String) -> Unit = {},
     recordingEnabled: Boolean = false,
     activeEventNow: Boolean = false,
+    sidePanelEvents: List<FrigateEvent> = emptyList(),
+    sidePanelEventsLoading: Boolean = false,
+    sidePanelReviewSegments: List<net.triton.frigateviewer.core.model.ReviewSegment> = emptyList(),
+    sidePanelRecordingGaps: List<net.triton.frigateviewer.core.model.RecordingGap> = emptyList(),
+    sidePanelMotionActivity: List<net.triton.frigateviewer.core.model.MotionActivity> = emptyList(),
+    sidePanelTimelineLoading: Boolean = false,
+    onRequestSidePanelEvents: () -> Unit = {},
+    onRequestSidePanelTimeline: (Float) -> Unit = {},
+    onOpenEvents: () -> Unit = {},
     onClose: () -> Unit,
 ) {
     val baseUrl = effectiveBaseUrl ?: server?.baseUrl()
@@ -840,7 +863,15 @@ private fun FocusedTile(
                 Text("← $cameraName (tap to close)", style = MaterialTheme.typography.titleMedium)
             }
         }
-        Box(if (isFullScreen) Modifier.fillMaxWidth().weight(1f) else Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
+
+        val configuration = LocalConfiguration.current
+        val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        // #16/#17: the recent-events side panel only makes sense where there's spare width —
+        // fullscreen landscape, matching the reference wishlist layout. Portrait fullscreen and
+        // the non-fullscreen card view are unchanged.
+        val showEventsPanel = isFullScreen && isLandscape
+
+        val videoContent: @Composable () -> Unit = {
             var liveStreamState by remember { mutableStateOf<LiveStreamState>(LiveStreamState.Idle) }
             StreamContent(
                 liveStreamOption = effectiveLiveStreamOption,
@@ -886,6 +917,31 @@ private fun FocusedTile(
                     activeEventNow = activeEventNow,
                     liveStreamState = liveStreamState,
                 )
+            }
+        }
+
+        if (showEventsPanel) {
+            Row(Modifier.fillMaxWidth().weight(1f)) {
+                Box(Modifier.weight(1f).fillMaxHeight()) { videoContent() }
+                LiveEventsPanel(
+                    cameraName = cameraName,
+                    baseUrl = baseUrl,
+                    imageLoader = imageLoader,
+                    events = sidePanelEvents,
+                    eventsLoading = sidePanelEventsLoading,
+                    reviewSegments = sidePanelReviewSegments,
+                    recordingGaps = sidePanelRecordingGaps,
+                    motionActivity = sidePanelMotionActivity,
+                    timelineLoading = sidePanelTimelineLoading,
+                    onRequestEvents = onRequestSidePanelEvents,
+                    onRequestTimeline = onRequestSidePanelTimeline,
+                    onOpenEvents = onOpenEvents,
+                    modifier = Modifier.fillMaxHeight().width(260.dp),
+                )
+            }
+        } else {
+            Box(if (isFullScreen) Modifier.fillMaxWidth().weight(1f) else Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
+                videoContent()
             }
         }
         if (!isFullScreen && !hideEventImage) {
