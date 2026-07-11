@@ -3,8 +3,9 @@ package net.triton.frigateviewer.feature.settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -14,9 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
@@ -43,21 +42,30 @@ fun AdvancedSettingsScreen(
     }
 
     SettingsSubPageScaffold(title = "Advanced", onBack = onBack) {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("System stats", style = MaterialTheme.typography.titleMedium)
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Checkbox(checked = autoRefresh, onCheckedChange = { autoRefresh = it })
-                Text("Auto", style = MaterialTheme.typography.bodyMedium)
-                Button(onClick = { vm.fetchStats() }) { Text("Refresh") }
-            }
-        }
+        SettingsSectionHeader("System stats")
+
+        SwitchSetting(
+            title = "Auto-refresh",
+            description = "Poll Frigate's stats endpoint every 3 seconds.",
+            icon = Icons.Filled.Sync,
+            checked = autoRefresh,
+            onCheckedChange = { autoRefresh = it },
+        )
+
+        ActionSetting(
+            title = "Refresh now",
+            icon = Icons.Filled.Refresh,
+            actionLabel = "Refresh",
+            onClick = vm::fetchStats,
+        )
+
         when (val result = stats) {
             null -> {
-                CircularProgressIndicator()
+                SettingsCard {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                        CircularProgressIndicator()
+                    }
+                }
             }
 
             is ApiResult.Success -> {
@@ -68,15 +76,21 @@ fun AdvancedSettingsScreen(
             }
 
             is ApiResult.HttpError -> {
-                Text("HTTP ${result.code}: ${result.message}", color = MaterialTheme.colorScheme.error)
+                SettingsCard {
+                    Text("HTTP ${result.code}: ${result.message}", color = MaterialTheme.colorScheme.error)
+                }
             }
 
             is ApiResult.NetworkError -> {
-                Text(result.cause.message ?: "Network error", color = MaterialTheme.colorScheme.error)
+                SettingsCard {
+                    Text(result.cause.message ?: "Network error", color = MaterialTheme.colorScheme.error)
+                }
             }
 
             is ApiResult.ParseError -> {
-                Text("Server returned an unexpected response", color = MaterialTheme.colorScheme.error)
+                SettingsCard {
+                    Text("Server returned an unexpected response", color = MaterialTheme.colorScheme.error)
+                }
             }
         }
     }

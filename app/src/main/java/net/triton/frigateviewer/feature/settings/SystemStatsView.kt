@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -96,8 +97,12 @@ fun SystemStatsOverview(raw: JsonObject) {
         }
 
         if (stats.detectors.isNotEmpty()) {
-            Text("Detectors", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Card(Modifier.fillMaxWidth()) {
+            SettingsSectionHeader("Detectors")
+            Card(
+                Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.large,
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            ) {
                 Column(Modifier.padding(vertical = 4.dp)) {
                     stats.detectors.forEachIndexed { index, d ->
                         if (index > 0) HorizontalDivider()
@@ -108,8 +113,12 @@ fun SystemStatsOverview(raw: JsonObject) {
         }
 
         if (stats.cameras.isNotEmpty()) {
-            Text("Cameras", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Card(Modifier.fillMaxWidth()) {
+            SettingsSectionHeader("Cameras")
+            Card(
+                Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.large,
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            ) {
                 Column(Modifier.padding(vertical = 4.dp)) {
                     stats.cameras.forEachIndexed { index, c ->
                         if (index > 0) HorizontalDivider()
@@ -133,7 +142,11 @@ private fun StatCard(
     percent: Int?,
     modifier: Modifier = Modifier,
 ) {
-    Card(modifier) {
+    Card(
+        modifier,
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+    ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(value ?: "—", style = MaterialTheme.typography.headlineSmall)

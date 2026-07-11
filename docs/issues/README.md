@@ -83,6 +83,14 @@ exported, hand-edited `camera_grid_columns_v1` from 1→3 in the exported file, 
 the Cameras View settings page now shows "Grid columns: 3x" — proving the import genuinely writes values, not
 just shows a success toast. #15 removed from the table below.
 
+**Resolved 2026-07-11 (#18):** Extended the Appearance/Streaming/Events card-per-row + section-header redesign to
+the four remaining real sub-pages — About, Advanced, Device Capabilities, Servers — using the same shared
+`SettingsSectionHeader`/`SettingsCard`/`SwitchSetting`/`ActionSetting` components. `SystemStatsView.kt`'s stat
+cards and section labels were also restyled to match. Notifications/Downloads intentionally skipped (still
+placeholders, see #19); Servers' `ServerFormSheet` modal intentionally left alone (different UI surface, not a
+page-level list). Verified live on the emulator across all four pages, no regressions. #18 removed from the
+table below.
+
 ## Tech debt
 
 | # | Title | Priority | Status | File |
@@ -99,7 +107,6 @@ just shows a success toast. #15 removed from the table below.
 
 | # | Title | Priority | Status | File |
 |---|-------|----------|--------|------|
-| 18 | Settings visual redesign — extend to remaining sub-pages | Low | 🔴 | `issues/backlog-2026-07-10.md#18` |
 | 21 | Full testTag sweep | Low | 🔴 | `issues/backlog-2026-07-10.md#21` |
 
 ## Conventions

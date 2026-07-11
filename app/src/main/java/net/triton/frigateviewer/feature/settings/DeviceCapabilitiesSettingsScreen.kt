@@ -14,13 +14,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Speaker
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.MediaLibraryInfo
@@ -68,53 +72,55 @@ fun DeviceCapabilitiesSettingsScreen(onBack: () -> Unit) {
         )
 
     SettingsSubPageScaffold(title = "Device Capabilities", onBack = onBack) {
+        SettingsSectionHeader("Audio")
+
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             capabilityItems.chunked(2).forEach { row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     row.forEach { (label, value) ->
-                        Card(Modifier.weight(1f)) {
-                            Column(Modifier.padding(12.dp)) {
-                                Text(
-                                    label,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                Text(value, style = MaterialTheme.typography.bodyMedium)
-                            }
-                        }
+                        CapabilityCard(label, value, Modifier.weight(1f))
                     }
                     if (row.size == 1) Spacer(Modifier.weight(1f))
                 }
             }
         }
 
-        Text("Detected outputs", style = MaterialTheme.typography.labelLarge)
-        Column {
-            outputDevices.forEach { device ->
-                ListItem(
-                    headlineContent = { Text(device.productName.toString()) },
-                    supportingContent = { Text(device.typeLabel()) },
-                    leadingContent = {
-                        Icon(
-                            if (device.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP) {
-                                Icons.Filled.Headphones
-                            } else {
-                                Icons.Filled.Speaker
-                            },
-                            contentDescription = null,
-                        )
-                    },
-                )
+        SettingsSectionHeader("Detected outputs")
+
+        SettingsCard {
+            Column {
+                outputDevices.forEachIndexed { index, device ->
+                    if (index > 0) HorizontalDivider()
+                    ListItem(
+                        headlineContent = { Text(device.productName.toString()) },
+                        supportingContent = { Text(device.typeLabel()) },
+                        leadingContent = {
+                            Icon(
+                                if (device.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP) {
+                                    Icons.Filled.Headphones
+                                } else {
+                                    Icons.Filled.Speaker
+                                },
+                                contentDescription = null,
+                            )
+                        },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    )
+                }
             }
         }
 
-        Column {
-            Text("Media3 ${MediaLibraryInfo.VERSION}", style = MaterialTheme.typography.labelMedium)
-            Text(
-                "H264: supported | H265: ${if (h265ok) "supported" else "not supported"}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        SettingsSectionHeader("Codec support")
+
+        SettingsCard {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Media3 ${MediaLibraryInfo.VERSION}", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "H264: supported | H265: ${if (h265ok) "supported" else "not supported"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
@@ -131,3 +137,21 @@ private fun AudioDeviceInfo.typeLabel() =
         AudioDeviceInfo.TYPE_HDMI -> "HDMI"
         else -> "Other"
     }
+
+@Composable
+private fun CapabilityCard(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        modifier,
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}

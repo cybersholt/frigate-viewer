@@ -11,17 +11,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -70,6 +72,8 @@ fun ServersSettingsScreen(
     var testingId by remember { mutableStateOf<String?>(null) }
 
     SettingsSubPageScaffold(title = "Servers", onBack = onBack) {
+        SettingsSectionHeader("Servers")
+
         state.servers.forEach { srv ->
             ServerRow(
                 server = srv,
@@ -101,7 +105,14 @@ fun ServersSettingsScreen(
                 },
             )
         }
-        Button(onClick = { editing = ServerForm() }) { Text("Add server") }
+
+        ActionSetting(
+            title = "Add server",
+            description = "Configure a new Frigate server connection.",
+            icon = Icons.Filled.Add,
+            actionLabel = "Add",
+            onClick = { editing = ServerForm() },
+        )
     }
 
     editing?.let { form ->
@@ -189,17 +200,32 @@ internal fun ServerRow(
     onDelete: () -> Unit,
     onTest: () -> Unit,
 ) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = server.name + if (active) "  (active)" else "",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.weight(1f),
+    SettingsCard {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Filled.Dns,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(24.dp),
                 )
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = server.name + if (active) "  (active)" else "",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        server.baseUrl(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
-            Text(server.baseUrl(), style = MaterialTheme.typography.bodySmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (!active) TextButton(onClick = onMakeActive) { Text("Make active") }
                 TextButton(onClick = onTest) { Text("Test") }
                 TextButton(onClick = onEdit) { Text("Edit") }
