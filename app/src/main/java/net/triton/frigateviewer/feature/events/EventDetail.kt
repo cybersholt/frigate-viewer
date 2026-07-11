@@ -78,6 +78,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -123,6 +124,7 @@ import net.triton.frigateviewer.core.media.extractFrame
 import net.triton.frigateviewer.core.model.FrigateEvent
 import net.triton.frigateviewer.core.network.ApiResult
 import net.triton.frigateviewer.core.network.FrigateClient
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.util.Locale
 import javax.inject.Inject
 
@@ -143,6 +145,8 @@ interface EventDetailEntryPoint {
     fun frigateClient(): FrigateClient
 
     fun serverRepository(): ServerRepository
+
+    fun credentialStore(): net.triton.frigateviewer.core.data.CredentialStore
 }
 
 data class EventDetailUiState(
@@ -495,8 +499,10 @@ fun EventDetailScreen(
     val imageLoader = entryPoint.imageLoader()
     val frigateClient = entryPoint.frigateClient()
     val serverRepo = entryPoint.serverRepository()
+    val credentialStore = entryPoint.credentialStore()
     val fullScreen = LocalFullScreenMode.current
     var previewYFraction by remember { mutableStateOf<Float?>(null) }
+    val downloadScope = rememberCoroutineScope()
 
     val okHttpClient by produceState<okhttp3.OkHttpClient?>(initialValue = null) {
         val server = serverRepo.activeServer()
@@ -684,7 +690,13 @@ fun EventDetailScreen(
                                     leadingIcon = { Icon(Icons.Filled.Download, null) },
                                     onClick = {
                                         showMenu = false
-                                        if (clipUrl != null) downloadClip(context, ev, clipUrl)
+                                        if (clipUrl != null) {
+                                            downloadScope.launch {
+                                                val server = serverRepo.activeServer()
+                                                val authHeader = server?.let { credentialStore.authHeader(it.id) }
+                                                downloadClip(context, ev, clipUrl, okHttpClient, authHeader)
+                                            }
+                                        }
                                     },
                                     enabled = ev.hasClip,
                                 )
@@ -1434,10 +1446,19 @@ private fun fmtRelativeTime(epochSecs: Double): String {
     }
 }
 
+/**
+ * `DownloadManager` is a separate system service — it shares none of the app's OkHttp
+ * auth (interceptor headers, session cookies), so an authenticated Frigate server 401s a
+ * bare request. [authHeader] covers Basic/Bearer auth; the session cookie (Frigate JWT mode)
+ * is pulled directly from [okHttpClient]'s already-loaded [okhttp3.CookieJar] so this doesn't
+ * re-derive cookie parsing/serialization that `SessionCookieJar` already owns.
+ */
 private fun downloadClip(
     context: Context,
     ev: FrigateEvent,
     url: String,
+    okHttpClient: okhttp3.OkHttpClient?,
+    authHeader: String?,
 ) {
     val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
     val request =
@@ -1447,5 +1468,16 @@ private fun downloadClip(
             .setDescription("Frigate event ${ev.id}")
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "frigate_${ev.id}.mp4")
+    if (authHeader != null) request.addRequestHeader("Authorization", authHeader)
+    val cookieHeader =
+        okHttpClient?.let { client ->
+            url.toHttpUrlOrNull()?.let { httpUrl ->
+                client.cookieJar
+                    .loadForRequest(httpUrl)
+                    .takeIf { it.isNotEmpty() }
+                    ?.joinToString("; ") { "${it.name}=${it.value}" }
+            }
+        }
+    if (!cookieHeader.isNullOrEmpty()) request.addRequestHeader("Cookie", cookieHeader)
     dm.enqueue(request)
 }

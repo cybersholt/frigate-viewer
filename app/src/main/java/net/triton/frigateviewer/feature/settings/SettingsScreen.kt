@@ -11,7 +11,6 @@ import androidx.compose.material.icons.automirrored.filled.EventNote
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
@@ -42,7 +41,6 @@ object SettingsRoutes {
     const val STREAMING = "settings/streaming"
     const val EVENTS = "settings/events"
     const val NOTIFICATIONS = "settings/notifications"
-    const val DOWNLOADS = "settings/downloads"
     const val BACKUP = "settings/backup"
     const val ADVANCED = "settings/advanced"
     const val DEVICE_CAPABILITIES = "settings/device_capabilities"
@@ -122,13 +120,6 @@ fun SettingsScreen(
                 iconContainerColor = cs.tertiaryContainer,
                 title = "Notifications",
                 onClick = { onNavigate(SettingsRoutes.NOTIFICATIONS) },
-            )
-            SettingsNavRow(
-                icon = Icons.Filled.Download,
-                iconTint = cs.onPrimaryContainer,
-                iconContainerColor = cs.primaryContainer,
-                title = "Downloads",
-                onClick = { onNavigate(SettingsRoutes.DOWNLOADS) },
             )
             SettingsNavRow(
                 icon = Icons.Filled.SettingsBackupRestore,
