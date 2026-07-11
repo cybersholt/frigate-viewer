@@ -27,35 +27,30 @@ Not affiliated with the Frigate project.
 
 ## Status
 
-**v0.2 — feature-complete trunk for the headline functionality.**
+**Actively developed, pre-1.0.** The core Frigate-viewing experience is built, verified live on both an emulator
+and a physical Pixel 8, and has grown well past the original v0.2 scope this README once tracked feature-by-feature.
+That table drifted out of sync with reality (a lesson learned — see below), so this section now points at the two
+living sources of truth instead of duplicating them:
 
-| Feature | State |
+- **What's shipped**, in full mechanical detail: [`CHANGELOG.md`](CHANGELOG.md).
+- **What's still open**: the local issue tracker at [`docs/issues/README.md`](docs/issues/README.md) — GitHub
+  Issues are disabled on this repo, so open work lives there instead.
+
+| Area | State |
 |---|---|
-| Server CRUD (HTTPS, basic auth, Frigate JWT login) | implemented |
-| Per-server Retrofit + OkHttp (no more placeholder base URL) | implemented |
-| In-memory cookie jar for Frigate JWT session | implemented |
-| Cameras grid w/ snapshot tiles (`/api/<cam>/latest.jpg`) | implemented |
-| Tap-to-focus full-screen tile | implemented |
-| Live WebRTC focused tile (go2rtc WS signaling, trickle ICE) | implemented |
-| Events list with thumbnails + tap-to-detail | implemented |
-| Event detail (snapshot + Media3 clip playback) | implemented |
-| Event delete / retain toggle | implemented |
+| Live streaming — WebRTC / RTSP / snapshot, fullscreen, pinch-zoom, PiP | implemented |
+| Camera grid — auto-refresh, skeleton loading, swipe actions, drag-reorder/hide | implemented |
+| Events — Room offline cache, filters, activity timeline, VOD + clip playback | implemented |
+| MQTT push notifications with deep-link to event detail | implemented |
+| Server management — multi-server CRUD, switch active, per-server local-network URL | implemented |
 | Encrypted credential storage (Tink AEAD + Android Keystore) | implemented |
-| Self-signed certificate support (user-pinned PEM) | implemented |
-| MQTT foreground service (HiveMQ MQTT5, subscribe `frigate/events` + `frigate/reviews`) | implemented |
-| Event notifications w/ deep-link to detail | implemented |
-| Service auto-start on server save / active switch | implemented |
-| Logout (clears JWT + invalidates per-server client) | implemented |
-| Room cache for offline event browsing (instant-load on screen open) | implemented |
-| i18n (en, es, fr, de, it, pt, pl, sv, uk) | implemented (core strings; full RN parity pending) |
-| Adaptive app icon (Material You monochrome supported) | implemented |
-| MockWebServer unit tests for every `ApiResult` branch | implemented |
-| Recordings VOD timeline playback | deferred to v0.3 |
-| Multi-server fast-switch UI | deferred to v0.3 |
-| Picture-in-Picture for focused tile | deferred to v0.3 |
-| Android Auto / Android TV layouts | deferred to v0.4 |
+| Self-signed certificate support (per-server pinned PEM import UI) | implemented |
+| Settings — card/section-header redesign, Backup & Restore, Developer Options + crash handler | implemented |
+| i18n (locales scaffolded: de, es, fr, it, pl, pt, sv, uk) | partial — core strings only, full RN parity pending |
+| Simultaneous multi-server camera grid (today: one active server at a time) | not started |
+| Android Auto / Android TV layouts | not started |
 
-Architecture in place. Remaining work is feature additions, not foundational rework.
+Architecture is stable; remaining work is feature polish and backlog items, not foundational rework.
 
 ---
 
@@ -149,14 +144,14 @@ Captured in [`docs/adr/0001-native-kotlin-rewrite.md`](docs/adr/0001-native-kotl
 | HTTP | Retrofit + OkHttp + kotlinx.serialization | Ktor client, raw OkHttp | Retrofit's `Response<T>` is the keystone of the JSON-safety pattern. Ktor's high-level client lacks an equivalent. |
 | Settings | DataStore (Preferences) | SharedPreferences, Room | SharedPreferences is dead, Room is overkill for ~10 settings rows. |
 | Credentials | Tink AEAD + Android Keystore | EncryptedSharedPreferences, raw Keystore | EncryptedSharedPreferences is deprecated and corrupts on some OEMs; raw Keystore lacks AEAD primitives. |
-| Local DB | Room (deferred to v0.3) | SQLDelight | Room's KSP migration tooling is stronger; SQLDelight would have been the choice for KMP. |
+| Local DB | Room (offline event cache) | SQLDelight | Room's KSP migration tooling is stronger; SQLDelight would have been the choice for KMP. |
 | Video grid | Media3 ExoPlayer | libVLC bindings, native MediaPlayer | Media3 is Google-maintained, handles 6–8 concurrent HLS streams cleanly, supports RTSP natively. |
 | Video focused tile | stream-webrtc-android via go2rtc WS | go2rtc HTTP WHEP, libVLC | WHEP over HTTP lacks ICE trickle, fails behind NAT. WS signaling supports trickle natively. |
 | Push | HiveMQ MQTT client | FCM, ntfy, polling | Frigate publishes events to MQTT. FCM would require a relay; ntfy adds an external dependency; polling drains battery. |
 | Image loading | Coil 3 | Glide, Picasso | Coil 3 has clean OkHttp integration for auth headers, native Compose support. |
 | Self-signed cert | Per-server pinned PEM via custom TrustManager | "Trust all" toggle, system CA only | Trust-all is a security incident waiting to happen. System-only locks out users with internal CAs. Pinned PEM is the right middle ground. |
 | Build | Gradle Kotlin DSL + version catalog | Groovy, no catalog | Catalog enforces version consistency across modules and makes upgrades a one-file diff. |
-| min/target SDK | 26 / 35 | 24/34, 28/35 | 26 unlocks `Notification` channels and modern Keystore APIs; 35 is current target. |
+| min/target SDK | 26 / 36 | 24/34, 28/35 | 26 unlocks `Notification` channels and modern Keystore APIs; 36 is current target. |
 
 ---
 
@@ -298,17 +293,19 @@ The RN fork had nine locales (de, en, es, fr, it, pl, pt, sv, uk). They're prese
 
 If the release keystore is lost, the app must be republished under a new package ID. Mitigations: encrypted offline backup on two separate volumes, documented in `docs/runbooks/release.md`. There is no cloud backup — that would defeat the point of local-only secrets.
 
-### Risk: WebRTC isn't fully wired yet
+### Risk: automated test coverage is thin
 
-`LivePlayer.kt` is currently HLS-only via Media3. The WebRTC focused-tile work is v0.2. Until then, focused-tile latency is the ExoPlayer HLS 1–3s, not the target <500ms. The user-visible app still loads cameras and events correctly — the architectural slot for WebRTC is there, it just isn't filled.
+`SafeApiCallTest.kt` (MockWebServer) covers the `safeApiCall` funnel's four `ApiResult` branches — 200 success,
+401 HTML error, 500 HTML error, socket close, empty-body parse error — but it's one file. Everything else
+(ViewModels, repositories, UI) is verified by hand each session (live device/emulator runs, not automated
+assertions). The architecture makes the JSON-safety bug class structurally hard to reintroduce even without
+tests, but regressions elsewhere rely on manual verification catching them.
 
-### Risk: MQTT subscription not yet implemented
+### Risk: multi-server support is CRUD-only, not a combined view
 
-`MqttForegroundService` is a manifest-compliant stub. It declares `dataSync` correctly, holds a foreground notification, and survives Android 14+'s service-type enforcement, but it does not yet connect to a broker. Push notifications won't work until v0.2. Until then, the app polls on user navigation.
-
-### Risk: no test suite yet
-
-The `safeApiCall` invariant is enforced architecturally (via the sealed type and a single funnel), but the four-branch exhaustiveness needs MockWebServer tests covering: 200 valid JSON, 200 invalid JSON, 401 HTML body, 401 JSON body, 500 HTML body, 500 JSON body, timeout, socket close. These are scaffolded as planned in v0.2 and not yet written. The code is correct by construction; the regression nets aren't there yet.
+Servers can be added, edited, and switched active (Settings → Servers), and each has independent local-network
+URL/SSID handling. What's not built: viewing multiple servers' cameras in one combined grid, or a quick-switch
+control outside Settings. Today, switching servers means navigating to Settings and tapping "Make active."
 
 ### Risk: single-author, single-machine
 
@@ -337,6 +334,8 @@ This repo follows the "Anatomy of a Claude Code Project" pattern. The files that
 | [`.claude/settings.local.json`](.claude/settings.local.json) | Wires the always-on hooks. |
 | [`docs/adr/`](docs/adr) | Architecture Decision Records. Read before reversing a decision. |
 | [`docs/runbooks/`](docs/runbooks) | Operational procedures (release, signing, on-call). |
+| [`docs/issues/`](docs/issues) | Local markdown issue tracker (GitHub Issues are disabled on this repo). `README.md` there is the live open-items index. |
+| [`CHANGELOG.md`](CHANGELOG.md) | The full, current, mechanically-detailed feature list — the source of truth this top-level README now defers to instead of duplicating. |
 | `app/.../core/network/CLAUDE.md` | Local rules at the JSON-safety sharp edge. |
 | `app/.../core/data/CLAUDE.md` | Local rules at the credential-storage sharp edge. |
 | `app/.../notification/CLAUDE.md` | Local rules at the Android 14+ foreground-service sharp edge. |
@@ -351,12 +350,12 @@ The local `CLAUDE.md` files are the most important defense against re-introducin
 
 - JDK 17 (Temurin recommended)
 - Android Studio Otter (2026.1) or newer, OR system Gradle 8.13+
-- Android SDK 35
+- Android SDK 36
 
 ### First-time setup
 
 ```bash
-git clone https://github.com/THarmon77/frigate-viewer.git
+git clone https://github.com/cybersholt/frigate-viewer.git
 cd frigate-viewer
 git checkout kotlin-rewrite
 
@@ -369,7 +368,7 @@ Gradle wrapper (`gradlew`, `gradlew.bat`, `gradle/wrapper/gradle-wrapper.jar`) i
 ### Continuous integration
 
 Every push to `kotlin-rewrite` (and every PR targeting it) runs `.github/workflows/android-ci.yml`:
-- JDK 17 (Temurin) + Android SDK 35 set up on `ubuntu-latest`
+- JDK 17 (Temurin) + Android SDK 36 set up on `ubuntu-latest`
 - `:app:lintDebug`, `:app:testDebugUnitTest`, `:app:assembleDebug`
 - Debug APK uploaded as a workflow artifact (`frigate-viewer-debug-<sha>`) — download from the Actions tab without needing a local Android toolchain
 - Lint + test reports uploaded on success or failure
@@ -404,31 +403,23 @@ Short version: bump `versionName` + `versionCode`, run `:app:bundleRelease`, ver
 
 ## Roadmap
 
-### v0.2 — make it actually useful
+Day-to-day feature and bug-fix work is tracked in [`docs/issues/README.md`](docs/issues/README.md), a local
+markdown issue tracker (GitHub Issues are disabled on this repo). The version-numbered roadmap this section used
+to carry (v0.2 / v0.3 / v0.4) is retired — nearly everything it listed (WebRTC, MQTT, Room offline cache,
+recordings VOD + clip playback, Picture-in-Picture, self-signed cert pinning UI) shipped over many sessions and
+the table was never updated to say so. See [`CHANGELOG.md`](CHANGELOG.md) for the complete, current feature list.
 
-- WebRTC focused tile via `stream-webrtc-android` over go2rtc WS signaling
-- MQTT client connect + subscribe to `frigate/events` / `frigate/reviews`
-- Notification on motion with snapshot thumbnail
-- Event detail view + clip playback via Media3 HLS VOD
-- Snapshot / latest.jpg rendering via Coil with auth headers
-- MockWebServer test suite covering every `ApiResult` branch
+### Still open
 
-### v0.3 — polish and resilience
-
-- Room cache for offline event browsing
-- Multi-server fast-switch UI (data model already supports it)
-- i18n re-port: nine locales from the RN app re-extracted to Android resources
-- Picture-in-Picture for the focused tile
-- Android Auto / Android TV layout (Compose adaptive APIs)
-
-### v0.4 — beyond Android
-
-- Wear OS companion (event glance, snapshot view)
-- Kotlin Multiplatform split if iOS parity is required: `core/` shared, UI per-platform
+- Simultaneous multi-server camera grid (today: add/edit/switch-active per server, not a combined view)
+- i18n re-port: nine locales scaffolded but only core strings are translated; full RN parity pending
+- Notifications and Downloads Settings pages are placeholders pending a product decision on scope
+- Android Auto / Android TV layouts
+- Wear OS companion, Kotlin Multiplatform / iOS split — both still hypothetical, no active work
 
 ### Indefinitely deferred
 
-- Push via FCM. Requires a relay server. Out of scope for a self-hosted-first app.
+- Push via FCM. MQTT already covers this without needing a relay server.
 - Cloud sync of server list. Defeats the security model.
 - Built-in VPN. Tailscale / WireGuard already solve this better than we could.
 

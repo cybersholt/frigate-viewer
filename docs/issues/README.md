@@ -97,17 +97,17 @@ table below.
 |---|-------|----------|--------|------|
 | — | Cleartext traffic enabled app-wide (`usesCleartextTraffic="true"`) — accepted, documented trade-off (enables per-server plain-HTTP for local Frigate instances; not revertable without dropping that feature) | — | ✅ accepted | `issues/backlog-2026-07-10.md#9` |
 
+**Dropped 2026-07-11 (#21):** Full testTag sweep. The original motivation was letting AI-driven verification find
+elements by tag instead of screenshot-and-tap-coordinate guessing, not "for an eventual instrumented-test suite."
+That need never actually materialized — every session's live-device/emulator verification, including this one,
+has worked fine with plain screenshots + computed tap coordinates. User's call: not needed, don't keep it on the
+list. #21 removed from the table below (see `issues/backlog-2026-07-10.md#21` for the full note if reconsidered).
+
 ## Features / enhancements
 
 | # | Title | Priority | Status | File |
 |---|-------|----------|--------|------|
 | 19 | Notifications and Downloads settings are placeholders — needs product scoping | Medium | 🔴 | `issues/backlog-2026-07-10.md#19` |
-
-## Chores
-
-| # | Title | Priority | Status | File |
-|---|-------|----------|--------|------|
-| 21 | Full testTag sweep | Low | 🔴 | `issues/backlog-2026-07-10.md#21` |
 
 ## Conventions
 
