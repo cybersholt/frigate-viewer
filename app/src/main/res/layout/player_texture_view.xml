@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Event/recording player surface.
+
+  surface_type="texture_view" is deliberate: PlayerView's default SurfaceView is punched through
+  the window rather than composited into the view hierarchy, so it does not animate with Compose
+  navigation. Backing out of an event left the video frame painted full-bleed on top of the Events
+  grid for the length of the exit transition — the "flash" seen between event detail and events. A
+  TextureView composites normally and animates away with everything else.
+
+  Only used for on-demand event playback (never the live camera grid), so TextureView's slightly
+  higher cost versus SurfaceView is not on the hot path.
+-->
+<androidx.media3.ui.PlayerView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    app:surface_type="texture_view"
+    app:use_controller="false" />

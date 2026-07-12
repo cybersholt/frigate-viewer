@@ -50,6 +50,8 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -275,6 +277,8 @@ fun CamerasScreen(
                             sidePanelTimelineLoading = state.sidePanelTimelineLoading,
                             onRequestSidePanelEvents = { vm.loadSidePanelEvents(focused!!) },
                             onRequestSidePanelTimeline = { hours -> vm.loadSidePanelTimeline(focused!!, hours) },
+                            showEventsPanel = state.showLiveEventsPanel,
+                            onToggleEventsPanel = { vm.setShowLiveEventsPanel(!state.showLiveEventsPanel) },
                             onOpenEvents = { onNavigateToEvents(focused, null, null) },
                             onClose = { focused = null },
                         )
@@ -737,6 +741,8 @@ private fun FocusedTile(
     sidePanelTimelineLoading: Boolean = false,
     onRequestSidePanelEvents: () -> Unit = {},
     onRequestSidePanelTimeline: (Float) -> Unit = {},
+    showEventsPanel: Boolean = false,
+    onToggleEventsPanel: () -> Unit = {},
     onOpenEvents: () -> Unit = {},
     onClose: () -> Unit,
 ) {
@@ -842,15 +848,12 @@ private fun FocusedTile(
         )
     }
 
+    // Exiting fullscreen returns to this camera's card view — it must NOT close the camera and
+    // drop the user back on the grid. The old behavior did exactly that when autoLandscapeOnStream
+    // was on (which auto-enters fullscreen on open, so the very first tap of the exit button read
+    // as "leaving fullscreen" and closed the whole tile), and the resulting abrupt teardown +
+    // orientation unwind is what raced the WebRTC teardown into a native crash.
     val isFullScreen = LocalFullScreenMode.current.value
-    var hasBeenFullScreen by remember { mutableStateOf(false) }
-    LaunchedEffect(isFullScreen) {
-        if (isFullScreen) {
-            hasBeenFullScreen = true
-        } else if (hasBeenFullScreen && autoLandscapeOnStream) {
-            onClose()
-        }
-    }
 
     Column(
         Modifier
@@ -868,8 +871,9 @@ private fun FocusedTile(
         val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         // #16/#17: the recent-events side panel only makes sense where there's spare width —
         // fullscreen landscape, matching the reference wishlist layout. Portrait fullscreen and
-        // the non-fullscreen card view are unchanged.
-        val showEventsPanel = isFullScreen && isLandscape
+        // the non-fullscreen card view are unchanged. Off unless the user opts in from the
+        // fullscreen overflow menu (persisted), so fullscreen live view is full-bleed by default.
+        val eventsPanelVisible = isFullScreen && isLandscape && showEventsPanel
 
         val videoContent: @Composable () -> Unit = {
             var liveStreamState by remember { mutableStateOf<LiveStreamState>(LiveStreamState.Idle) }
@@ -916,13 +920,28 @@ private fun FocusedTile(
                     recordingEnabled = recordingEnabled,
                     activeEventNow = activeEventNow,
                     liveStreamState = liveStreamState,
+                    eventsPanelSupported = isLandscape,
+                    eventsPanelVisible = showEventsPanel,
+                    onToggleEventsPanel = onToggleEventsPanel,
                 )
             }
         }
 
-        if (showEventsPanel) {
-            Row(Modifier.fillMaxWidth().weight(1f)) {
-                Box(Modifier.weight(1f).fillMaxHeight()) { videoContent() }
+        // One Row, one Box, always — the panel is a conditional *sibling* of the video, never a
+        // different wrapper around it. Branching the layout (Row-with-panel vs bare Box) moved
+        // videoContent() to a different call site, so Compose discarded and re-created StreamContent
+        // on every panel toggle. That reset StreamContent's internal isFullScreen to false — showing
+        // the system bars and dropping the orientation lock — before autoLandscapeOnStream re-entered
+        // fullscreen a frame later: the visible "exits fullscreen, then goes back into it" flicker.
+        Row(
+            if (isFullScreen) Modifier.fillMaxWidth().weight(1f) else Modifier.fillMaxWidth(),
+        ) {
+            Box(
+                if (isFullScreen) Modifier.weight(1f).fillMaxHeight() else Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+            ) {
+                videoContent()
+            }
+            if (eventsPanelVisible) {
                 LiveEventsPanel(
                     cameraName = cameraName,
                     baseUrl = baseUrl,
@@ -938,10 +957,6 @@ private fun FocusedTile(
                     onOpenEvents = onOpenEvents,
                     modifier = Modifier.fillMaxHeight().width(260.dp),
                 )
-            }
-        } else {
-            Box(if (isFullScreen) Modifier.fillMaxWidth().weight(1f) else Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
-                videoContent()
             }
         }
         if (!isFullScreen && !hideEventImage) {
@@ -990,6 +1005,9 @@ private fun FullscreenChrome(
     recordingEnabled: Boolean = false,
     activeEventNow: Boolean = false,
     liveStreamState: LiveStreamState = LiveStreamState.Idle,
+    eventsPanelSupported: Boolean = false,
+    eventsPanelVisible: Boolean = false,
+    onToggleEventsPanel: () -> Unit = {},
 ) {
     if (!visible) return
     var showOverflow by remember { mutableStateOf(false) }
@@ -1084,6 +1102,24 @@ private fun FullscreenChrome(
                     },
                     modifier = Modifier.testTag("fullscreen_stream_info_menu_item"),
                 )
+                // Landscape-only: the panel steals 260dp of width, which there's no room for in
+                // portrait fullscreen — so don't offer a toggle that would visibly do nothing.
+                if (eventsPanelSupported) {
+                    DropdownMenuItem(
+                        text = { Text(if (eventsPanelVisible) "Hide events panel" else "Show events panel") },
+                        leadingIcon = {
+                            Icon(
+                                if (eventsPanelVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                contentDescription = null,
+                            )
+                        },
+                        onClick = {
+                            showOverflow = false
+                            onToggleEventsPanel()
+                        },
+                        modifier = Modifier.testTag("fullscreen_events_panel_menu_item"),
+                    )
+                }
                 val otherCameras = allCameraNames.filter { it != cameraName }
                 if (otherCameras.isNotEmpty()) {
                     HorizontalDivider()
@@ -1208,14 +1244,21 @@ private fun StreamContent(
         if (autoLandscapeOnStream) isFullScreen = true
     }
 
-    LaunchedEffect(isFullScreen, autoLandscapeOnStream) {
-        val activity = context as? Activity ?: return@LaunchedEffect
-        activity.requestedOrientation =
+    // The orientation lock must be released on teardown, not just when isFullScreen flips false:
+    // navigating away from a fullscreen stream (e.g. "View all events" straight into the Events
+    // screen) disposes this composable while the lock is still SENSOR_LANDSCAPE, and with nothing
+    // left to unwind it the whole app stayed stuck sideways.
+    DisposableEffect(isFullScreen, autoLandscapeOnStream) {
+        val activity = context as? Activity
+        activity?.requestedOrientation =
             if (isFullScreen && autoLandscapeOnStream) {
                 ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             } else {
                 ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             }
+        onDispose {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
     }
 
     LaunchedEffect(isFullScreen) { fullScreenMode.value = isFullScreen }

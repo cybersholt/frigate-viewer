@@ -55,6 +55,7 @@ import net.triton.frigateviewer.core.model.MotionActivity
 import net.triton.frigateviewer.core.model.RecordingGap
 import net.triton.frigateviewer.core.model.ReviewSegment
 import net.triton.frigateviewer.feature.events.drawActivityTimeline
+import net.triton.frigateviewer.feature.events.rememberTimelinePalette
 import java.util.Locale
 
 private enum class PanelMode { List, Timeline }
@@ -277,16 +278,17 @@ private fun LiveTimelineStrip(
     var scrubberTimeMs by remember { mutableStateOf(nowMs) }
     val rangeMs = (timeRangeHours * 3_600_000L).toLong()
 
+    val palette = rememberTimelinePalette()
     val labelPaint =
-        remember {
+        remember(palette) {
             android.graphics.Paint().apply {
                 textSize = 15f
-                color = android.graphics.Color.argb(150, 255, 255, 255)
+                color = palette.labelArgb
                 isAntiAlias = true
             }
         }
 
-    Box(modifier.background(Color(0xFF121212))) {
+    Box(modifier.background(palette.background)) {
         Canvas(
             Modifier
                 .fillMaxSize()
@@ -318,21 +320,38 @@ private fun LiveTimelineStrip(
                 labelPaint = labelPaint,
                 drawLabels = true,
                 labelX = 2f,
+                palette = palette,
             )
         }
 
         Column(Modifier.align(Alignment.BottomEnd).padding(4.dp)) {
             IconButton(
                 onClick = onZoomIn,
-                modifier = Modifier.size(28.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape),
+                modifier =
+                    Modifier
+                        .size(28.dp)
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.75f), CircleShape),
             ) {
-                Icon(Icons.Filled.ZoomIn, contentDescription = "Zoom in", tint = Color.White, modifier = Modifier.size(16.dp))
+                Icon(
+                    Icons.Filled.ZoomIn,
+                    contentDescription = "Zoom in",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(16.dp),
+                )
             }
             IconButton(
                 onClick = onZoomOut,
-                modifier = Modifier.size(28.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape),
+                modifier =
+                    Modifier
+                        .size(28.dp)
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.75f), CircleShape),
             ) {
-                Icon(Icons.Filled.ZoomOut, contentDescription = "Zoom out", tint = Color.White, modifier = Modifier.size(16.dp))
+                Icon(
+                    Icons.Filled.ZoomOut,
+                    contentDescription = "Zoom out",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(16.dp),
+                )
             }
         }
     }

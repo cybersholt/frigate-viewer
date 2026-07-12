@@ -65,11 +65,25 @@ class TokenRefreshAuthenticator(
         if (server.authMode != AuthMode.FRIGATE) return null
         val refreshed = runBlocking { loginFn(server) }
         if (!refreshed) return null
-        val newHeader = runBlocking { credentialStore.authHeader(server.id) } ?: return null
-        return response.request
-            .newBuilder()
-            .header("Authorization", newHeader)
-            .build()
+
+        // The refresh above re-authenticated the session; on a cookie-auth Frigate server the new
+        // credential is the frigate_token cookie the CookieJar just captured, so the retry needs no
+        // Authorization header at all.
+        //
+        // Only re-attach a header when the stored secret really is a JWT. Otherwise authHeader()
+        // hands back `Basic base64(user:pass)`, which Frigate does not accept — and a rejected
+        // Authorization header overrides the valid cookie riding along with it (verified against a
+        // live server: cookie alone = 200, cookie + bad header = 401). Blindly setting it poisoned
+        // every retry, which is why VOD/timeline playback sat in a permanent
+        // 401 → re-login → 401 loop instead of recovering.
+        val newHeader = runBlocking { credentialStore.authHeader(server.id) }
+        val retry = response.request.newBuilder()
+        if (newHeader != null && newHeader.startsWith("Bearer ")) {
+            retry.header("Authorization", newHeader)
+        } else {
+            retry.removeHeader("Authorization")
+        }
+        return retry.build()
     }
 }
 

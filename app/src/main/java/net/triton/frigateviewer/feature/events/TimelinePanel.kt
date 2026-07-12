@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -28,8 +29,6 @@ import net.triton.frigateviewer.core.model.FrigateEvent
 import net.triton.frigateviewer.core.model.MotionActivity
 import net.triton.frigateviewer.core.model.RecordingGap
 import net.triton.frigateviewer.core.model.ReviewSegment
-
-private val TimelinePanelBackground = Color(0xFF121212)
 
 /**
  * Narrow vertical timeline strip for the Events screen right edge — the same severity-colored
@@ -71,16 +70,17 @@ fun TimelinePanel(
         }
     }
 
+    val palette = rememberTimelinePalette()
     val labelPaint =
-        remember {
+        remember(palette) {
             android.graphics.Paint().apply {
                 textSize = 15f
-                color = android.graphics.Color.argb(150, 255, 255, 255)
+                color = palette.labelArgb
                 isAntiAlias = true
             }
         }
 
-    BoxWithConstraints(modifier.background(TimelinePanelBackground)) {
+    BoxWithConstraints(modifier.background(palette.background)) {
         Canvas(
             Modifier
                 .fillMaxSize()
@@ -128,6 +128,7 @@ fun TimelinePanel(
                 centerX = size.width * 0.65f,
                 maxBarHalfWidth = size.width * 0.30f,
                 numBuckets = 120,
+                palette = palette,
                 labelPaint = labelPaint,
                 drawLabels = true,
                 labelX = 2f,
@@ -141,15 +142,31 @@ fun TimelinePanel(
         ) {
             IconButton(
                 onClick = onZoomIn,
-                modifier = Modifier.size(28.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape),
+                modifier =
+                    Modifier
+                        .size(28.dp)
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.75f), CircleShape),
             ) {
-                Icon(Icons.Filled.ZoomIn, contentDescription = "Zoom in", tint = Color.White, modifier = Modifier.size(16.dp))
+                Icon(
+                    Icons.Filled.ZoomIn,
+                    contentDescription = "Zoom in",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(16.dp),
+                )
             }
             IconButton(
                 onClick = onZoomOut,
-                modifier = Modifier.size(28.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape),
+                modifier =
+                    Modifier
+                        .size(28.dp)
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.75f), CircleShape),
             ) {
-                Icon(Icons.Filled.ZoomOut, contentDescription = "Zoom out", tint = Color.White, modifier = Modifier.size(16.dp))
+                Icon(
+                    Icons.Filled.ZoomOut,
+                    contentDescription = "Zoom out",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(16.dp),
+                )
             }
         }
     }

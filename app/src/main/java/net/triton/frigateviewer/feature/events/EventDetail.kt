@@ -74,6 +74,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -1256,6 +1257,24 @@ private fun RecordingPlayer(
         }
     }
 
+    // Buffering telemetry for the overlay: how full the media buffer is, and how long we've been
+    // stuck. A bare spinner gave no signal on whether a slow VOD chunk was progressing or wedged.
+    var bufferedPercent by remember(url) { mutableIntStateOf(0) }
+    var bufferingSeconds by remember(url) { mutableIntStateOf(0) }
+    LaunchedEffect(clipState, url) {
+        if (clipState != RecordingPlayerState.BUFFERING) {
+            bufferingSeconds = 0
+            return@LaunchedEffect
+        }
+        var elapsedMs = 0L
+        while (true) {
+            bufferedPercent = player.bufferedPercentage
+            bufferingSeconds = (elapsedMs / 1000).toInt()
+            delay(250)
+            elapsedMs += 250
+        }
+    }
+
     // Update seekRef and debounce scrubber drags; if already READY, seek directly
     LaunchedEffect(seekSeconds) {
         val seekMs = (seekSeconds * 1000).toLong()
@@ -1272,7 +1291,15 @@ private fun RecordingPlayer(
     Box(modifier.background(Color.Black)) {
         androidx.compose.ui.viewinterop.AndroidView(
             factory = { ctx ->
-                PlayerView(ctx).apply {
+                // Inflated (rather than `PlayerView(ctx)`) purely to get surface_type="texture_view";
+                // PlayerView's surface type is fixed at construction and has no programmatic setter.
+                // See the layout's comment: a SurfaceView here punches through the window and leaves
+                // the video painted over the Events grid during the back transition.
+                (
+                    android.view.LayoutInflater
+                        .from(ctx)
+                        .inflate(net.triton.frigateviewer.R.layout.player_texture_view, null) as PlayerView
+                ).apply {
                     this.player = player
                     useController = false
                 }
@@ -1282,10 +1309,10 @@ private fun RecordingPlayer(
 
         // ── Buffering indicator ──
         if (clipState == RecordingPlayerState.BUFFERING) {
-            CircularProgressIndicator(
+            RecordingBufferingOverlay(
+                bufferedPercent = bufferedPercent,
+                elapsedSeconds = bufferingSeconds,
                 modifier = Modifier.align(Alignment.Center),
-                color = Color.White,
-                strokeWidth = 3.dp,
             )
         }
 
@@ -1447,6 +1474,42 @@ private fun fmtRelativeTime(epochSecs: Double): String {
 }
 
 /**
+ * Buffering state for event playback: spinner, how full the buffer actually is, and — once it has
+ * been slow for a few seconds — how long we've been waiting. A bare spinner couldn't distinguish
+ * "fetching the first chunk" from "wedged", which is what made a slow VOD load feel broken.
+ */
+@Composable
+private fun RecordingBufferingOverlay(
+    bufferedPercent: Int,
+    elapsedSeconds: Int,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        CircularProgressIndicator(color = Color.White, strokeWidth = 3.dp)
+        Text(
+            text = if (bufferedPercent > 0) "Buffering… $bufferedPercent%" else "Buffering…",
+            style = MaterialTheme.typography.labelMedium,
+            color = Color.White,
+        )
+        // Only surface the wait time once it's long enough to be worth explaining — below this it's
+        // just noise on a normal load.
+        if (elapsedSeconds >= SLOW_BUFFER_HINT_SECONDS) {
+            Text(
+                text = "Still loading — ${elapsedSeconds}s",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White.copy(alpha = 0.7f),
+            )
+        }
+    }
+}
+
+private const val SLOW_BUFFER_HINT_SECONDS = 4
+
+/**
  * `DownloadManager` is a separate system service — it shares none of the app's OkHttp
  * auth (interceptor headers, session cookies), so an authenticated Frigate server 401s a
  * bare request. [authHeader] covers Basic/Bearer auth; the session cookie (Frigate JWT mode)
@@ -1468,7 +1531,6 @@ private fun downloadClip(
             .setDescription("Frigate event ${ev.id}")
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "frigate_${ev.id}.mp4")
-    if (authHeader != null) request.addRequestHeader("Authorization", authHeader)
     val cookieHeader =
         okHttpClient?.let { client ->
             url.toHttpUrlOrNull()?.let { httpUrl ->
@@ -1479,5 +1541,13 @@ private fun downloadClip(
             }
         }
     if (!cookieHeader.isNullOrEmpty()) request.addRequestHeader("Cookie", cookieHeader)
+
+    // Send the session cookie alone when we have one. authHeader() returns `Basic base64(user:pass)`
+    // for any non-JWT secret, and Frigate rejects a Basic header *even when a valid cookie rides
+    // along with it* (verified against a live server) — attaching it unconditionally is what kept
+    // 401ing the export. A Basic header is still worth sending when there's no cookie: that's the
+    // right credential for a Frigate sitting behind a Basic-auth reverse proxy.
+    val sendAuthHeader = authHeader != null && (cookieHeader.isNullOrEmpty() || authHeader.startsWith("Bearer "))
+    if (sendAuthHeader) request.addRequestHeader("Authorization", authHeader)
     dm.enqueue(request)
 }

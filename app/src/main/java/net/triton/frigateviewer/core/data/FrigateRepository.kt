@@ -225,8 +225,10 @@ class FrigateRepository
                         credentialStore.setBearer(serverId, token)
                         true
                     } else {
-                        // Frigate may set the cookie without echoing the token in body.
-                        // Auth proceeds via the CookieJar.
+                        // Frigate sets the session cookie without echoing the token in the body; auth
+                        // proceeds via the CookieJar. Deliberately NOT storing the cookie's JWT as the
+                        // secret: setBearer overwrites the same blob that holds user:pass, which would
+                        // leave nothing to re-login with once the ~24h JWT expires.
                         true
                     }
                 }

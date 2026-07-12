@@ -55,6 +55,7 @@ class UserSettingsRepository
         private val customAccentColorsKey = stringPreferencesKey(KEY_CUSTOM_ACCENT_COLORS)
         private val cameraStreamOverridesKey = stringPreferencesKey(KEY_CAMERA_STREAM_OVERRIDES)
         private val showLastImageWhileLoadingKey = booleanPreferencesKey(KEY_SHOW_LAST_IMAGE_WHILE_LOADING)
+        private val showLiveEventsPanelKey = booleanPreferencesKey(KEY_SHOW_LIVE_EVENTS_PANEL)
 
         private val gridStreamTypeKey = stringPreferencesKey(KEY_GRID_STREAM_TYPE)
         private val fullscreenStreamTypeKey = stringPreferencesKey(KEY_FULLSCREEN_STREAM_TYPE)
@@ -236,6 +237,11 @@ class UserSettingsRepository
 
         suspend fun setShowLastImageWhileLoading(show: Boolean) = store.edit { it[showLastImageWhileLoadingKey] = show }
 
+        /** Recent-events side panel next to the fullscreen landscape live view. Default OFF. */
+        val showLiveEventsPanel: Flow<Boolean> = store.data.map { it[showLiveEventsPanelKey] ?: false }
+
+        suspend fun setShowLiveEventsPanel(show: Boolean) = store.edit { it[showLiveEventsPanelKey] = show }
+
         /** Master switch for the MQTT event-notification pipeline. Default ON. */
         val notificationsEnabled: Flow<Boolean> = store.data.map { it[notificationsEnabledKey] ?: true }
 
@@ -361,6 +367,7 @@ class UserSettingsRepository
             private const val KEY_CUSTOM_ACCENT_COLORS = "custom_accent_colors_v1"
             private const val KEY_CAMERA_STREAM_OVERRIDES = "camera_stream_overrides_v1"
             private const val KEY_SHOW_LAST_IMAGE_WHILE_LOADING = "show_last_image_while_loading_v1"
+            private const val KEY_SHOW_LIVE_EVENTS_PANEL = "show_live_events_panel_v1"
 
             private const val KEY_GRID_STREAM_TYPE = "grid_stream_type_v1"
             private const val KEY_FULLSCREEN_STREAM_TYPE = "fullscreen_stream_type_v1"
@@ -413,6 +420,7 @@ class UserSettingsRepository
                     KEY_CUSTOM_ACCENT_COLORS to PrefType.STRING,
                     KEY_CAMERA_STREAM_OVERRIDES to PrefType.STRING,
                     KEY_SHOW_LAST_IMAGE_WHILE_LOADING to PrefType.BOOL,
+                    KEY_SHOW_LIVE_EVENTS_PANEL to PrefType.BOOL,
                     KEY_GRID_STREAM_TYPE to PrefType.STRING,
                     KEY_FULLSCREEN_STREAM_TYPE to PrefType.STRING,
                     KEY_PREFER_SUB_STREAM_GRID to PrefType.BOOL,

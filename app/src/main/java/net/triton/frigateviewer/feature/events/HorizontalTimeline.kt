@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -33,8 +34,6 @@ import net.triton.frigateviewer.core.model.RecordingGap
 import net.triton.frigateviewer.core.model.ReviewSegment
 import java.util.Locale
 import kotlin.math.abs
-
-private val TimelineBackground = Color(0xFF121212)
 
 /**
  * Full-screen vertical timeline for Event Detail — Timeline view. Mirrors Frigate's own web
@@ -77,16 +76,17 @@ fun HorizontalTimeline(
     val currentOnTouchPreview by rememberUpdatedState(onTouchPreview)
     val currentOnTouchPositionChanged by rememberUpdatedState(onTouchPositionChanged)
 
+    val palette = rememberTimelinePalette()
     val labelPaint =
-        remember {
+        remember(palette) {
             android.graphics.Paint().apply {
                 textSize = 26f
-                color = android.graphics.Color.argb(150, 255, 255, 255)
+                color = palette.labelArgb
                 isAntiAlias = true
             }
         }
 
-    BoxWithConstraints(modifier.background(TimelineBackground)) {
+    BoxWithConstraints(modifier.background(palette.background)) {
         fun timeAtFraction(frac: Float): Long =
             (currentViewEndMs - frac * currentRangeMs).toLong().coerceIn(currentOldestMs, currentViewEndMs)
 
@@ -150,6 +150,7 @@ fun HorizontalTimeline(
                 labelPaint = labelPaint,
                 drawLabels = true,
                 labelX = 10f,
+                palette = palette,
             )
         }
 
@@ -161,15 +162,31 @@ fun HorizontalTimeline(
         ) {
             IconButton(
                 onClick = { onZoomChange(0.5f) },
-                modifier = Modifier.size(40.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape),
+                modifier =
+                    Modifier
+                        .size(40.dp)
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.75f), CircleShape),
             ) {
-                Icon(Icons.Filled.ZoomIn, "Zoom in", tint = Color.White, modifier = Modifier.size(20.dp))
+                Icon(
+                    Icons.Filled.ZoomIn,
+                    "Zoom in",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(20.dp),
+                )
             }
             IconButton(
                 onClick = { onZoomChange(2f) },
-                modifier = Modifier.size(40.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape),
+                modifier =
+                    Modifier
+                        .size(40.dp)
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.75f), CircleShape),
             ) {
-                Icon(Icons.Filled.ZoomOut, "Zoom out", tint = Color.White, modifier = Modifier.size(20.dp))
+                Icon(
+                    Icons.Filled.ZoomOut,
+                    "Zoom out",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(20.dp),
+                )
             }
         }
     }

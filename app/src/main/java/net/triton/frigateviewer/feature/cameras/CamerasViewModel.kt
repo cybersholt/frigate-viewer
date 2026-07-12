@@ -54,6 +54,8 @@ data class CamerasUiState(
     val hideEventImage: Boolean = false,
     val autoLandscapeOnStream: Boolean = false,
     val showLastImageWhileLoading: Boolean = true,
+    /** Recent-events side panel in fullscreen landscape. Off by default; toggled from fullscreen's overflow menu. */
+    val showLiveEventsPanel: Boolean = false,
     val rtspReconnectAttempts: Int = 2,
     val rtspReconnectBaseDelaySeconds: Int = 2,
     val refreshTimestamp: Long = 0L,
@@ -174,20 +176,23 @@ class CamerasViewModel
             }
 
             viewModelScope.launch {
-                combine(
+                combine<Any?, Unit>(
                     userSettingsRepo.autoLandscapeOnStream,
                     userSettingsRepo.cameraStreamOverrides,
                     userSettingsRepo.showLastImageWhileLoading,
                     userSettingsRepo.rtspReconnectAttempts,
                     userSettingsRepo.rtspReconnectBaseDelaySeconds,
-                ) { autoLandscape, overrides, showLastImage, reconnectAttempts, reconnectDelay ->
+                    userSettingsRepo.showLiveEventsPanel,
+                ) { args ->
+                    @Suppress("UNCHECKED_CAST")
                     _state.value =
                         _state.value.copy(
-                            autoLandscapeOnStream = autoLandscape,
-                            cameraStreamOverrides = overrides,
-                            showLastImageWhileLoading = showLastImage,
-                            rtspReconnectAttempts = reconnectAttempts,
-                            rtspReconnectBaseDelaySeconds = reconnectDelay,
+                            autoLandscapeOnStream = args[0] as Boolean,
+                            cameraStreamOverrides = args[1] as Map<String, String>,
+                            showLastImageWhileLoading = args[2] as Boolean,
+                            rtspReconnectAttempts = args[3] as Int,
+                            rtspReconnectBaseDelaySeconds = args[4] as Int,
+                            showLiveEventsPanel = args[5] as Boolean,
                         )
                 }.collectLatest { }
             }
@@ -377,6 +382,12 @@ class CamerasViewModel
         ) {
             viewModelScope.launch {
                 userSettingsRepo.setCameraStreamOverride(cameraName, mode)
+            }
+        }
+
+        fun setShowLiveEventsPanel(show: Boolean) {
+            viewModelScope.launch {
+                userSettingsRepo.setShowLiveEventsPanel(show)
             }
         }
 

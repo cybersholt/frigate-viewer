@@ -102,6 +102,41 @@ private const val MAX_AUTO_RECONNECTS = 2
 private val BACKOFF_MS = longArrayOf(2_000L, 5_000L)
 
 /**
+ * Owns one [PeerConnection]'s native lifetime.
+ *
+ * WebSocket callbacks (`webrtc/answer`, `webrtc/candidate`) arrive on OkHttp's reader thread and
+ * can land *after* teardown disposed the peer connection — closing a WebSocket only requests a
+ * close, it does not synchronously stop in-flight callbacks. Touching a disposed PeerConnection is
+ * a native use-after-free rather than a Kotlin exception: it killed the process with SIGSEGV inside
+ * nativeSetRemoteDescription whenever an answer was still in flight while the tile was being torn
+ * down (reproduced by leaving fullscreen, which tears down + rotates + redials all at once).
+ *
+ * [use] and [dispose] are mutually exclusive, and [use] no-ops once disposed, so a late callback is
+ * dropped instead of dereferencing freed memory.
+ */
+private class PcSession(
+    private val pc: PeerConnection,
+) {
+    private var disposed = false
+
+    /** Runs [block] on the live PeerConnection; returns false (doing nothing) if already disposed. */
+    fun use(block: (PeerConnection) -> Unit): Boolean =
+        synchronized(this) {
+            if (disposed) return@synchronized false
+            block(pc)
+            true
+        }
+
+    fun dispose() =
+        synchronized(this) {
+            if (!disposed) {
+                disposed = true
+                pc.dispose()
+            }
+        }
+}
+
+/**
  * Sub-second live tile via Frigate WebRTC signaling.
  */
 @Composable
@@ -128,7 +163,7 @@ fun WebRtcLiveTile(
 
     val pcfHolder = remember { AtomicReference<PeerConnectionFactory?>() }
     val admHolder = remember { AtomicReference<JavaAudioDeviceModule?>() }
-    val pcHolder = remember { AtomicReference<PeerConnection?>() }
+    val pcHolder = remember { AtomicReference<PcSession?>() }
     val wsGlobalHolder = remember { AtomicReference<WebSocket?>() }
     val wsStreamHolder = remember { AtomicReference<WebSocket?>() }
     val rendererHolder = remember { AtomicReference<SurfaceViewRenderer?>() }
@@ -231,10 +266,13 @@ fun WebRtcLiveTile(
 
     LaunchedEffect(baseUrl, cameraName, okHttpClient, retryCount) {
         withContext(Dispatchers.IO) {
-            // Clean up any previous attempt before creating new resources
+            // Clean up any previous attempt before creating new resources. cancel() rather than
+            // close(): close() is a graceful handshake that keeps delivering queued messages to the
+            // listener, which is precisely how a stale webrtc/answer reached a disposed
+            // PeerConnection. cancel() drops the socket and its callbacks immediately.
             audioTrackHolder.getAndSet(null)?.setEnabled(false)
-            wsStreamHolder.getAndSet(null)?.close(1000, "retry")
-            wsGlobalHolder.getAndSet(null)?.close(1000, "retry")
+            wsStreamHolder.getAndSet(null)?.cancel()
+            wsGlobalHolder.getAndSet(null)?.cancel()
             pcHolder.getAndSet(null)?.dispose()
             pcfHolder.getAndSet(null)?.dispose()
             admHolder.getAndSet(null)?.release()
@@ -385,19 +423,22 @@ fun WebRtcLiveTile(
                             }
                         },
                     ) ?: throw IllegalStateException("PC failed")
-                pcHolder.set(pc)
+                val session = PcSession(pc)
+                pcHolder.set(session)
 
-                pc.addTransceiver(
-                    org.webrtc.MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO,
-                    org.webrtc.RtpTransceiver.RtpTransceiverInit(org.webrtc.RtpTransceiver.RtpTransceiverDirection.RECV_ONLY),
-                )
-                pc.addTransceiver(
-                    org.webrtc.MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO,
-                    org.webrtc.RtpTransceiver.RtpTransceiverInit(org.webrtc.RtpTransceiver.RtpTransceiverDirection.RECV_ONLY),
-                )
+                session.use {
+                    it.addTransceiver(
+                        org.webrtc.MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO,
+                        org.webrtc.RtpTransceiver.RtpTransceiverInit(org.webrtc.RtpTransceiver.RtpTransceiverDirection.RECV_ONLY),
+                    )
+                    it.addTransceiver(
+                        org.webrtc.MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO,
+                        org.webrtc.RtpTransceiver.RtpTransceiverInit(org.webrtc.RtpTransceiver.RtpTransceiverDirection.RECV_ONLY),
+                    )
+                }
 
-                val offer = createOffer(pc)
-                pc.setLocalDescriptionAwait(offer)
+                val offer = createOffer(session)
+                session.setLocalDescriptionAwait(offer)
 
                 // 3. Signaling WS
                 val streamWsUrl =
@@ -480,6 +521,10 @@ fun WebRtcLiveTile(
                                 val type = obj["type"]?.jsonPrimitive?.content ?: return
                                 val value = obj["value"]?.jsonPrimitive?.content ?: return
 
+                                // Every native call below goes through the session: these callbacks
+                                // land on OkHttp's reader thread and routinely arrive after teardown
+                                // has disposed the PeerConnection, which is a hard native crash
+                                // rather than a catchable failure.
                                 when (type) {
                                     "webrtc/answer" -> {
                                         Log.d("WebRtcLiveTile", "[DEBUG-WebRTC] Received WebRTC Answer")
@@ -487,26 +532,35 @@ fun WebRtcLiveTile(
                                             liveState = LiveStreamState.Negotiating
                                         }
                                         val sdp = SessionDescription(SessionDescription.Type.ANSWER, value)
-                                        pc.setRemoteDescription(
-                                            object : SdpObserver {
-                                                override fun onCreateSuccess(sdp: SessionDescription?) {}
+                                        val applied =
+                                            session.use { livePc ->
+                                                livePc.setRemoteDescription(
+                                                    object : SdpObserver {
+                                                        override fun onCreateSuccess(sdp: SessionDescription?) {}
 
-                                                override fun onSetSuccess() {
-                                                    Log.d("WebRtcLiveTile", "[DEBUG-WebRTC] Remote Description Set")
-                                                }
+                                                        override fun onSetSuccess() {
+                                                            Log.d("WebRtcLiveTile", "[DEBUG-WebRTC] Remote Description Set")
+                                                        }
 
-                                                override fun onCreateFailure(s: String?) {}
+                                                        override fun onCreateFailure(s: String?) {}
 
-                                                override fun onSetFailure(s: String?) {
-                                                    Log.e("WebRtcLiveTile", "[DEBUG-WebRTC] Failed to set Remote Description: $s")
-                                                }
-                                            },
-                                            sdp,
-                                        )
+                                                        override fun onSetFailure(s: String?) {
+                                                            Log.e(
+                                                                "WebRtcLiveTile",
+                                                                "[DEBUG-WebRTC] Failed to set Remote Description: $s",
+                                                            )
+                                                        }
+                                                    },
+                                                    sdp,
+                                                )
+                                            }
+                                        if (!applied) {
+                                            Log.d("WebRtcLiveTile", "Answer arrived after teardown for $cameraName — dropped")
+                                        }
                                     }
 
                                     "webrtc/candidate" -> {
-                                        pc.addIceCandidate(IceCandidate("", 0, value))
+                                        session.use { livePc -> livePc.addIceCandidate(IceCandidate("", 0, value)) }
                                     }
                                 }
                             }
@@ -531,8 +585,8 @@ fun WebRtcLiveTile(
     DisposableEffect(baseUrl, cameraName, okHttpClient) {
         onDispose {
             audioTrackHolder.getAndSet(null)?.setEnabled(false)
-            wsStreamHolder.getAndSet(null)?.close(1000, "dispose")
-            wsGlobalHolder.getAndSet(null)?.close(1000, "dispose")
+            wsStreamHolder.getAndSet(null)?.cancel()
+            wsGlobalHolder.getAndSet(null)?.cancel()
             pcHolder.getAndSet(null)?.dispose()
             pcfHolder.getAndSet(null)?.dispose()
             admHolder.getAndSet(null)?.release()
@@ -692,49 +746,57 @@ private fun BoundingBoxOverlay(state: FrigateObjectState) {
     }
 }
 
-private suspend fun createOffer(pc: PeerConnection): SessionDescription {
+private suspend fun createOffer(session: PcSession): SessionDescription {
     val deferred = kotlinx.coroutines.CompletableDeferred<SessionDescription>()
-    pc.createOffer(
-        object : SdpObserver {
-            override fun onCreateSuccess(sdp: SessionDescription?) {
-                if (sdp != null) {
-                    deferred.complete(sdp)
-                } else {
-                    deferred.completeExceptionally(IllegalStateException("Null SDP"))
-                }
-            }
+    val started =
+        session.use { pc ->
+            pc.createOffer(
+                object : SdpObserver {
+                    override fun onCreateSuccess(sdp: SessionDescription?) {
+                        if (sdp != null) {
+                            deferred.complete(sdp)
+                        } else {
+                            deferred.completeExceptionally(IllegalStateException("Null SDP"))
+                        }
+                    }
 
-            override fun onSetSuccess() {}
+                    override fun onSetSuccess() {}
 
-            override fun onCreateFailure(s: String?) {
-                deferred.completeExceptionally(IllegalStateException(s))
-            }
+                    override fun onCreateFailure(s: String?) {
+                        deferred.completeExceptionally(IllegalStateException(s))
+                    }
 
-            override fun onSetFailure(s: String?) {}
-        },
-        MediaConstraints(),
-    )
+                    override fun onSetFailure(s: String?) {}
+                },
+                MediaConstraints(),
+            )
+        }
+    if (!started) throw IllegalStateException("PeerConnection disposed before offer")
     return deferred.await()
 }
 
-private suspend fun PeerConnection.setLocalDescriptionAwait(sdp: SessionDescription) {
+private suspend fun PcSession.setLocalDescriptionAwait(sdp: SessionDescription) {
     val deferred = kotlinx.coroutines.CompletableDeferred<Unit>()
-    setLocalDescription(
-        object : SdpObserver {
-            override fun onCreateSuccess(sdp: SessionDescription?) {}
+    val started =
+        use { pc ->
+            pc.setLocalDescription(
+                object : SdpObserver {
+                    override fun onCreateSuccess(sdp: SessionDescription?) {}
 
-            override fun onSetSuccess() {
-                deferred.complete(Unit)
-            }
+                    override fun onSetSuccess() {
+                        deferred.complete(Unit)
+                    }
 
-            override fun onCreateFailure(s: String?) {}
+                    override fun onCreateFailure(s: String?) {}
 
-            override fun onSetFailure(s: String?) {
-                deferred.completeExceptionally(IllegalStateException(s))
-            }
-        },
-        sdp,
-    )
+                    override fun onSetFailure(s: String?) {
+                        deferred.completeExceptionally(IllegalStateException(s))
+                    }
+                },
+                sdp,
+            )
+        }
+    if (!started) throw IllegalStateException("PeerConnection disposed before local description")
     deferred.await()
 }
 

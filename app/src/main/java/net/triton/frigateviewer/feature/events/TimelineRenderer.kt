@@ -1,5 +1,8 @@
 package net.triton.frigateviewer.feature.events
 
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -7,16 +10,47 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import net.triton.frigateviewer.core.model.MotionActivity
 import net.triton.frigateviewer.core.model.RecordingGap
 import net.triton.frigateviewer.core.model.ReviewSegment
 
-internal val TimelineGapColor = Color(0xFF000000)
 internal val TimelineSeverityAlertColor = Color(0xFFEF4444)
 internal val TimelineSeverityDetectionColor = Color(0xFFF59E0B)
 internal val TimelineSeveritySignificantMotionColor = Color(0xFFA16207)
 internal val TimelineScrubberColor = Color(0xFFE53935)
-internal val TimelineGridLineColor = Color(0xFF333333)
+
+/**
+ * The parts of the timeline that must invert between light and dark themes.
+ *
+ * The severity hues and the scrubber above are deliberately NOT in here: they encode meaning
+ * (alert / detection / motion), match Frigate's own web frontend, and read correctly against both
+ * a light and a dark surface. Everything below is surface-or-ink, and was previously hardcoded to
+ * dark (a #121212 background with white labels) — which is why the timeline stayed dark in light
+ * mode.
+ */
+internal data class TimelinePalette(
+    val background: Color,
+    val gridLine: Color,
+    /** Overlay marking spans with no recording. Alpha is baked in — drawn as-is. */
+    val gap: Color,
+    val centreLine: Color,
+    val labelArgb: Int,
+)
+
+@Composable
+internal fun rememberTimelinePalette(): TimelinePalette {
+    val cs = MaterialTheme.colorScheme
+    return remember(cs) {
+        TimelinePalette(
+            background = cs.surfaceContainerLow,
+            gridLine = cs.outlineVariant,
+            gap = cs.onSurface.copy(alpha = 0.35f),
+            centreLine = cs.onSurface.copy(alpha = 0.18f),
+            labelArgb = cs.onSurface.copy(alpha = 0.60f).toArgb(),
+        )
+    }
+}
 
 /**
  * Shared vertical-timeline visual: a severity-colored motion-activity waveform (bar width ∝
@@ -42,6 +76,7 @@ internal fun DrawScope.drawActivityTimeline(
     labelPaint: android.graphics.Paint,
     drawLabels: Boolean,
     labelX: Float,
+    palette: TimelinePalette,
 ) {
     val w = size.width
     val h = size.height
@@ -58,7 +93,7 @@ internal fun DrawScope.drawActivityTimeline(
         val top = timeToY(gapEndMs.coerceAtMost(viewEndMs))
         val bottom = timeToY(gapStartMs.coerceAtLeast(oldestMs))
         drawRect(
-            color = TimelineGapColor.copy(alpha = 0.5f),
+            color = palette.gap,
             topLeft = Offset(0f, top.coerceIn(0f, h)),
             size = Size(w, (bottom - top).coerceIn(0f, h)),
         )
@@ -156,7 +191,7 @@ internal fun DrawScope.drawActivityTimeline(
     while (gridMs >= oldestMs) {
         val y = timeToY(gridMs)
         if (y in 0f..h) {
-            drawLine(TimelineGridLineColor, Offset(0f, y), Offset(w, y), 0.5f)
+            drawLine(palette.gridLine, Offset(0f, y), Offset(w, y), 0.5f)
             if (drawLabels) {
                 drawIntoCanvas { canvas ->
                     canvas.nativeCanvas.drawText(
@@ -175,7 +210,7 @@ internal fun DrawScope.drawActivityTimeline(
     var dotY = 0f
     while (dotY < h) {
         drawLine(
-            Color.White.copy(alpha = 0.18f),
+            palette.centreLine,
             Offset(centerX, dotY),
             Offset(centerX, (dotY + 5f).coerceAtMost(h)),
             1f,
