@@ -2,10 +2,13 @@ package net.triton.frigateviewer.feature.cameras
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,6 +20,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.ZoomIn
@@ -46,6 +50,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import coil3.ImageLoader
 import kotlinx.datetime.Instant
@@ -59,8 +65,21 @@ import net.triton.frigateviewer.core.model.ReviewSegment
 import net.triton.frigateviewer.feature.events.drawActivityTimeline
 import net.triton.frigateviewer.feature.events.rememberTimelinePalette
 import java.util.Locale
+import kotlin.math.abs
 
 private enum class PanelMode { List, Timeline }
+
+/** Fetch this many times the visible span, so there's history to scroll back through. */
+private const val PAN_HEADROOM = 4f
+
+/** Frigate keeps recordings for a while, but there's no point pulling a week of segments into a strip. */
+private const val MAX_TIMELINE_HOURS = 72f
+
+/** How close to the scrubber line a touch must land to grab it rather than pan. */
+private const val SCRUBBER_GRAB_SLOP_DP = 20
+
+/** Scrubber drags move time at a fraction of finger speed, so a moment can actually be aimed at. */
+private const val SCRUBBER_FINE_FACTOR = 0.3f
 
 /**
  * Recent-events side panel shown next to the live view in fullscreen landscape (#16 List mode,
@@ -91,6 +110,8 @@ fun LiveEventsPanel(
     onPlayEvent: (FrigateEvent) -> Unit = {},
     /** Tapping the timeline plays this camera's recording from that moment (epoch millis). */
     onPlayFromTime: (Long) -> Unit = {},
+    /** The panel's own dismiss control, so it can be closed without going via the overflow menu. */
+    onHidePanel: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     LaunchedEffect(cameraName) { onRequestEvents() }
@@ -100,8 +121,12 @@ fun LiveEventsPanel(
     var selectedLabel by remember(cameraName) { mutableStateOf<String?>(null) }
     var showFilterMenu by remember { mutableStateOf(false) }
 
-    LaunchedEffect(cameraName, mode, timeRangeHours) {
-        if (mode == PanelMode.Timeline) onRequestTimeline(timeRangeHours)
+    // Fetch a wider span than the strip shows, so panning has somewhere to go. Fetching exactly the
+    // visible range (the old behavior) would mean every scroll ran straight off the end of the data.
+    val loadedRangeHours = (timeRangeHours * PAN_HEADROOM).coerceAtMost(MAX_TIMELINE_HOURS)
+
+    LaunchedEffect(cameraName, mode, loadedRangeHours) {
+        if (mode == PanelMode.Timeline) onRequestTimeline(loadedRangeHours)
     }
 
     Column(
@@ -110,11 +135,27 @@ fun LiveEventsPanel(
             .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(
-            "Recent Events",
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Recent Events",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            // Dismiss right where the panel is, rather than making the user go hunting through the
+            // fullscreen overflow menu to get rid of something they're looking straight at.
+            TextButton(
+                onClick = onHidePanel,
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                modifier = Modifier.testTag("live_panel_hide_button"),
+            ) {
+                Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(14.dp))
+                Text(" Hide", style = MaterialTheme.typography.labelSmall)
+            }
+        }
 
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             SingleChoiceSegmentedButtonRow(modifier = Modifier.weight(1f)) {
@@ -203,8 +244,9 @@ fun LiveEventsPanel(
                             recordingGaps = recordingGaps,
                             motionActivity = motionActivity,
                             timeRangeHours = timeRangeHours,
+                            loadedRangeHours = loadedRangeHours,
                             onZoomIn = { timeRangeHours = (timeRangeHours / 2f).coerceAtLeast(0.5f) },
-                            onZoomOut = { timeRangeHours = (timeRangeHours * 2f).coerceAtMost(72f) },
+                            onZoomOut = { timeRangeHours = (timeRangeHours * 2f).coerceAtMost(MAX_TIMELINE_HOURS) },
                             onPlayFromTime = onPlayFromTime,
                             modifier = Modifier.fillMaxSize(),
                         )
@@ -277,6 +319,7 @@ private fun LiveTimelineStrip(
     recordingGaps: List<RecordingGap>,
     motionActivity: List<MotionActivity>,
     timeRangeHours: Float,
+    loadedRangeHours: Float,
     onZoomIn: () -> Unit,
     onZoomOut: () -> Unit,
     onPlayFromTime: (Long) -> Unit,
@@ -285,6 +328,13 @@ private fun LiveTimelineStrip(
     val nowMs = remember { System.currentTimeMillis() }
     var scrubberTimeMs by remember { mutableStateOf(nowMs) }
     val rangeMs = (timeRangeHours * 3_600_000L).toLong()
+
+    // The anchor at the top of the strip. Panning moves it back through time; it was previously
+    // pinned to `now`, which is why there was no way to scroll — the strip could only ever show the
+    // most recent window. Clamped to the span actually fetched, so a drag can't scroll off into a
+    // region with no data.
+    var viewEndMs by remember(timeRangeHours) { mutableStateOf(nowMs) }
+    val oldestLoadedMs = nowMs - (loadedRangeHours * 3_600_000L).toLong()
 
     // Reading the latest callback/geometry inside a pointerInput that must not restart mid-gesture.
     val currentOnPlayFromTime by rememberUpdatedState(onPlayFromTime)
@@ -303,27 +353,56 @@ private fun LiveTimelineStrip(
         Canvas(
             Modifier
                 .fillMaxSize()
-                // Drag scrubs; a tap commits. Previously the strip only moved a scrubber line and had
-                // no way to act on it, which is why Timeline mode felt inert — you could point at a
-                // moment but never watch it.
-                .pointerInput(nowMs, rangeMs) {
-                    awaitPointerEventScope {
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull() ?: continue
-                            if (change.pressed) {
+                // One handler for all three gestures, because they share a finger and the decision of
+                // which one is happening can only be made at touch-down:
+                //   - grab the scrubber line  -> fine time adjustment (damped), plays on release
+                //   - drag anywhere else      -> pan through time
+                //   - tap                     -> jump the scrubber there and play
+                // Splitting these across separate pointerInputs doesn't work: whichever consumes the
+                // events first starves the others, which is how the strip previously ended up able to
+                // neither scroll nor play.
+                .pointerInput(rangeMs, oldestLoadedMs) {
+                    val grabSlopPx = SCRUBBER_GRAB_SLOP_DP.dp.toPx()
+                    awaitEachGesture {
+                        val down = awaitFirstDown()
+                        val height = size.height.toFloat()
+                        val msPerPx = rangeMs.toFloat() / height
+                        val scrubberY = (viewEndMs - scrubberTimeMs) / msPerPx
+                        val grabbedScrubber = abs(down.position.y - scrubberY) <= grabSlopPx
+                        var moved = false
+
+                        drag(down.id) { change ->
+                            val dragY = change.positionChange().y
+                            if (dragY != 0f) {
+                                moved = true
                                 change.consume()
-                                val frac = (change.position.y / size.height).coerceIn(0f, 1f)
-                                scrubberTimeMs = nowMs - (frac * rangeMs).toLong()
+                            }
+                            if (grabbedScrubber) {
+                                // Damped: the point of grabbing the line is to land on a moment, and at
+                                // a 6h window one pixel is ~90 seconds — far too coarse to aim with.
+                                val deltaMs = (dragY * msPerPx * SCRUBBER_FINE_FACTOR).toLong()
+                                scrubberTimeMs =
+                                    (scrubberTimeMs - deltaMs).coerceIn(oldestLoadedMs, nowMs)
+                            } else {
+                                // Dragging down pulls newer footage into view; up reveals older.
+                                viewEndMs =
+                                    (viewEndMs + (dragY * msPerPx).toLong())
+                                        .coerceIn(oldestLoadedMs + rangeMs, nowMs)
                             }
                         }
-                    }
-                }.pointerInput(nowMs, rangeMs) {
-                    detectTapGestures { offset ->
-                        val frac = (offset.y / size.height).coerceIn(0f, 1f)
-                        val tappedMs = nowMs - (frac * rangeMs).toLong()
-                        scrubberTimeMs = tappedMs
-                        currentOnPlayFromTime(tappedMs)
+
+                        when {
+                            !moved -> {
+                                val frac = (down.position.y / height).coerceIn(0f, 1f)
+                                scrubberTimeMs = viewEndMs - (frac * rangeMs).toLong()
+                                currentOnPlayFromTime(scrubberTimeMs)
+                            }
+
+                            // Releasing the line is the commit — that's the whole point of dragging it.
+                            grabbedScrubber -> {
+                                currentOnPlayFromTime(scrubberTimeMs)
+                            }
+                        }
                     }
                 },
         ) {
@@ -332,7 +411,7 @@ private fun LiveTimelineStrip(
                 recordingGaps = recordingGaps,
                 motionActivity = motionActivity,
                 scrubberTimeMs = scrubberTimeMs,
-                viewEndMs = nowMs,
+                viewEndMs = viewEndMs,
                 rangeMs = rangeMs,
                 timeRangeHours = timeRangeHours,
                 centerX = size.width * 0.6f,

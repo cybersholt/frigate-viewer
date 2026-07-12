@@ -46,6 +46,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -95,6 +96,20 @@ fun EventsScreen(
     var showFilter by remember { mutableStateOf(false) }
     val gridState = rememberLazyGridState()
     var previewYFraction by remember { mutableStateOf<Float?>(null) }
+
+    // Until the user scrolls, the grid stays pinned to the newest event. New events arrive at the top,
+    // so a freshly loaded or refreshed list should show them rather than sitting at whatever offset it
+    // happened to be at — but once the user has scrolled somewhere deliberately, never yank them back.
+    var userHasScrolled by remember { mutableStateOf(false) }
+    LaunchedEffect(gridState) {
+        snapshotFlow { gridState.isScrollInProgress }
+            .collect { scrolling -> if (scrolling) userHasScrolled = true }
+    }
+    LaunchedEffect(state.events.firstOrNull()?.id) {
+        if (!userHasScrolled && state.events.isNotEmpty()) {
+            gridState.scrollToItem(0)
+        }
+    }
 
     LaunchedEffect(initialCamera, initialLabel, initialZone) {
         vm.initFilters(initialCamera, initialLabel, initialZone)

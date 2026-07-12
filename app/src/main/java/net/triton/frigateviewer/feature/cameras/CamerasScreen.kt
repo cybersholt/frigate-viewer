@@ -896,7 +896,11 @@ private fun FocusedTile(
         // fullscreen landscape, matching the reference wishlist layout. Portrait fullscreen and
         // the non-fullscreen card view are unchanged. Off unless the user opts in from the
         // fullscreen overflow menu (persisted), so fullscreen live view is full-bleed by default.
-        val eventsPanelVisible = isFullScreen && isLandscape && showEventsPanel
+        // Hidden in PiP without touching the persisted setting: a PiP window is a few hundred pixels
+        // wide, so a 260dp panel crowds the video out entirely — you'd see the panel header and its
+        // mode buttons and no camera at all. Restores itself on the way back out, since this reads
+        // isInPip rather than writing the preference.
+        val eventsPanelVisible = isFullScreen && isLandscape && showEventsPanel && !isInPip
 
         val videoContent: @Composable () -> Unit = {
             var liveStreamState by remember { mutableStateOf<LiveStreamState>(LiveStreamState.Idle) }
@@ -1003,6 +1007,7 @@ private fun FocusedTile(
                     onOpenEvents = onOpenEvents,
                     onPlayEvent = { event -> playback = PlaybackTarget.forEvent(event) },
                     onPlayFromTime = { epochMs -> playback = PlaybackTarget.forTime(epochMs / 1000) },
+                    onHidePanel = onToggleEventsPanel,
                     modifier = Modifier.fillMaxHeight().width(260.dp),
                 )
             }

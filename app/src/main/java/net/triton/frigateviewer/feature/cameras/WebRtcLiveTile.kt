@@ -59,6 +59,7 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import net.triton.frigateviewer.LocalIsInPip
 import net.triton.frigateviewer.core.data.CredentialStore
 import net.triton.frigateviewer.core.data.ServerRepository
 import okhttp3.OkHttpClient
@@ -227,90 +228,6 @@ fun WebRtcLiveTile(
 
     LaunchedEffect(liveState) { onStateChanged(liveState) }
 
-    // ── Developer Options: stream telemetry ──
-    // Polled at 1 Hz straight off the PeerConnection rather than accumulated from callbacks, because
-    // WebRTC's own counters are already cumulative — bandwidth is the derivative of bytesReceived
-    // between two samples, so a fixed cadence is what makes the number meaningful.
-    var statsSample by remember { mutableStateOf<StreamStats?>(null) }
-    var statsHistory by remember { mutableStateOf(StreamStatsHistory()) }
-    LaunchedEffect(showStreamStats, retryCount) {
-        if (!showStreamStats) {
-            statsSample = null
-            statsHistory = StreamStatsHistory()
-            return@LaunchedEffect
-        }
-        var lastBytes = 0L
-        var lastSampleAt = 0L
-        while (true) {
-            delay(STATS_INTERVAL_MS)
-            val session = pcHolder.get() ?: continue
-            val report = session.awaitStats() ?: continue
-            val now = System.currentTimeMillis()
-
-            // "kind" is the current spec name; older libwebrtc builds emit "mediaType". Accept either,
-            // and if neither video track is tagged, fall back to the sole inbound-rtp entry.
-            val inboundEntries = report.statsMap.values.filter { it.type == "inbound-rtp" }
-            val inbound =
-                inboundEntries.firstOrNull { s ->
-                    s.members["kind"] == "video" || s.members["mediaType"] == "video"
-                } ?: inboundEntries.singleOrNull()
-
-            // bytesReceived comes back as an unsigned 64-bit value, which the JNI layer surfaces as a
-            // BigInteger rather than a Long — hence Number, not a direct Long cast (that cast failing
-            // silently is exactly how bandwidth ends up permanently blank). If inbound-rtp has no byte
-            // counter, the transport-level entry does.
-            val bytes =
-                (inbound?.members?.get("bytesReceived") as? Number)?.toLong()
-                    ?: (
-                        report.statsMap.values
-                            .firstOrNull { it.type == "transport" }
-                            ?.members
-                            ?.get("bytesReceived") as? Number
-                    )?.toLong()
-                    ?: 0L
-            val elapsedSec = if (lastSampleAt == 0L) 0.0 else (now - lastSampleAt) / 1000.0
-            val bandwidthKbps =
-                if (elapsedSec > 0 && bytes >= lastBytes) {
-                    (bytes - lastBytes) * 8.0 / 1000.0 / elapsedSec
-                } else {
-                    null
-                }
-            lastBytes = bytes
-            lastSampleAt = now
-
-            // RTT lives on the *selected* candidate pair; a non-succeeded pair's RTT is stale.
-            val rttSeconds =
-                report.statsMap.values
-                    .firstOrNull { it.type == "candidate-pair" && it.members["state"] == "succeeded" }
-                    ?.members
-                    ?.get("currentRoundTripTime") as? Number
-
-            val codecId = inbound?.members?.get("codecId") as? String
-            val codec =
-                codecId
-                    ?.let { report.statsMap[it]?.members?.get("mimeType") as? String }
-                    ?.substringAfter('/')
-
-            val width = (inbound?.members?.get("frameWidth") as? Number)?.toInt()
-            val height = (inbound?.members?.get("frameHeight") as? Number)?.toInt()
-
-            val sample =
-                StreamStats(
-                    streamType = "webrtc",
-                    bandwidthKbps = bandwidthKbps,
-                    latencyMs = rttSeconds?.let { it.toDouble() * 1000.0 },
-                    framesTotal = (inbound?.members?.get("framesReceived") as? Number)?.toLong(),
-                    framesDecoded = (inbound?.members?.get("framesDecoded") as? Number)?.toLong(),
-                    framesDropped = (inbound?.members?.get("framesDropped") as? Number)?.toLong(),
-                    // No read-ahead field: WebRTC is realtime and does not buffer ahead.
-                    resolution = if (width != null && height != null) "${width}x$height" else null,
-                    codec = codec,
-                )
-            statsSample = sample
-            statsHistory += sample
-        }
-    }
-
     val entryPoint = remember { EntryPointAccessors.fromApplication(context, WebRtcEntryPoint::class.java) }
     val credStore = entryPoint.credentialStore()
     val serverRepo = entryPoint.serverRepository()
@@ -373,19 +290,41 @@ fun WebRtcLiveTile(
         autoReconnectAttempts = 0
     }
 
+    // The pending backoff retry, if one is queued. Held so it can be cancelled — a retry scheduled by
+    // a failure is worthless once a later attempt has connected, and firing it anyway tears down the
+    // working session. Coming back from a long background does exactly that: the first dial times out
+    // (network still waking), queues a retry, the next dial succeeds — and then the queued retry kills
+    // it. Two such failures also exhaust MAX_AUTO_RECONNECTS, so the tile finally gives up with "live
+    // view unavailable" while a perfectly good stream is running behind it.
+    val pendingRetry = remember { AtomicReference<kotlinx.coroutines.Job?>() }
+
     /** Classifies a transient failure: auto-retries up to [MAX_AUTO_RECONNECTS] with backoff, else terminal Error. */
     fun handleFailure(reason: StreamError) {
         if (autoReconnectAttempts < MAX_AUTO_RECONNECTS) {
             autoReconnectAttempts++
             liveState = LiveStreamState.Reconnecting(autoReconnectAttempts)
             val delayMs = BACKOFF_MS[autoReconnectAttempts - 1]
-            scope.launch {
-                delay(delayMs)
-                retryCount++
-            }
+            // Only ever one retry in flight; a second failure supersedes the first rather than
+            // queueing a second teardown behind it.
+            pendingRetry
+                .getAndSet(
+                    scope.launch {
+                        delay(delayMs)
+                        retryCount++
+                    },
+                )?.cancel()
         } else {
             liveState = LiveStreamState.Error(reason)
             onFatal(reason.name)
+        }
+    }
+
+    // Playing means the stream is good: drop any queued retry, and hand the next transient failure a
+    // fresh budget instead of one already spent on a stall the connection has since recovered from.
+    LaunchedEffect(liveState) {
+        if (liveState is LiveStreamState.Playing) {
+            pendingRetry.getAndSet(null)?.cancel()
+            autoReconnectAttempts = 0
         }
     }
 
@@ -811,10 +750,18 @@ fun WebRtcLiveTile(
         // letterbox when the AndroidView itself is forced to fill its container.
         val fitHeightFromWidth = maxWidth / videoAspectRatio
         val rendererModifier =
-            if (fitHeightFromWidth <= maxHeight) {
-                Modifier.width(maxWidth).height(fitHeightFromWidth)
-            } else {
-                Modifier.width(maxHeight * videoAspectRatio).height(maxHeight)
+            when {
+                // Never hand the renderer a zero-sized layout, not even for one transient measure
+                // pass. A 0x0 SurfaceView destroys and recreates its surface, and the Exynos hardware
+                // H.264 decoder rejects the resulting setOutputSurface with BAD_INDEX — WebRTC then
+                // quietly falls back to the SOFTWARE AVC decoder, which cannot keep up with a
+                // 3840x2160 stream. That is the source of the dropped seconds on 4K: not the network,
+                // a decoder demotion caused by a momentary zero-size layout.
+                maxWidth <= 0.dp || maxHeight <= 0.dp -> Modifier.fillMaxSize()
+
+                fitHeightFromWidth <= maxHeight -> Modifier.width(maxWidth).height(fitHeightFromWidth)
+
+                else -> Modifier.width(maxHeight * videoAspectRatio).height(maxHeight)
             }
 
         // 1. WebRTC Renderer — always in tree so the surface exists before first frame.
@@ -887,38 +834,152 @@ fun WebRtcLiveTile(
             modifier = Modifier.fillMaxSize(),
         )
 
-        statsSample?.let { sample ->
-            StreamStatsOverlay(
-                stats = sample,
-                history = statsHistory,
-                modifier = Modifier.align(Alignment.TopEnd).padding(top = 36.dp, end = 6.dp),
+        // Hidden in PiP: the window is a few hundred pixels wide, so the overlay covers the picture
+        // it's meant to describe. Restores on the way out — this reads the state, it doesn't set it.
+        if (showStreamStats && !LocalIsInPip.current) {
+            WebRtcStatsOverlay(
+                pcHolder = pcHolder,
+                cameraName = cameraName,
+                retryCount = retryCount,
+                // Clears the protocol/LIVE badge row above it; drag it anywhere from there.
+                modifier = Modifier.align(Alignment.TopEnd).padding(top = 64.dp, end = 6.dp),
             )
         }
 
-        // Mute toggle
-        IconButton(
-            onClick = { isMuted = !isMuted },
-            modifier = Modifier.align(Alignment.BottomStart).padding(4.dp).testTag("webrtc_mute_button"),
-        ) {
-            Icon(
-                imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
-                contentDescription = if (isMuted) "Unmute" else "Mute",
-                tint = Color.White,
-                modifier = Modifier.size(24.dp),
-            )
-        }
+        // Tile chrome is suppressed in PiP: the window is a few hundred pixels wide, so buttons
+        // meant for a full-size tile just cover the picture. Android's PiP guidelines call for
+        // minimal chrome, and the system already provides its own controls.
+        if (!LocalIsInPip.current) {
+            // Mute toggle
+            IconButton(
+                onClick = { isMuted = !isMuted },
+                modifier = Modifier.align(Alignment.BottomStart).padding(4.dp).testTag("webrtc_mute_button"),
+            ) {
+                Icon(
+                    imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                    contentDescription = if (isMuted) "Unmute" else "Mute",
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp),
+                )
+            }
 
-        IconButton(
-            onClick = onToggleFullScreen,
-            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 8.dp).testTag("webrtc_fullscreen_button"),
-        ) {
-            Icon(
-                imageVector = if (isFullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
-                contentDescription = "Toggle full screen",
-                tint = Color.White,
-                modifier = Modifier.size(24.dp),
-            )
+            IconButton(
+                onClick = onToggleFullScreen,
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 16.dp, bottom = 8.dp)
+                        .testTag("webrtc_fullscreen_button"),
+            ) {
+                Icon(
+                    imageVector = if (isFullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                    contentDescription = "Toggle full screen",
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp),
+                )
+            }
         }
+    }
+}
+
+/**
+ * Developer Options telemetry, sampled at 1 Hz off the PeerConnection.
+ *
+ * Deliberately its own composable rather than state in [WebRtcLiveTile]: a new sample every second
+ * invalidates whatever scope holds it, and holding it in the tile meant recomposing the entire tile
+ * — video layer, overlays and all — once per second, which visibly cost frames on a 4K stream
+ * (dropped seconds in the camera's own burnt-in timestamp). Confined here, a sample invalidates only
+ * this overlay, and the video path is untouched.
+ *
+ * Counters are polled rather than accumulated from callbacks because WebRTC's are cumulative:
+ * bandwidth is the derivative of bytesReceived between two samples, so a fixed cadence is what makes
+ * the number mean anything.
+ */
+@Composable
+private fun WebRtcStatsOverlay(
+    pcHolder: AtomicReference<PcSession?>,
+    cameraName: String,
+    retryCount: Int,
+    modifier: Modifier = Modifier,
+) {
+    var statsSample by remember { mutableStateOf<StreamStats?>(null) }
+    var statsHistory by remember { mutableStateOf(StreamStatsHistory()) }
+
+    LaunchedEffect(cameraName, retryCount) {
+        var lastBytes = 0L
+        var lastSampleAt = 0L
+        while (true) {
+            delay(STATS_INTERVAL_MS)
+            val session = pcHolder.get() ?: continue
+            val report = session.awaitStats() ?: continue
+            val now = System.currentTimeMillis()
+
+            // "kind" is the current spec name; older libwebrtc builds emit "mediaType". Accept either,
+            // and if neither video track is tagged, fall back to the sole inbound-rtp entry.
+            val inboundEntries = report.statsMap.values.filter { it.type == "inbound-rtp" }
+            val inbound =
+                inboundEntries.firstOrNull { s ->
+                    s.members["kind"] == "video" || s.members["mediaType"] == "video"
+                } ?: inboundEntries.singleOrNull()
+
+            // bytesReceived is an unsigned 64-bit value, which the JNI layer surfaces as a BigInteger
+            // rather than a Long — hence Number, not a direct Long cast (that cast failing silently is
+            // exactly how bandwidth ends up permanently blank). If inbound-rtp has no byte counter,
+            // the transport-level entry does.
+            val bytes =
+                (inbound?.members?.get("bytesReceived") as? Number)?.toLong()
+                    ?: (
+                        report.statsMap.values
+                            .firstOrNull { it.type == "transport" }
+                            ?.members
+                            ?.get("bytesReceived") as? Number
+                    )?.toLong()
+                    ?: 0L
+            val elapsedSec = if (lastSampleAt == 0L) 0.0 else (now - lastSampleAt) / 1000.0
+            val bandwidthKbps =
+                if (elapsedSec > 0 && bytes >= lastBytes) {
+                    (bytes - lastBytes) * 8.0 / 1000.0 / elapsedSec
+                } else {
+                    null
+                }
+            lastBytes = bytes
+            lastSampleAt = now
+
+            // RTT lives on the *selected* candidate pair; a non-succeeded pair's RTT is stale.
+            val rttSeconds =
+                report.statsMap.values
+                    .firstOrNull { it.type == "candidate-pair" && it.members["state"] == "succeeded" }
+                    ?.members
+                    ?.get("currentRoundTripTime") as? Number
+
+            val codecId = inbound?.members?.get("codecId") as? String
+            val codec =
+                codecId
+                    ?.let { report.statsMap[it]?.members?.get("mimeType") as? String }
+                    ?.substringAfter('/')
+
+            val width = (inbound?.members?.get("frameWidth") as? Number)?.toInt()
+            val height = (inbound?.members?.get("frameHeight") as? Number)?.toInt()
+
+            val sample =
+                StreamStats(
+                    streamType = "webrtc",
+                    bandwidthKbps = bandwidthKbps,
+                    latencyMs = rttSeconds?.let { it.toDouble() * 1000.0 },
+                    framesTotal = (inbound?.members?.get("framesReceived") as? Number)?.toLong(),
+                    framesDecoded = (inbound?.members?.get("framesDecoded") as? Number)?.toLong(),
+                    framesDropped = (inbound?.members?.get("framesDropped") as? Number)?.toLong(),
+                    // No read-ahead field: WebRTC is realtime and does not buffer ahead.
+                    resolution = if (width != null && height != null) "${width}x$height" else null,
+                    codec = codec,
+                )
+            statsSample = sample
+            statsHistory += sample
+        }
+    }
+
+    statsSample?.let { sample ->
+        StreamStatsOverlay(stats = sample, history = statsHistory, modifier = modifier)
     }
 }
 

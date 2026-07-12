@@ -49,6 +49,7 @@ import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import net.triton.frigateviewer.LocalIsInPip
 
 private const val TAG = "RtspLiveTile"
 private const val MAX_BACKOFF_MS = 30_000L
@@ -422,34 +423,44 @@ fun RtspLiveTile(
             StreamStatsOverlay(
                 stats = sample,
                 history = statsHistory,
-                modifier = Modifier.align(Alignment.TopEnd).padding(top = 36.dp, end = 6.dp),
+                // Clears the protocol/LIVE badge row above it; drag it anywhere from there.
+                modifier = Modifier.align(Alignment.TopEnd).padding(top = 64.dp, end = 6.dp),
             )
         }
 
-        // Mute toggle
-        IconButton(
-            onClick = { isMuted = !isMuted },
-            modifier = Modifier.align(Alignment.BottomStart).padding(4.dp).testTag("rtsp_mute_button"),
-        ) {
-            Icon(
-                imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
-                contentDescription = if (isMuted) "Unmute" else "Mute",
-                tint = Color.White,
-                modifier = Modifier.size(24.dp),
-            )
-        }
+        // Tile chrome is suppressed in PiP: the window is a few hundred pixels wide, so buttons meant
+        // for a full-size tile just cover the picture. Matches WebRtcLiveTile, and Android's PiP
+        // guidance (minimal chrome; the system supplies its own controls).
+        if (!LocalIsInPip.current) {
+            // Mute toggle
+            IconButton(
+                onClick = { isMuted = !isMuted },
+                modifier = Modifier.align(Alignment.BottomStart).padding(4.dp).testTag("rtsp_mute_button"),
+            ) {
+                Icon(
+                    imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                    contentDescription = if (isMuted) "Unmute" else "Mute",
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp),
+                )
+            }
 
-        // Fullscreen toggle
-        IconButton(
-            onClick = onToggleFullScreen,
-            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 8.dp).testTag("rtsp_fullscreen_button"),
-        ) {
-            Icon(
-                imageVector = if (isFullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
-                contentDescription = if (isFullScreen) "Exit full screen" else "Full screen",
-                tint = Color.White,
-                modifier = Modifier.size(24.dp),
-            )
+            // Fullscreen toggle
+            IconButton(
+                onClick = onToggleFullScreen,
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 16.dp, bottom = 8.dp)
+                        .testTag("rtsp_fullscreen_button"),
+            ) {
+                Icon(
+                    imageVector = if (isFullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                    contentDescription = if (isFullScreen) "Exit full screen" else "Full screen",
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp),
+                )
+            }
         }
     }
 }

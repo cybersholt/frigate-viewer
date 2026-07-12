@@ -43,7 +43,6 @@ object SettingsRoutes {
     const val NOTIFICATIONS = "settings/notifications"
     const val BACKUP = "settings/backup"
     const val ADVANCED = "settings/advanced"
-    const val DEVICE_CAPABILITIES = "settings/device_capabilities"
     const val DEVELOPER_OPTIONS = "settings/developer_options"
     const val ABOUT = "settings/about"
 }
@@ -136,13 +135,6 @@ fun SettingsScreen(
                 title = "Advanced",
                 subtitle = "System stats",
                 onClick = { onNavigate(SettingsRoutes.ADVANCED) },
-            )
-            SettingsNavRow(
-                icon = Icons.Filled.PhoneAndroid,
-                iconTint = cs.onTertiaryContainer,
-                iconContainerColor = cs.tertiaryContainer,
-                title = "Device Capabilities",
-                onClick = { onNavigate(SettingsRoutes.DEVICE_CAPABILITIES) },
             )
             SettingsNavRow(
                 icon = Icons.Filled.BugReport,
