@@ -44,12 +44,17 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
+import androidx.media3.exoplayer.upstream.BandwidthMeter
+import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private const val TAG = "RtspLiveTile"
 private const val MAX_BACKOFF_MS = 30_000L
+
+/** Sampling cadence for the Developer Options stats overlay. */
+private const val RTSP_STATS_INTERVAL_MS = 1_000L
 
 /** Exponential backoff (base, base×2, base×4, ...) capped at [MAX_BACKOFF_MS]. */
 private fun backoffMs(
@@ -59,7 +64,28 @@ private fun backoffMs(
 
 private fun maskRtspUrl(url: String): String = url.replace(Regex("(rtsp://[^:@/]+):([^@]+)@"), "$1:***@")
 
+/**
+ * True when the failure is ExoPlayer refusing the stream's SDP outright rather than any kind of
+ * network trouble. Matched on the exception chain's message because Media3 surfaces it as a generic
+ * ERROR_CODE_IO_UNSPECIFIED (2000) `Source error` — the only thing distinguishing it is the
+ * IllegalArgumentException("missing sprop parameter") buried in the cause chain.
+ */
+private fun PlaybackException.isMissingSpropParameter(): Boolean {
+    var cause: Throwable? = this
+    while (cause != null) {
+        if (cause.message?.contains("sprop", ignoreCase = true) == true) return true
+        cause = cause.cause
+    }
+    return false
+}
+
 private fun classifyError(e: PlaybackException): StreamError =
+    when {
+        e.isMissingSpropParameter() -> StreamError.RTSP_UNSUPPORTED
+        else -> classifyByErrorCode(e)
+    }
+
+private fun classifyByErrorCode(e: PlaybackException): StreamError =
     when (e.errorCode) {
         PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED -> StreamError.NETWORK
 
@@ -86,8 +112,11 @@ fun RtspLiveTile(
     isFullScreen: Boolean = false,
     onToggleFullScreen: () -> Unit = {},
     showLastImageWhileLoading: Boolean = true,
+    showStreamStats: Boolean = false,
     onStateChanged: (LiveStreamState) -> Unit = {},
     onFatal: () -> Unit = {},
+    /** ExoPlayer can't play this SDP at all (see [StreamError.RTSP_UNSUPPORTED]) — caller should switch transport. */
+    onRtspUnsupported: () -> Unit = {},
 ) {
     val reconnectSettings = LocalRtspReconnectSettings.current
     val maxReconnectAttempts = reconnectSettings.maxAttempts
@@ -104,11 +133,84 @@ fun RtspLiveTile(
     var liveState by remember { mutableStateOf<LiveStreamState>(LiveStreamState.Idle) }
     LaunchedEffect(liveState) { onStateChanged(liveState) }
 
+    // ── Developer Options: stream telemetry ──
+    // ExoPlayer exposes bitrate as the *declared* Format.bitrate, which for a live RTSP feed is
+    // often Format.NO_VALUE, so bandwidth is measured the same way as the WebRTC tile: as the
+    // derivative of a cumulative byte counter. There isn't one on ExoPlayer, so we fall back to the
+    // declared bitrate when present and otherwise report nothing rather than inventing a number.
+    var statsSample by remember { mutableStateOf<StreamStats?>(null) }
+    var statsHistory by remember { mutableStateOf(StreamStatsHistory()) }
+
+    // Real measured throughput, when media3 reports transfers for this media source. RTSP's RTP data
+    // channels don't always feed the bandwidth meter, in which case bitrateEstimate stays at its
+    // seeded default — which would be a fabricated number, not a measurement. So only trust it once
+    // an actual sample has been observed, and otherwise report nothing.
+    val bandwidthMeter = remember { DefaultBandwidthMeter.Builder(context).build() }
+    var sawBandwidthSample by remember { mutableStateOf(false) }
+    DisposableEffect(bandwidthMeter) {
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val listener =
+            BandwidthMeter.EventListener { _, bytesTransferred, _ ->
+                if (bytesTransferred > 0) sawBandwidthSample = true
+            }
+        bandwidthMeter.addEventListener(handler, listener)
+        onDispose { bandwidthMeter.removeEventListener(listener) }
+    }
+
     // Holds the current ExoPlayer so handleFailure (defined before the player exists, since the
     // player's own error listener needs to call it) can stop it. Without this, declaring
     // Reconnecting/Error only flips the Compose state — the still-alive player keeps buffering
     // and can silently resume rendering frames behind the (translucent) error overlay.
     var playerRef by remember { mutableStateOf<ExoPlayer?>(null) }
+
+    LaunchedEffect(showStreamStats, retryTrigger) {
+        if (!showStreamStats) {
+            statsSample = null
+            statsHistory = StreamStatsHistory()
+            return@LaunchedEffect
+        }
+        while (true) {
+            delay(RTSP_STATS_INTERVAL_MS)
+            val player = playerRef ?: continue
+            val format = player.videoFormat
+            val counters = player.videoDecoderCounters
+            val declaredBitrate = format?.bitrate?.takeIf { it > 0 }
+
+            // renderedOutputBufferCount + droppedBufferCount is the closest ExoPlayer equivalent of
+            // WebRTC's framesReceived: frames the decoder actually accounted for, either way.
+            val rendered = counters?.renderedOutputBufferCount?.toLong()
+            val dropped = counters?.droppedBufferCount?.toLong()
+            val total = if (rendered != null && dropped != null) rendered + dropped else null
+
+            // Prefer the measured rate; fall back to the bitrate the stream declares in its Format
+            // (frequently NO_VALUE on a live camera feed, hence nullable).
+            val measuredKbps =
+                if (sawBandwidthSample) {
+                    bandwidthMeter.bitrateEstimate.takeIf { it > 0 }?.let { it / 1000.0 }
+                } else {
+                    null
+                }
+
+            val sample =
+                StreamStats(
+                    streamType = "rtsp",
+                    bandwidthKbps = measuredKbps ?: declaredBitrate?.let { it / 1000.0 },
+                    // RTSP over ExoPlayer surfaces no round-trip time.
+                    latencyMs = null,
+                    framesTotal = total,
+                    framesDecoded = rendered,
+                    framesDropped = dropped,
+                    readAheadSeconds = player.totalBufferedDuration / 1000.0,
+                    resolution =
+                        format?.let { f ->
+                            if (f.width > 0 && f.height > 0) "${f.width}x${f.height}" else null
+                        },
+                    codec = format?.sampleMimeType?.substringAfter('/'),
+                )
+            statsSample = sample
+            statsHistory += sample
+        }
+    }
 
     // NETWORK and TIMEOUT are both treated as transient (a stalled/dropped connection commonly
     // surfaces as either depending on exactly when the socket gives up) — SOURCE_UNAVAILABLE
@@ -116,6 +218,14 @@ fun RtspLiveTile(
     // config/format problems that retrying won't fix.
     fun handleFailure(reason: StreamError) {
         playerRef?.stop()
+        if (reason == StreamError.RTSP_UNSUPPORTED) {
+            // Not a failure to retry or to surface as "offline": the stream is simply unplayable by
+            // ExoPlayer's RTSP stack. Hand it back to the caller, which re-runs this camera on WebRTC.
+            Log.w(TAG, "RTSP unplayable (no sprop-parameter-sets in SDP) for ${maskRtspUrl(url)} — falling back to WebRTC")
+            liveState = LiveStreamState.Error(reason)
+            onRtspUnsupported()
+            return
+        }
         val isTransient = reason == StreamError.NETWORK || reason == StreamError.TIMEOUT
         if (isTransient && autoReconnectAttempts < maxReconnectAttempts) {
             autoReconnectAttempts++
@@ -163,7 +273,7 @@ fun RtspLiveTile(
             val renderersFactory =
                 DefaultRenderersFactory(context)
                     .setEnableDecoderFallback(true)
-            ExoPlayer.Builder(context, renderersFactory).build().apply {
+            ExoPlayer.Builder(context, renderersFactory).setBandwidthMeter(bandwidthMeter).build().apply {
                 volume = if (isMuted) 0f else 1f
                 addListener(
                     object : Player.Listener {
@@ -307,6 +417,14 @@ fun RtspLiveTile(
             },
             modifier = Modifier.fillMaxSize(),
         )
+
+        statsSample?.let { sample ->
+            StreamStatsOverlay(
+                stats = sample,
+                history = statsHistory,
+                modifier = Modifier.align(Alignment.TopEnd).padding(top = 36.dp, end = 6.dp),
+            )
+        }
 
         // Mute toggle
         IconButton(

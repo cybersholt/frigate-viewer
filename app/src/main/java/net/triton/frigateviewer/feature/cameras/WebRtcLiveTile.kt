@@ -101,6 +101,9 @@ data class FrigateObjectState(
 private const val MAX_AUTO_RECONNECTS = 2
 private val BACKOFF_MS = longArrayOf(2_000L, 5_000L)
 
+/** Sampling cadence for the Developer Options stats overlay. */
+private const val STATS_INTERVAL_MS = 1_000L
+
 /**
  * Owns one [PeerConnection]'s native lifetime.
  *
@@ -137,6 +140,20 @@ private class PcSession(
 }
 
 /**
+ * One `getStats()` round-trip, suspending until WebRTC delivers the report.
+ *
+ * Goes through [PcSession.use] like every other native call: the stats poll runs on its own 1 Hz
+ * loop and would otherwise be one more way to touch a disposed PeerConnection. Returns null if the
+ * session is already gone, which just skips this sample.
+ */
+private suspend fun PcSession.awaitStats(): org.webrtc.RTCStatsReport? {
+    val deferred = kotlinx.coroutines.CompletableDeferred<org.webrtc.RTCStatsReport>()
+    val started = use { pc -> pc.getStats { report -> deferred.complete(report) } }
+    if (!started) return null
+    return deferred.await()
+}
+
+/**
  * Sub-second live tile via Frigate WebRTC signaling.
  */
 @Composable
@@ -150,6 +167,7 @@ fun WebRtcLiveTile(
     onToggleFullScreen: () -> Unit = {},
     showBoundingBoxes: Boolean = true,
     showLastImageWhileLoading: Boolean = true,
+    showStreamStats: Boolean = false,
     onFatal: (String) -> Unit = {},
     onStateChanged: (LiveStreamState) -> Unit = {},
 ) {
@@ -167,6 +185,30 @@ fun WebRtcLiveTile(
     val wsGlobalHolder = remember { AtomicReference<WebSocket?>() }
     val wsStreamHolder = remember { AtomicReference<WebSocket?>() }
     val rendererHolder = remember { AtomicReference<SurfaceViewRenderer?>() }
+
+    // The remote video track and the SurfaceViewRenderer are created by two independent races: the
+    // track arrives on WebRTC's signaling thread the moment media negotiates, while the renderer is
+    // created whenever Compose gets around to running the AndroidView factory. Whoever lands second
+    // has to do the wiring — attaching the sink only from onTrack (the original behavior) silently
+    // dropped the video whenever the track won that race, and since RTP kept flowing the tile looked
+    // alive in every way except the picture: bandwidth ticked, frames decoded, drop rate stayed
+    // near zero, and the tile still timed out at 20s because onFirstFrameRendered never fired.
+    val videoTrackHolder = remember { AtomicReference<VideoTrack?>() }
+
+    // Monotonic id for the current dial attempt. Every WebSocket callback carries the generation it
+    // was created under and does nothing unless it is still the live one.
+    //
+    // Teardown cancel()s the old sockets, and cancel() delivers onFailure("Socket closed") to their
+    // listeners — those listeners are the *previous* attempt's, but they still closed over
+    // handleFailure, so they reported our own teardown as a network failure, which scheduled another
+    // retry, which tore down again: a self-feeding reconnect loop that left the tile buffering
+    // forever even though every single attempt had actually connected (ICE COMPLETED, track
+    // received). Gating on generation is what makes a superseded session's callbacks inert.
+    val sessionGeneration =
+        remember {
+            java.util.concurrent.atomic
+                .AtomicInteger(0)
+        }
     val audioTrackHolder = remember { AtomicReference<org.webrtc.AudioTrack?>() }
     val pendingCandidates = remember { mutableListOf<IceCandidate>() }
 
@@ -185,11 +227,108 @@ fun WebRtcLiveTile(
 
     LaunchedEffect(liveState) { onStateChanged(liveState) }
 
+    // ── Developer Options: stream telemetry ──
+    // Polled at 1 Hz straight off the PeerConnection rather than accumulated from callbacks, because
+    // WebRTC's own counters are already cumulative — bandwidth is the derivative of bytesReceived
+    // between two samples, so a fixed cadence is what makes the number meaningful.
+    var statsSample by remember { mutableStateOf<StreamStats?>(null) }
+    var statsHistory by remember { mutableStateOf(StreamStatsHistory()) }
+    LaunchedEffect(showStreamStats, retryCount) {
+        if (!showStreamStats) {
+            statsSample = null
+            statsHistory = StreamStatsHistory()
+            return@LaunchedEffect
+        }
+        var lastBytes = 0L
+        var lastSampleAt = 0L
+        while (true) {
+            delay(STATS_INTERVAL_MS)
+            val session = pcHolder.get() ?: continue
+            val report = session.awaitStats() ?: continue
+            val now = System.currentTimeMillis()
+
+            // "kind" is the current spec name; older libwebrtc builds emit "mediaType". Accept either,
+            // and if neither video track is tagged, fall back to the sole inbound-rtp entry.
+            val inboundEntries = report.statsMap.values.filter { it.type == "inbound-rtp" }
+            val inbound =
+                inboundEntries.firstOrNull { s ->
+                    s.members["kind"] == "video" || s.members["mediaType"] == "video"
+                } ?: inboundEntries.singleOrNull()
+
+            // bytesReceived comes back as an unsigned 64-bit value, which the JNI layer surfaces as a
+            // BigInteger rather than a Long — hence Number, not a direct Long cast (that cast failing
+            // silently is exactly how bandwidth ends up permanently blank). If inbound-rtp has no byte
+            // counter, the transport-level entry does.
+            val bytes =
+                (inbound?.members?.get("bytesReceived") as? Number)?.toLong()
+                    ?: (
+                        report.statsMap.values
+                            .firstOrNull { it.type == "transport" }
+                            ?.members
+                            ?.get("bytesReceived") as? Number
+                    )?.toLong()
+                    ?: 0L
+            val elapsedSec = if (lastSampleAt == 0L) 0.0 else (now - lastSampleAt) / 1000.0
+            val bandwidthKbps =
+                if (elapsedSec > 0 && bytes >= lastBytes) {
+                    (bytes - lastBytes) * 8.0 / 1000.0 / elapsedSec
+                } else {
+                    null
+                }
+            lastBytes = bytes
+            lastSampleAt = now
+
+            // RTT lives on the *selected* candidate pair; a non-succeeded pair's RTT is stale.
+            val rttSeconds =
+                report.statsMap.values
+                    .firstOrNull { it.type == "candidate-pair" && it.members["state"] == "succeeded" }
+                    ?.members
+                    ?.get("currentRoundTripTime") as? Number
+
+            val codecId = inbound?.members?.get("codecId") as? String
+            val codec =
+                codecId
+                    ?.let { report.statsMap[it]?.members?.get("mimeType") as? String }
+                    ?.substringAfter('/')
+
+            val width = (inbound?.members?.get("frameWidth") as? Number)?.toInt()
+            val height = (inbound?.members?.get("frameHeight") as? Number)?.toInt()
+
+            val sample =
+                StreamStats(
+                    streamType = "webrtc",
+                    bandwidthKbps = bandwidthKbps,
+                    latencyMs = rttSeconds?.let { it.toDouble() * 1000.0 },
+                    framesTotal = (inbound?.members?.get("framesReceived") as? Number)?.toLong(),
+                    framesDecoded = (inbound?.members?.get("framesDecoded") as? Number)?.toLong(),
+                    framesDropped = (inbound?.members?.get("framesDropped") as? Number)?.toLong(),
+                    // No read-ahead field: WebRTC is realtime and does not buffer ahead.
+                    resolution = if (width != null && height != null) "${width}x$height" else null,
+                    codec = codec,
+                )
+            statsSample = sample
+            statsHistory += sample
+        }
+    }
+
     val entryPoint = remember { EntryPointAccessors.fromApplication(context, WebRtcEntryPoint::class.java) }
     val credStore = entryPoint.credentialStore()
     val serverRepo = entryPoint.serverRepository()
 
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    /**
+     * Binds the remote video track to the renderer, whenever both exist. Safe to call repeatedly:
+     * removeSink first, since addSink on an already-attached sink would deliver every frame twice.
+     */
+    fun attachVideoSink() {
+        val track = videoTrackHolder.get() ?: return
+        val renderer = rendererHolder.get() ?: return
+        runCatching {
+            track.removeSink(renderer)
+            track.addSink(renderer)
+        }.onFailure { Log.w("WebRtcLiveTile", "Could not attach video sink for $cameraName", it) }
+    }
 
     LaunchedEffect(isMuted) { audioTrackHolder.get()?.setEnabled(!isMuted) }
 
@@ -224,6 +363,14 @@ fun WebRtcLiveTile(
             }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // A different camera is a fresh start, not a continuation. This composable is reused across
+    // camera switches (same call site, only cameraName changes), so without this the new camera
+    // inherits the previous one's spent retry budget — two failures against the old camera and the
+    // new one goes straight to "live view unavailable" without being given a single real attempt.
+    LaunchedEffect(baseUrl, cameraName, okHttpClient) {
+        autoReconnectAttempts = 0
     }
 
     /** Classifies a transient failure: auto-retries up to [MAX_AUTO_RECONNECTS] with backoff, else terminal Error. */
@@ -266,11 +413,27 @@ fun WebRtcLiveTile(
 
     LaunchedEffect(baseUrl, cameraName, okHttpClient, retryCount) {
         withContext(Dispatchers.IO) {
-            // Clean up any previous attempt before creating new resources. cancel() rather than
-            // close(): close() is a graceful handshake that keeps delivering queued messages to the
-            // listener, which is precisely how a stale webrtc/answer reached a disposed
-            // PeerConnection. cancel() drops the socket and its callbacks immediately.
+            // Claim the new generation BEFORE tearing anything down, never after.
+            //
+            // cancel() returns immediately and OkHttp delivers onFailure("Socket closed") later, on
+            // its own reader thread. Bumping the generation *after* the cancel() calls below leaves a
+            // window in which the outgoing session is still the current generation — and that reader
+            // thread routinely wins it. The old listener then sees itself as live, mistakes our own
+            // teardown for a network failure, and schedules a retry that tears down the session which
+            // replaced it: the reconnect loop that left a camera buffering forever after a switch.
+            // Claiming first makes everything cancelled below stale by construction.
+            val generation = sessionGeneration.incrementAndGet()
+
+            fun isCurrent() = sessionGeneration.get() == generation
+
+            // cancel() rather than close(): close() is a graceful handshake that keeps delivering
+            // queued messages to the listener, which is precisely how a stale webrtc/answer reached
+            // a disposed PeerConnection (a native use-after-free crash).
             audioTrackHolder.getAndSet(null)?.setEnabled(false)
+            // Drop the sink before the PeerConnection (and with it the track) is disposed below.
+            videoTrackHolder.getAndSet(null)?.let { track ->
+                rendererHolder.get()?.let { renderer -> runCatching { track.removeSink(renderer) } }
+            }
             wsStreamHolder.getAndSet(null)?.cancel()
             wsGlobalHolder.getAndSet(null)?.cancel()
             pcHolder.getAndSet(null)?.dispose()
@@ -389,8 +552,17 @@ fun WebRtcLiveTile(
 
                             override fun onIceConnectionChange(newState: PeerConnection.IceConnectionState?) {
                                 Log.d("WebRtcLiveTile", "[DEBUG-WebRTC] ICE Connection State: $newState")
+                                // A peer connection being torn down walks through DISCONNECTED/CLOSED
+                                // on its way out; that is not a failure of whatever replaced it.
+                                if (!isCurrent()) return
                                 when (newState) {
-                                    PeerConnection.IceConnectionState.CONNECTED -> {
+                                    // COMPLETED is a terminal *success* state (ICE finished checking
+                                    // and settled on a pair) and does not have to be preceded by a
+                                    // CONNECTED callback. Ignoring it meant a connection that went
+                                    // straight to COMPLETED never left Connecting.
+                                    PeerConnection.IceConnectionState.CONNECTED,
+                                    PeerConnection.IceConnectionState.COMPLETED,
+                                    -> {
                                         if (liveState !is LiveStreamState.Playing) {
                                             liveState = LiveStreamState.Buffering
                                         }
@@ -412,7 +584,8 @@ fun WebRtcLiveTile(
                                 when (track) {
                                     is VideoTrack -> {
                                         track.setEnabled(true)
-                                        rendererHolder.get()?.let { track.addSink(it) }
+                                        videoTrackHolder.set(track)
+                                        attachVideoSink()
                                     }
 
                                     is org.webrtc.AudioTrack -> {
@@ -487,6 +660,9 @@ fun WebRtcLiveTile(
                                 webSocket: WebSocket,
                                 text: String,
                             ) {
+                                // Same reasoning as onFailure: a superseded session must not push SDP,
+                                // ICE candidates or object states into the tile that replaced it.
+                                if (!isCurrent()) return
                                 Log.v("WebRtcLiveTile", "WS message: $text")
                                 val obj = runCatching { Json.parseToJsonElement(text).let { it as JsonObject } }.getOrNull() ?: return
 
@@ -570,6 +746,14 @@ fun WebRtcLiveTile(
                                 t: Throwable,
                                 response: Response?,
                             ) {
+                                // A cancelled socket reports "Socket closed" here. If this session has
+                                // been superseded (camera switched, retry, teardown), that failure is
+                                // our own doing — reporting it would schedule a retry that kills the
+                                // session which replaced us.
+                                if (!isCurrent()) {
+                                    Log.d("WebRtcLiveTile", "Ignoring WS failure from superseded session for $cameraName")
+                                    return
+                                }
                                 Log.w("WebRtcLiveTile", "Stream WS failure, retrying...", t)
                                 handleFailure(StreamError.NETWORK)
                             }
@@ -584,7 +768,19 @@ fun WebRtcLiveTile(
 
     DisposableEffect(baseUrl, cameraName, okHttpClient) {
         onDispose {
+            // Retire the session FIRST, exactly as the connect effect does. This is the other path
+            // that cancels the sockets — it runs whenever the camera changes — and it used to do so
+            // without retiring the generation, so the outgoing camera's listener still believed it
+            // was live, reported our own cancel() as a network failure, and bumped retryCount. That
+            // is the old camera reaching out and disturbing the new one's connection: the "still
+            // connected to ch1 while ch2 is connecting" behavior.
+            sessionGeneration.incrementAndGet()
+
             audioTrackHolder.getAndSet(null)?.setEnabled(false)
+            // Drop the sink before the PeerConnection (and with it the track) is disposed below.
+            videoTrackHolder.getAndSet(null)?.let { track ->
+                rendererHolder.get()?.let { renderer -> runCatching { track.removeSink(renderer) } }
+            }
             wsStreamHolder.getAndSet(null)?.cancel()
             wsGlobalHolder.getAndSet(null)?.cancel()
             pcHolder.getAndSet(null)?.dispose()
@@ -657,9 +853,14 @@ fun WebRtcLiveTile(
                         setEnableHardwareScaler(true)
                         setScalingType(org.webrtc.RendererCommon.ScalingType.SCALE_ASPECT_FIT)
                         rendererHolder.set(this)
+                        // The track may already be here — see attachVideoSink's note on the race.
+                        attachVideoSink()
                     }
                 },
                 onRelease = { renderer ->
+                    // Detach before releasing: a track still holding a released renderer as a sink
+                    // hands frames to a dead surface.
+                    runCatching { videoTrackHolder.get()?.removeSink(renderer) }
                     renderer.release()
                     rendererHolder.compareAndSet(renderer, null)
                 },
@@ -685,6 +886,14 @@ fun WebRtcLiveTile(
             },
             modifier = Modifier.fillMaxSize(),
         )
+
+        statsSample?.let { sample ->
+            StreamStatsOverlay(
+                stats = sample,
+                history = statsHistory,
+                modifier = Modifier.align(Alignment.TopEnd).padding(top = 36.dp, end = 6.dp),
+            )
+        }
 
         // Mute toggle
         IconButton(

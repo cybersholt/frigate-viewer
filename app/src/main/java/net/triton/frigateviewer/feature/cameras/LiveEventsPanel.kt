@@ -2,6 +2,7 @@ package net.triton.frigateviewer.feature.cameras
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,6 +39,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -85,6 +87,10 @@ fun LiveEventsPanel(
     onRequestEvents: () -> Unit,
     onRequestTimeline: (timeRangeHours: Float) -> Unit,
     onOpenEvents: () -> Unit,
+    /** Tapping an event plays it in place beside this panel — it does not navigate to the Events screen. */
+    onPlayEvent: (FrigateEvent) -> Unit = {},
+    /** Tapping the timeline plays this camera's recording from that moment (epoch millis). */
+    onPlayFromTime: (Long) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     LaunchedEffect(cameraName) { onRequestEvents() }
@@ -178,7 +184,7 @@ fun LiveEventsPanel(
                         else -> {
                             LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 items(filtered, key = { it.id }) { ev ->
-                                    RecentEventRow(ev, baseUrl, imageLoader, onClick = onOpenEvents)
+                                    RecentEventRow(ev, baseUrl, imageLoader, onClick = { onPlayEvent(ev) })
                                 }
                             }
                         }
@@ -199,6 +205,7 @@ fun LiveEventsPanel(
                             timeRangeHours = timeRangeHours,
                             onZoomIn = { timeRangeHours = (timeRangeHours / 2f).coerceAtLeast(0.5f) },
                             onZoomOut = { timeRangeHours = (timeRangeHours * 2f).coerceAtMost(72f) },
+                            onPlayFromTime = onPlayFromTime,
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
@@ -272,11 +279,15 @@ private fun LiveTimelineStrip(
     timeRangeHours: Float,
     onZoomIn: () -> Unit,
     onZoomOut: () -> Unit,
+    onPlayFromTime: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val nowMs = remember { System.currentTimeMillis() }
     var scrubberTimeMs by remember { mutableStateOf(nowMs) }
     val rangeMs = (timeRangeHours * 3_600_000L).toLong()
+
+    // Reading the latest callback/geometry inside a pointerInput that must not restart mid-gesture.
+    val currentOnPlayFromTime by rememberUpdatedState(onPlayFromTime)
 
     val palette = rememberTimelinePalette()
     val labelPaint =
@@ -292,6 +303,9 @@ private fun LiveTimelineStrip(
         Canvas(
             Modifier
                 .fillMaxSize()
+                // Drag scrubs; a tap commits. Previously the strip only moved a scrubber line and had
+                // no way to act on it, which is why Timeline mode felt inert — you could point at a
+                // moment but never watch it.
                 .pointerInput(nowMs, rangeMs) {
                     awaitPointerEventScope {
                         while (true) {
@@ -303,6 +317,13 @@ private fun LiveTimelineStrip(
                                 scrubberTimeMs = nowMs - (frac * rangeMs).toLong()
                             }
                         }
+                    }
+                }.pointerInput(nowMs, rangeMs) {
+                    detectTapGestures { offset ->
+                        val frac = (offset.y / size.height).coerceIn(0f, 1f)
+                        val tappedMs = nowMs - (frac * rangeMs).toLong()
+                        scrubberTimeMs = tappedMs
+                        currentOnPlayFromTime(tappedMs)
                     }
                 },
         ) {

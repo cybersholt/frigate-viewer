@@ -164,8 +164,17 @@ private fun labelFor(state: LiveStreamState): String =
 private fun supportingTextFor(reason: StreamError): String =
     when (reason) {
         StreamError.TIMEOUT -> "The camera took too long to respond."
+
         StreamError.ICE_FAILED -> "Couldn't establish a live connection."
+
         StreamError.SOURCE_UNAVAILABLE -> "The camera source is unavailable."
+
         StreamError.DECODE_FAILED -> "This device couldn't decode the video."
+
         StreamError.NETWORK -> "Network error reaching the server."
+
+        // Normally never seen: StreamContent switches the camera to WebRTC as soon as the RTSP tile
+        // reports this, so the tile is replaced rather than left sitting on an error. This copy only
+        // surfaces if that fallback can't run.
+        StreamError.RTSP_UNSUPPORTED -> "RTSP can't play this camera's stream. Switching to WebRTC."
     }

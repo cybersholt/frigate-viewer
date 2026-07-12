@@ -56,6 +56,8 @@ data class CamerasUiState(
     val showLastImageWhileLoading: Boolean = true,
     /** Recent-events side panel in fullscreen landscape. Off by default; toggled from fullscreen's overflow menu. */
     val showLiveEventsPanel: Boolean = false,
+    /** Developer Options: Frigate-style telemetry overlay on live tiles. */
+    val showStreamStats: Boolean = false,
     val rtspReconnectAttempts: Int = 2,
     val rtspReconnectBaseDelaySeconds: Int = 2,
     val refreshTimestamp: Long = 0L,
@@ -183,6 +185,7 @@ class CamerasViewModel
                     userSettingsRepo.rtspReconnectAttempts,
                     userSettingsRepo.rtspReconnectBaseDelaySeconds,
                     userSettingsRepo.showLiveEventsPanel,
+                    userSettingsRepo.showStreamStats,
                 ) { args ->
                     @Suppress("UNCHECKED_CAST")
                     _state.value =
@@ -193,6 +196,7 @@ class CamerasViewModel
                             rtspReconnectAttempts = args[3] as Int,
                             rtspReconnectBaseDelaySeconds = args[4] as Int,
                             showLiveEventsPanel = args[5] as Boolean,
+                            showStreamStats = args[6] as Boolean,
                         )
                 }.collectLatest { }
             }

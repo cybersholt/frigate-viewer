@@ -2,7 +2,11 @@ package net.triton.frigateviewer.feature.settings
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 /**
  * "Trigger test crash" deliberately throws on the main thread so the rest of the crash-report
@@ -10,8 +14,24 @@ import androidx.compose.runtime.Composable
  * exercised end-to-end without waiting for a real bug.
  */
 @Composable
-fun DeveloperOptionsSettingsScreen(onBack: () -> Unit) {
+fun DeveloperOptionsSettingsScreen(
+    onBack: () -> Unit,
+    vm: SettingsViewModel = hiltViewModel(),
+) {
+    val state by vm.state.collectAsStateWithLifecycle()
+
     SettingsSubPageScaffold(title = "Developer Options", onBack = onBack) {
+        SettingsSectionHeader("Diagnostics")
+        SwitchSetting(
+            title = "Show stream stats",
+            description =
+                "Overlay live tiles with stream type, bandwidth, latency, frame counts, drop rate " +
+                    "and recent-bandwidth charts. Sampled once a second while a tile is on screen.",
+            icon = Icons.Filled.QueryStats,
+            checked = state.showStreamStats,
+            onCheckedChange = vm::setShowStreamStats,
+        )
+
         SettingsSectionHeader("Crash testing")
         ActionSetting(
             title = "Trigger test crash",

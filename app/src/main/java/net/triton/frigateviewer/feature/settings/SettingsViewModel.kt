@@ -94,6 +94,8 @@ data class SettingsUiState(
     val quietHoursEnabled: Boolean = false,
     val quietHoursStartMinutes: Int = 1320,
     val quietHoursEndMinutes: Int = 420,
+    /** Developer Options: Frigate-style telemetry overlay on live tiles. */
+    val showStreamStats: Boolean = false,
     val knownCameraNames: List<String> = emptyList(),
 )
 
@@ -152,6 +154,7 @@ class SettingsViewModel
                 userSettingsRepo.quietHoursStartMinutes,
                 userSettingsRepo.quietHoursEndMinutes,
                 userSettingsRepo.lastKnownCameraNames,
+                userSettingsRepo.showStreamStats,
             ) { args ->
                 @Suppress("UNCHECKED_CAST")
                 SettingsUiState(
@@ -191,6 +194,7 @@ class SettingsViewModel
                     quietHoursStartMinutes = args[33] as Int,
                     quietHoursEndMinutes = args[34] as Int,
                     knownCameraNames = args[35] as List<String>,
+                    showStreamStats = args[36] as Boolean,
                 )
             }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
@@ -398,6 +402,8 @@ class SettingsViewModel
             }
 
         fun setShowLastImageWhileLoading(show: Boolean) = viewModelScope.launch { userSettingsRepo.setShowLastImageWhileLoading(show) }
+
+        fun setShowStreamStats(show: Boolean) = viewModelScope.launch { userSettingsRepo.setShowStreamStats(show) }
 
         fun setRtspPort(port: Int) {
             viewModelScope.launch {

@@ -73,6 +73,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -263,6 +264,7 @@ fun CamerasScreen(
                             showBoundingBoxes = state.showBoundingBoxes,
                             autoLandscapeOnStream = state.autoLandscapeOnStream,
                             showLastImageWhileLoading = state.showLastImageWhileLoading,
+                            showStreamStats = state.showStreamStats,
                             currentSsid = state.currentSsid,
                             onSubStreamFallback = { vm.markSubStreamFallback(focused!!) },
                             allCameraNames = state.displayedCameras,
@@ -353,6 +355,7 @@ fun CamerasScreen(
                                             subStreamFallbacks = state.subStreamFallbacks,
                                             currentSsid = state.currentSsid,
                                             showLastImageWhileLoading = state.showLastImageWhileLoading,
+                                            showStreamStats = state.showStreamStats,
                                             isActive = isActive,
                                             onSubStreamFallback = { vm.markSubStreamFallback(name) },
                                             onOpenCamera = { focused = name },
@@ -405,6 +408,7 @@ private fun SwipeableCameraTile(
     subStreamFallbacks: Map<String, Boolean>,
     currentSsid: String?,
     showLastImageWhileLoading: Boolean,
+    showStreamStats: Boolean,
     isActive: Boolean,
     onSubStreamFallback: () -> Unit,
     onOpenCamera: () -> Unit,
@@ -681,6 +685,7 @@ private fun SwipeableCameraTile(
                 showBoundingBoxes = showBoundingBoxes,
                 autoLandscapeOnStream = false,
                 showLastImageWhileLoading = showLastImageWhileLoading,
+                showStreamStats = showStreamStats,
                 refreshTimestamp = refreshTimestamp,
                 onSubStreamFallback = onSubStreamFallback,
                 recordingEnabled = recordingEnabled,
@@ -727,6 +732,7 @@ private fun FocusedTile(
     showBoundingBoxes: Boolean,
     autoLandscapeOnStream: Boolean,
     showLastImageWhileLoading: Boolean,
+    showStreamStats: Boolean = false,
     currentSsid: String?,
     onSubStreamFallback: () -> Unit,
     allCameraNames: List<String> = emptyList(),
@@ -848,12 +854,29 @@ private fun FocusedTile(
         )
     }
 
-    // Exiting fullscreen returns to this camera's card view — it must NOT close the camera and
-    // drop the user back on the grid. The old behavior did exactly that when autoLandscapeOnStream
-    // was on (which auto-enters fullscreen on open, so the very first tap of the exit button read
-    // as "leaving fullscreen" and closed the whole tile), and the resulting abrupt teardown +
-    // orientation unwind is what raced the WebRTC teardown into a native crash.
-    val isFullScreen = LocalFullScreenMode.current.value
+    // Fullscreen is owned HERE, not in StreamContent, because the video area below swaps between the
+    // live tile and a recording player. If StreamContent owned it, starting playback would unmount
+    // the owner and dump the user out of fullscreen — exactly what must not happen when they tap an
+    // event from the fullscreen side panel.
+    //
+    // Exiting fullscreen returns to this camera's card view; it must NOT close the camera and drop
+    // the user back on the grid (the old behavior, which fired whenever autoLandscapeOnStream had
+    // auto-entered fullscreen). Back is the exception — see FullScreenEffects.
+    val fullScreenState = remember { mutableStateOf(false) }
+    val isFullScreen = fullScreenState.value
+
+    LaunchedEffect(autoLandscapeOnStream) {
+        if (autoLandscapeOnStream) fullScreenState.value = true
+    }
+    FullScreenEffects(
+        fullScreen = fullScreenState,
+        autoLandscapeOnStream = autoLandscapeOnStream,
+        onExitFullScreenByBack = { if (autoLandscapeOnStream) onClose() },
+    )
+
+    // Non-null = the video area is playing recorded footage instead of the live stream. Survives the
+    // live/playback swap because it lives here, above it.
+    var playback by remember(cameraName) { mutableStateOf<PlaybackTarget?>(null) }
 
     Column(
         Modifier
@@ -877,31 +900,54 @@ private fun FocusedTile(
 
         val videoContent: @Composable () -> Unit = {
             var liveStreamState by remember { mutableStateOf<LiveStreamState>(LiveStreamState.Idle) }
-            StreamContent(
-                liveStreamOption = effectiveLiveStreamOption,
-                isStreamOptionOverridden = streamOptionOverride != null,
-                globalDefaultStreamOption = initialStreamOption,
-                onSetStreamOverride = { mode -> streamOptionOverride = mode },
-                server = server,
-                okHttpClient = okHttpClient,
-                rtspUrl = rtspUrl,
-                currentSsid = currentSsid,
-                baseUrl = baseUrl,
-                snapshotPath = snapshotPath,
-                liveCameraName = liveCameraName,
-                cameraName = cameraName,
-                imageLoader = imageLoader,
-                showBoundingBoxes = showBoundingBoxes,
-                autoLandscapeOnStream = autoLandscapeOnStream,
-                showLastImageWhileLoading = showLastImageWhileLoading,
-                refreshTimestamp = refreshTimestamp,
-                onSubStreamFallback = onSubStreamFallback,
-                hideBadgeLayer = isFullScreen,
-                onStreamStateChanged = { liveStreamState = it },
-                modifier = Modifier.fillMaxSize(),
-            )
 
-            if (isFullScreen) {
+            val activePlayback = playback
+            val playbackClient = okHttpClient
+            if (activePlayback != null && baseUrl != null && playbackClient != null) {
+                // Playback takes over the video area in place: same fullscreen, same orientation,
+                // same side panel — only the picture changes. Backing out returns to live rather
+                // than leaving the camera.
+                BackHandler { playback = null }
+                RecordingPlayback(
+                    baseUrl = baseUrl,
+                    cameraName = cameraName,
+                    target = activePlayback,
+                    okHttpClient = playbackClient,
+                    onClose = { playback = null },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                StreamContent(
+                    liveStreamOption = effectiveLiveStreamOption,
+                    isStreamOptionOverridden = streamOptionOverride != null,
+                    globalDefaultStreamOption = initialStreamOption,
+                    onSetStreamOverride = { mode -> streamOptionOverride = mode },
+                    server = server,
+                    okHttpClient = okHttpClient,
+                    rtspUrl = rtspUrl,
+                    currentSsid = currentSsid,
+                    baseUrl = baseUrl,
+                    snapshotPath = snapshotPath,
+                    liveCameraName = liveCameraName,
+                    cameraName = cameraName,
+                    imageLoader = imageLoader,
+                    showBoundingBoxes = showBoundingBoxes,
+                    autoLandscapeOnStream = autoLandscapeOnStream,
+                    showLastImageWhileLoading = showLastImageWhileLoading,
+                    showStreamStats = showStreamStats,
+                    refreshTimestamp = refreshTimestamp,
+                    onSubStreamFallback = onSubStreamFallback,
+                    hideBadgeLayer = isFullScreen,
+                    onStreamStateChanged = { liveStreamState = it },
+                    // Fullscreen is owned by FocusedTile (see fullScreenState above), so StreamContent
+                    // must not host FullScreenEffects — otherwise starting playback unmounts it and
+                    // takes fullscreen down with it.
+                    fullScreenState = fullScreenState,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+
+            if (isFullScreen && activePlayback == null) {
                 FullscreenChrome(
                     visible = !isInPip,
                     cameraName = cameraName,
@@ -955,6 +1001,8 @@ private fun FocusedTile(
                     onRequestEvents = onRequestSidePanelEvents,
                     onRequestTimeline = onRequestSidePanelTimeline,
                     onOpenEvents = onOpenEvents,
+                    onPlayEvent = { event -> playback = PlaybackTarget.forEvent(event) },
+                    onPlayFromTime = { epochMs -> playback = PlaybackTarget.forTime(epochMs / 1000) },
                     modifier = Modifier.fillMaxHeight().width(260.dp),
                 )
             }
@@ -1195,54 +1243,25 @@ private fun liveStreamStateLabel(state: LiveStreamState): String =
         is LiveStreamState.Error -> "Error: ${state.reason}"
     }
 
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+/**
+ * The side effects of being fullscreen: orientation lock, system-bar visibility, publishing
+ * [LocalFullScreenMode] for the rest of the tree, and the Back handler.
+ *
+ * Hosted by whoever owns the fullscreen state — StreamContent for a grid tile, FocusedTile for the
+ * focused view — so that it outlives whatever is being swapped inside the video area. If these
+ * effects lived below the swap point, replacing the live tile with a recording player would dispose
+ * them and yank the user out of fullscreen mid-playback.
+ */
 @Composable
-private fun StreamContent(
-    liveStreamOption: String,
-    isStreamOptionOverridden: Boolean,
-    globalDefaultStreamOption: String,
-    onSetStreamOverride: (String?) -> Unit,
-    server: net.triton.frigateviewer.core.data.Server?,
-    okHttpClient: okhttp3.OkHttpClient?,
-    rtspUrl: String?,
-    currentSsid: String?,
-    baseUrl: String?,
-    recordingEnabled: Boolean = false,
-    snapshotPath: String,
-    liveCameraName: String,
-    cameraName: String,
-    imageLoader: ImageLoader,
-    showBoundingBoxes: Boolean,
+private fun FullScreenEffects(
+    fullScreen: MutableState<Boolean>,
     autoLandscapeOnStream: Boolean,
-    showLastImageWhileLoading: Boolean,
-    refreshTimestamp: Long,
-    onSubStreamFallback: () -> Unit = {},
-    hideBadgeLayer: Boolean = false,
-    onStreamStateChanged: (LiveStreamState) -> Unit = {},
-    modifier: Modifier = Modifier,
+    onExitFullScreenByBack: () -> Unit,
 ) {
-    var streamState by remember(liveStreamOption, liveCameraName) {
-        mutableStateOf<LiveStreamState>(LiveStreamState.Idle)
-    }
-    LaunchedEffect(streamState) { onStreamStateChanged(streamState) }
-    val snapshotUrl = baseUrl?.trimEnd('/')?.plus("/") + snapshotPath
-
-    // Fullscreen/orientation-lock/system-bars state is owned HERE, not inside the swappable
-    // Rtsp/WebRtc leaf tiles below — StreamContent is the stable call site across protocol
-    // switches (only its `when` branch's child changes), whereas each leaf tile is fully torn
-    // down and recreated on a protocol switch. Owning it at the leaf level (the original
-    // design) meant switching protocol while fullscreen — most visibly to Snapshot, which has
-    // no fullscreen concept at all — silently reset this state: it spuriously exited fullscreen
-    // and left the orientation lock stuck in landscape, since nothing survived to unwind it.
-    // Mirrors the same fix already applied to `pipEligible` in FocusedTile.
     val context = LocalContext.current
     val view = LocalView.current
     val fullScreenMode = LocalFullScreenMode.current
-    var isFullScreen by remember { mutableStateOf(false) }
-
-    LaunchedEffect(Unit) {
-        if (autoLandscapeOnStream) isFullScreen = true
-    }
+    val isFullScreen = fullScreen.value
 
     // The orientation lock must be released on teardown, not just when isFullScreen flips false:
     // navigating away from a fullscreen stream (e.g. "View all events" straight into the Events
@@ -1278,7 +1297,76 @@ private fun StreamContent(
     }
 
     if (isFullScreen) {
-        BackHandler { isFullScreen = false }
+        // Back and the fullscreen-exit button are deliberately NOT the same gesture. The button
+        // means "make this smaller" — it drops to the camera's card view and stays there. Back means
+        // "leave", so when fullscreen was entered automatically (auto-landscape opens a camera
+        // straight into fullscreen), backing out of it must also close the camera rather than
+        // stranding the user in a card view they never asked for. Conflating the two is what made
+        // the exit button dump people back on the grid.
+        BackHandler {
+            fullScreen.value = false
+            onExitFullScreenByBack()
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun StreamContent(
+    liveStreamOption: String,
+    isStreamOptionOverridden: Boolean,
+    globalDefaultStreamOption: String,
+    onSetStreamOverride: (String?) -> Unit,
+    server: net.triton.frigateviewer.core.data.Server?,
+    okHttpClient: okhttp3.OkHttpClient?,
+    rtspUrl: String?,
+    currentSsid: String?,
+    baseUrl: String?,
+    recordingEnabled: Boolean = false,
+    snapshotPath: String,
+    liveCameraName: String,
+    cameraName: String,
+    imageLoader: ImageLoader,
+    showBoundingBoxes: Boolean,
+    autoLandscapeOnStream: Boolean,
+    showLastImageWhileLoading: Boolean,
+    refreshTimestamp: Long,
+    showStreamStats: Boolean = false,
+    onSubStreamFallback: () -> Unit = {},
+    hideBadgeLayer: Boolean = false,
+    onStreamStateChanged: (LiveStreamState) -> Unit = {},
+    /** Back pressed while fullscreen. Fullscreen is already exiting; the caller decides whether to also close. */
+    onExitFullScreenByBack: () -> Unit = {},
+    /** Hoisted fullscreen state. When non-null the caller owns fullscreen (and hosts [FullScreenEffects]). */
+    fullScreenState: MutableState<Boolean>? = null,
+    modifier: Modifier = Modifier,
+) {
+    var streamState by remember(liveStreamOption, liveCameraName) {
+        mutableStateOf<LiveStreamState>(LiveStreamState.Idle)
+    }
+    LaunchedEffect(streamState) { onStreamStateChanged(streamState) }
+    val snapshotUrl = baseUrl?.trimEnd('/')?.plus("/") + snapshotPath
+
+    // Fullscreen is owned by the highest call site that survives whatever gets swapped beneath it.
+    // For a grid tile that is StreamContent itself (a protocol switch replaces only the leaf tile
+    // below it). For the focused view it is FocusedTile, which hoists the state in via
+    // [fullScreenState] — there the video area *also* swaps between the live tile and a recording
+    // player, unmounting StreamContent entirely. Whoever owns the state hosts [FullScreenEffects];
+    // hosting them here while the state is hoisted would drop the orientation lock and bring the
+    // system bars back the instant playback replaced the live tile.
+    val ownedFullScreen = remember { mutableStateOf(false) }
+    val fullScreen = fullScreenState ?: ownedFullScreen
+    val isFullScreen = fullScreen.value
+
+    if (fullScreenState == null) {
+        LaunchedEffect(Unit) {
+            if (autoLandscapeOnStream) fullScreen.value = true
+        }
+        FullScreenEffects(
+            fullScreen = fullScreen,
+            autoLandscapeOnStream = autoLandscapeOnStream,
+            onExitFullScreenByBack = onExitFullScreenByBack,
+        )
     }
 
     // The RTSP port is commonly only reachable via server.rtspHost, a LAN IP — off that
@@ -1291,8 +1379,14 @@ private fun StreamContent(
                 server.localNetworkSsids.isNotEmpty() &&
                 currentSsid !in server.localNetworkSsids
         }
+    // Some go2rtc restreams (Wyze cameras, in practice) publish an SDP with no sprop-parameter-sets,
+    // which ExoPlayer's RTSP stack refuses outright while WebRTC plays them fine. The tile reports
+    // that back once, and this camera transparently switches transport instead of sitting on an
+    // offline tile. Keyed per camera+stream so re-opening a different camera re-evaluates.
+    var rtspUnsupported by remember(cameraName, liveCameraName) { mutableStateOf(false) }
+
     val effectiveStreamOption =
-        if (liveStreamOption == "rtsp" && rtspOffLan) {
+        if (liveStreamOption == "rtsp" && (rtspOffLan || rtspUnsupported)) {
             "webrtc"
         } else {
             liveStreamOption
@@ -1314,9 +1408,11 @@ private fun StreamContent(
                             url = resolvedRtspUrl,
                             snapshotUrl = snapshotUrl,
                             isFullScreen = isFullScreen,
-                            onToggleFullScreen = { isFullScreen = !isFullScreen },
+                            onToggleFullScreen = { fullScreen.value = !fullScreen.value },
                             showLastImageWhileLoading = showLastImageWhileLoading,
+                            showStreamStats = showStreamStats,
                             onStateChanged = { streamState = it },
+                            onRtspUnsupported = { rtspUnsupported = true },
                             onFatal = {
                                 if (liveCameraName != cameraName) {
                                     onSubStreamFallback()
@@ -1351,9 +1447,10 @@ private fun StreamContent(
                         okHttpClient = okHttpClient,
                         snapshotUrl = snapshotUrl,
                         isFullScreen = isFullScreen,
-                        onToggleFullScreen = { isFullScreen = !isFullScreen },
+                        onToggleFullScreen = { fullScreen.value = !fullScreen.value },
                         showBoundingBoxes = showBoundingBoxes,
                         showLastImageWhileLoading = showLastImageWhileLoading,
+                        showStreamStats = showStreamStats,
                         onFatal = {
                             if (liveCameraName != cameraName) {
                                 onSubStreamFallback()
@@ -1377,6 +1474,7 @@ private fun StreamContent(
                 streamTypeLabel =
                     when {
                         liveStreamOption == "rtsp" && rtspOffLan -> "WebRTC (RTSP: home network only)"
+                        liveStreamOption == "rtsp" && rtspUnsupported -> "WebRTC (RTSP unsupported)"
                         effectiveStreamOption == "rtsp" -> "RTSP"
                         effectiveStreamOption == "snapshot" -> "Snapshot"
                         else -> "WebRTC"

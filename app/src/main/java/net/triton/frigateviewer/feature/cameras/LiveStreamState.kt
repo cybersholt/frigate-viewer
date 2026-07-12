@@ -49,6 +49,18 @@ enum class StreamError {
     SOURCE_UNAVAILABLE,
     DECODE_FAILED,
     NETWORK,
+
+    /**
+     * ExoPlayer's RTSP stack cannot play this stream at all: the SDP advertises no
+     * `sprop-parameter-sets` (out-of-band SPS/PPS), which its H.264 RTP reader requires before it
+     * will start — it fails with "missing sprop parameter". Seen on go2rtc restreams of Wyze
+     * cameras, whose source only emits parameter sets in-band; ffmpeg tolerates that, ExoPlayer
+     * does not.
+     *
+     * This is a property of the stream, so retrying is pointless. WebRTC plays the same camera
+     * fine, so StreamContent falls back to it rather than showing the tile as offline.
+     */
+    RTSP_UNSUPPORTED,
 }
 
 /** Collapses the rich live-player state down to the small corner badge's simpler vocabulary. */
