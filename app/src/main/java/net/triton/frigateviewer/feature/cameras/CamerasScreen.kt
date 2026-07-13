@@ -55,7 +55,8 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -356,6 +357,8 @@ fun CamerasScreen(
                                             currentSsid = state.currentSsid,
                                             showLastImageWhileLoading = state.showLastImageWhileLoading,
                                             showStreamStats = state.showStreamStats,
+                                            cameraTileTint = state.cameraTileTint,
+                                            cameraTileShadow = state.cameraTileShadow,
                                             isActive = isActive,
                                             onSubStreamFallback = { vm.markSubStreamFallback(name) },
                                             onOpenCamera = { focused = name },
@@ -409,6 +412,8 @@ private fun SwipeableCameraTile(
     currentSsid: String?,
     showLastImageWhileLoading: Boolean,
     showStreamStats: Boolean,
+    cameraTileTint: String,
+    cameraTileShadow: Int,
     isActive: Boolean,
     onSubStreamFallback: () -> Unit,
     onOpenCamera: () -> Unit,
@@ -543,9 +548,8 @@ private fun SwipeableCameraTile(
             when {
                 !recentEventFetched -> {
                     // Still fetching
-                    CircularProgressIndicator(
+                    LoadingIndicator(
                         modifier = Modifier.size(24.dp),
-                        strokeWidth = 2.dp,
                         color = cs.onSecondaryContainer,
                     )
                 }
@@ -655,18 +659,34 @@ private fun SwipeableCameraTile(
             value = finalUrl
         }
 
+        // Tint and shadow are user-configurable (Settings → Cameras view → Tile style). The tint is a
+        // container colour rather than M3's automatic elevation tint: the tile is almost entirely
+        // covered by video, so only its edges and letterbox bars show the surface — which is exactly
+        // where a tint actually reads.
+        val tileContainerColor =
+            when (cameraTileTint) {
+                "surface" -> cs.surfaceVariant
+                "primary" -> cs.primaryContainer
+                "secondary" -> cs.secondaryContainer
+                "tertiary" -> cs.tertiaryContainer
+                else -> CardDefaults.cardColors().containerColor
+            }
+
         Card(
-            Modifier
-                .fillMaxSize()
-                .offset { IntOffset(offsetX.value.roundToInt(), 0) }
-                .testTag("camera_tile_$name")
-                .then(
-                    if (borderWidth.value > 0) {
-                        Modifier.border(borderWidth, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.medium)
-                    } else {
-                        Modifier
-                    },
-                ),
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+                    .testTag("camera_tile_$name")
+                    .then(
+                        if (borderWidth.value > 0) {
+                            Modifier.border(borderWidth, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.medium)
+                        } else {
+                            Modifier
+                        },
+                    ),
+            colors = CardDefaults.cardColors(containerColor = tileContainerColor),
+            elevation = CardDefaults.cardElevation(defaultElevation = cameraTileShadow.dp),
         ) {
             StreamContent(
                 liveStreamOption = if (isActive) gridStreamType else "snapshot",

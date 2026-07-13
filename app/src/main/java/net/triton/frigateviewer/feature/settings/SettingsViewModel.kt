@@ -96,6 +96,10 @@ data class SettingsUiState(
     val quietHoursEndMinutes: Int = 420,
     /** Developer Options: Frigate-style telemetry overlay on live tiles. */
     val showStreamStats: Boolean = false,
+    /** Camera tile surface tint: none | surface | primary | secondary | tertiary. */
+    val cameraTileTint: String = "none",
+    /** Camera tile elevation/shadow in dp. 0 = flat. */
+    val cameraTileShadow: Int = 0,
     val knownCameraNames: List<String> = emptyList(),
 )
 
@@ -155,6 +159,8 @@ class SettingsViewModel
                 userSettingsRepo.quietHoursEndMinutes,
                 userSettingsRepo.lastKnownCameraNames,
                 userSettingsRepo.showStreamStats,
+                userSettingsRepo.cameraTileTint,
+                userSettingsRepo.cameraTileShadow,
             ) { args ->
                 @Suppress("UNCHECKED_CAST")
                 SettingsUiState(
@@ -195,6 +201,8 @@ class SettingsViewModel
                     quietHoursEndMinutes = args[34] as Int,
                     knownCameraNames = args[35] as List<String>,
                     showStreamStats = args[36] as Boolean,
+                    cameraTileTint = args[37] as String,
+                    cameraTileShadow = args[38] as Int,
                 )
             }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
@@ -404,6 +412,10 @@ class SettingsViewModel
         fun setShowLastImageWhileLoading(show: Boolean) = viewModelScope.launch { userSettingsRepo.setShowLastImageWhileLoading(show) }
 
         fun setShowStreamStats(show: Boolean) = viewModelScope.launch { userSettingsRepo.setShowStreamStats(show) }
+
+        fun setCameraTileTint(tint: String) = viewModelScope.launch { userSettingsRepo.setCameraTileTint(tint) }
+
+        fun setCameraTileShadow(dp: Int) = viewModelScope.launch { userSettingsRepo.setCameraTileShadow(dp) }
 
         fun setRtspPort(port: Int) {
             viewModelScope.launch {

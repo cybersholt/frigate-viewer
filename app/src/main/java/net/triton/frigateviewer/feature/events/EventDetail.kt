@@ -50,7 +50,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
@@ -59,6 +59,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -583,7 +584,7 @@ fun EventDetailScreen(
     when {
         state.loading -> {
             Box(Modifier.fillMaxSize()) {
-                CircularProgressIndicator(Modifier.align(Alignment.Center))
+                LoadingIndicator(Modifier.align(Alignment.Center))
             }
         }
 
@@ -742,7 +743,7 @@ fun EventDetailScreen(
                         )
                     } else if (state.recordingsLoading) {
                         Box(Modifier.fillMaxSize().background(Color.Black)) {
-                            CircularProgressIndicator(Modifier.align(Alignment.Center), color = Color.White)
+                            LoadingIndicator(Modifier.align(Alignment.Center), color = Color.White)
                         }
                     } else if (ev.hasSnapshot) {
                         FrigateImage(
@@ -846,7 +847,7 @@ private fun CameraEventsList(
     when {
         loading -> {
             Box(modifier.fillMaxWidth()) {
-                CircularProgressIndicator(Modifier.align(Alignment.Center))
+                LoadingIndicator(Modifier.align(Alignment.Center))
             }
         }
 
@@ -1489,9 +1490,29 @@ private fun RecordingBufferingOverlay(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        CircularProgressIndicator(color = Color.White, strokeWidth = 3.dp)
+        // Recorded playback has a real denominator — ExoPlayer knows how much media it has buffered —
+        // so this ring shows an actual measurement, unlike a live stream, which has no total to divide
+        // by and gets phase-based progress instead. Indeterminate until the first sample lands, rather
+        // than sitting at a meaningless 0%.
+        if (bufferedPercent > 0) {
+            Box(contentAlignment = Alignment.Center) {
+                CircularWavyProgressIndicator(
+                    progress = { bufferedPercent / 100f },
+                    color = Color.White,
+                    trackColor = Color.White.copy(alpha = 0.25f),
+                    modifier = Modifier.size(56.dp),
+                )
+                Text(
+                    "$bufferedPercent%",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                )
+            }
+        } else {
+            LoadingIndicator(color = Color.White, modifier = Modifier.size(56.dp))
+        }
         Text(
-            text = if (bufferedPercent > 0) "Buffering… $bufferedPercent%" else "Buffering…",
+            text = "Buffering…",
             style = MaterialTheme.typography.labelMedium,
             color = Color.White,
         )

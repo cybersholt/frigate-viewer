@@ -58,6 +58,10 @@ data class CamerasUiState(
     val showLiveEventsPanel: Boolean = false,
     /** Developer Options: Frigate-style telemetry overlay on live tiles. */
     val showStreamStats: Boolean = false,
+    /** Camera tile surface tint: none | surface | primary | secondary | tertiary. */
+    val cameraTileTint: String = "none",
+    /** Camera tile elevation/shadow in dp. 0 = flat. */
+    val cameraTileShadow: Int = 0,
     val rtspReconnectAttempts: Int = 2,
     val rtspReconnectBaseDelaySeconds: Int = 2,
     val refreshTimestamp: Long = 0L,
@@ -186,6 +190,8 @@ class CamerasViewModel
                     userSettingsRepo.rtspReconnectBaseDelaySeconds,
                     userSettingsRepo.showLiveEventsPanel,
                     userSettingsRepo.showStreamStats,
+                    userSettingsRepo.cameraTileTint,
+                    userSettingsRepo.cameraTileShadow,
                 ) { args ->
                     @Suppress("UNCHECKED_CAST")
                     _state.value =
@@ -197,6 +203,8 @@ class CamerasViewModel
                             rtspReconnectBaseDelaySeconds = args[4] as Int,
                             showLiveEventsPanel = args[5] as Boolean,
                             showStreamStats = args[6] as Boolean,
+                            cameraTileTint = args[7] as String,
+                            cameraTileShadow = args[8] as Int,
                         )
                 }.collectLatest { }
             }

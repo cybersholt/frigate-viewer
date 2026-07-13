@@ -1,5 +1,7 @@
 package net.triton.frigateviewer.feature.cameras
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -15,15 +17,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.CircularWavyProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -43,6 +49,7 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
+import kotlinx.coroutines.delay
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -123,6 +130,10 @@ fun RecordingPlayback(
     var buffering by remember(vodUrl) { mutableStateOf(true) }
     var error by remember(vodUrl) { mutableStateOf<String?>(null) }
 
+    // Unlike a live stream, recorded playback has a real denominator — ExoPlayer knows how much of the
+    // media it has buffered — so this percentage is an actual measurement, not a phase estimate.
+    var bufferedPercent by remember(vodUrl) { mutableIntStateOf(0) }
+
     val player =
         remember(vodUrl) {
             // The authenticated per-server client, so the VOD request carries the session cookie —
@@ -138,6 +149,15 @@ fun RecordingPlayback(
                     playWhenReady = true
                 }
         }
+
+    // Polled rather than pushed: ExoPlayer has no "buffered fraction changed" callback, and the
+    // number only matters while the spinner is up.
+    LaunchedEffect(player, buffering) {
+        while (buffering) {
+            bufferedPercent = player.bufferedPercentage
+            delay(200)
+        }
+    }
 
     DisposableEffect(player) {
         val listener =
@@ -182,7 +202,7 @@ fun RecordingPlayback(
         )
 
         if (buffering && error == null) {
-            CircularProgressIndicator(color = Color.White, strokeWidth = 3.dp)
+            BufferingProgress(bufferedPercent)
         }
 
         error?.let { reason ->
@@ -220,6 +240,39 @@ fun RecordingPlayback(
             Spacer(Modifier.weight(1f))
             PlaybackIndicatorPill(onClick = onClose)
         }
+    }
+}
+
+/**
+ * Buffering state for recorded playback, as a Material 3 Expressive wavy ring around a real
+ * percentage — real because ExoPlayer genuinely knows how much media it has buffered. Falls back to
+ * the indeterminate loading indicator until the first measurement lands, rather than sitting at a
+ * meaningless 0%.
+ */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun BufferingProgress(bufferedPercent: Int) {
+    if (bufferedPercent <= 0) {
+        LoadingIndicator(color = Color.White, modifier = Modifier.size(56.dp))
+        return
+    }
+    val animated by animateFloatAsState(
+        targetValue = bufferedPercent / 100f,
+        animationSpec = tween(300),
+        label = "bufferedPercent",
+    )
+    Box(contentAlignment = Alignment.Center) {
+        CircularWavyProgressIndicator(
+            progress = { animated },
+            color = Color.White,
+            trackColor = Color.White.copy(alpha = 0.25f),
+            modifier = Modifier.size(56.dp),
+        )
+        Text(
+            "$bufferedPercent%",
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+        )
     }
 }
 

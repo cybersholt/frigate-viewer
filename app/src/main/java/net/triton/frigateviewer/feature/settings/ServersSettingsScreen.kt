@@ -24,7 +24,7 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -151,7 +151,7 @@ fun ServersSettingsScreen(
             title = { Text("Testing connection…") },
             text = {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    CircularProgressIndicator(modifier = Modifier.padding(4.dp))
+                    LoadingIndicator(modifier = Modifier.padding(4.dp))
                     Text("Contacting server…")
                 }
             },
@@ -530,7 +530,7 @@ internal fun ServerFormSheet(
             title = { Text("Testing connection…") },
             text = {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    CircularProgressIndicator(modifier = Modifier.padding(4.dp))
+                    LoadingIndicator(modifier = Modifier.padding(4.dp))
                     Text("Contacting server…")
                 }
             },

@@ -6,6 +6,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
@@ -39,6 +40,7 @@ fun FrigateViewerTheme(
     contrastLevel: Int = 0,
     cardCornerRadius: Int = 12,
     cardBorderWidth: Int = 0,
+    typography: Typography = AppTypography,
     content: @Composable () -> Unit,
 ) {
     val darkTheme =
@@ -92,6 +94,7 @@ fun FrigateViewerTheme(
         MaterialTheme(
             colorScheme = colorScheme,
             shapes = shapes,
+            typography = typography,
             content = themedContent,
         )
     } else {
@@ -102,6 +105,7 @@ fun FrigateViewerTheme(
             contrastLevel = contrastLevel.toDouble() / 100.0,
             isAmoled = amoledBlack,
             shapes = shapes,
+            typography = typography,
             animate = true,
             content = themedContent,
         )

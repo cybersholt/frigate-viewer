@@ -26,7 +26,7 @@ import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.Card
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -207,9 +207,8 @@ fun LiveEventsPanel(
                     val filtered = if (selectedLabel == null) events else events.filter { it.label == selectedLabel }
                     when {
                         eventsLoading && events.isEmpty() -> {
-                            CircularProgressIndicator(
+                            LoadingIndicator(
                                 modifier = Modifier.align(Alignment.Center).size(28.dp),
-                                strokeWidth = 2.dp,
                             )
                         }
 
@@ -234,9 +233,8 @@ fun LiveEventsPanel(
 
                 PanelMode.Timeline -> {
                     if (timelineLoading && reviewSegments.isEmpty() && recordingGaps.isEmpty()) {
-                        CircularProgressIndicator(
+                        LoadingIndicator(
                             modifier = Modifier.align(Alignment.Center).size(28.dp),
-                            strokeWidth = 2.dp,
                         )
                     } else {
                         LiveTimelineStrip(

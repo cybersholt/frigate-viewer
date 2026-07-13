@@ -1,6 +1,5 @@
 package net.triton.frigateviewer.feature.cameras
 
-import android.media.AudioAttributes
 import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -31,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,19 +67,14 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
-import org.webrtc.DefaultVideoDecoderFactory
-import org.webrtc.DefaultVideoEncoderFactory
-import org.webrtc.EglBase
 import org.webrtc.IceCandidate
 import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
 import org.webrtc.PeerConnection
-import org.webrtc.PeerConnectionFactory
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
-import org.webrtc.audio.JavaAudioDeviceModule
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.roundToInt
 
@@ -104,6 +99,12 @@ private val BACKOFF_MS = longArrayOf(2_000L, 5_000L)
 
 /** Sampling cadence for the Developer Options stats overlay. */
 private const val STATS_INTERVAL_MS = 1_000L
+
+/** How often the freeze watchdog looks at the last-frame timestamp. */
+private const val FREEZE_CHECK_INTERVAL_MS = 2_000L
+
+/** No frames for this long while Playing means the picture is frozen, however healthy the transport looks. */
+private const val FREEZE_TIMEOUT_MS = 8_000L
 
 /**
  * Owns one [PeerConnection]'s native lifetime.
@@ -173,15 +174,13 @@ fun WebRtcLiveTile(
     onStateChanged: (LiveStreamState) -> Unit = {},
 ) {
     val context = LocalContext.current
-    val eglBase = remember(baseUrl, cameraName, okHttpClient) { EglBase.create() }
-    DisposableEffect(eglBase) {
-        onDispose {
-            eglBase.release()
-        }
-    }
+    // Frames arrive on WebRTC's render thread; Compose state has to be written on main.
+    val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
+    // Shared, process-wide, never disposed — see WebRtcCore. Creating a factory and EglBase per tile
+    // and disposing them on every camera switch is exactly what crashed libwebrtc's global
+    // NetworkMonitor when channels were tapped in quick succession.
+    val eglBase = WebRtcCore.eglBase
 
-    val pcfHolder = remember { AtomicReference<PeerConnectionFactory?>() }
-    val admHolder = remember { AtomicReference<JavaAudioDeviceModule?>() }
     val pcHolder = remember { AtomicReference<PcSession?>() }
     val wsGlobalHolder = remember { AtomicReference<WebSocket?>() }
     val wsStreamHolder = remember { AtomicReference<WebSocket?>() }
@@ -195,6 +194,14 @@ fun WebRtcLiveTile(
     // alive in every way except the picture: bandwidth ticked, frames decoded, drop rate stayed
     // near zero, and the tile still timed out at 20s because onFirstFrameRendered never fired.
     val videoTrackHolder = remember { AtomicReference<VideoTrack?>() }
+
+    // Wall-clock of the last frame that actually reached the surface. Written from WebRTC's render
+    // thread, read by the freeze watchdog.
+    val lastFrameAtMs =
+        remember {
+            java.util.concurrent.atomic
+                .AtomicLong(0L)
+        }
 
     // Monotonic id for the current dial attempt. Every WebSocket callback carries the generation it
     // was created under and does nothing unless it is still the live one.
@@ -224,6 +231,53 @@ fun WebRtcLiveTile(
     var autoReconnectAttempts by remember { mutableStateOf(0) }
     var liveState by remember { mutableStateOf<LiveStreamState>(LiveStreamState.Idle) }
     var videoRevealed by remember { mutableStateOf(false) }
+
+    /**
+     * Frames arrive through this proxy rather than being handed straight to the SurfaceViewRenderer.
+     *
+     * SurfaceViewRenderer's onFirstFrameRendered fires exactly once per *renderer* lifetime, and the
+     * renderer is not recreated on a reconnect — so after any reconnect the new track rendered fine
+     * while liveState stayed on Buffering forever and the poster kept covering perfectly good video.
+     * That's the "frozen at buffering 85% while bandwidth ticks" report: the stream was healthy, the
+     * state machine was stuck. Counting frames ourselves makes "is it playing?" a question about
+     * frames rather than about a callback that only fires once.
+     */
+    val frameSinkHolder = remember { AtomicReference<org.webrtc.VideoSink?>() }
+    val currentLiveState by rememberUpdatedState(liveState)
+    DisposableEffect(Unit) {
+        val sink =
+            org.webrtc.VideoSink { frame ->
+                lastFrameAtMs.set(System.currentTimeMillis())
+                rendererHolder.get()?.onFrame(frame)
+                if (currentLiveState !is LiveStreamState.Playing) {
+                    // onFrame runs on WebRTC's render thread; Compose state must be touched on main.
+                    mainHandler.post {
+                        videoRevealed = true
+                        liveState = LiveStreamState.Playing
+                    }
+                }
+            }
+        frameSinkHolder.set(sink)
+        onDispose { frameSinkHolder.set(null) }
+    }
+
+    // Freeze watchdog. A stream can stop delivering frames while ICE stays CONNECTED and RTP keeps
+    // flowing — the picture just stops. Nothing in WebRTC reports that as a failure, so without this
+    // the tile sits on a frozen frame indefinitely. Redial rather than wait for a failure that will
+    // never come.
+    LaunchedEffect(retryCount) {
+        while (true) {
+            delay(FREEZE_CHECK_INTERVAL_MS)
+            if (liveState !is LiveStreamState.Playing) continue
+            val last = lastFrameAtMs.get()
+            if (last > 0L && System.currentTimeMillis() - last > FREEZE_TIMEOUT_MS) {
+                Log.w("WebRtcLiveTile", "No frames for ${FREEZE_TIMEOUT_MS}ms on $cameraName — redialling")
+                lastFrameAtMs.set(0L)
+                autoReconnectAttempts = 0
+                retryCount++
+            }
+        }
+    }
     var objectStates by remember { mutableStateOf<List<FrigateObjectState>>(emptyList()) }
 
     LaunchedEffect(liveState) { onStateChanged(liveState) }
@@ -240,10 +294,10 @@ fun WebRtcLiveTile(
      */
     fun attachVideoSink() {
         val track = videoTrackHolder.get() ?: return
-        val renderer = rendererHolder.get() ?: return
+        val sink = frameSinkHolder.get() ?: return
         runCatching {
-            track.removeSink(renderer)
-            track.addSink(renderer)
+            track.removeSink(sink)
+            track.addSink(sink)
         }.onFailure { Log.w("WebRtcLiveTile", "Could not attach video sink for $cameraName", it) }
     }
 
@@ -371,13 +425,11 @@ fun WebRtcLiveTile(
             audioTrackHolder.getAndSet(null)?.setEnabled(false)
             // Drop the sink before the PeerConnection (and with it the track) is disposed below.
             videoTrackHolder.getAndSet(null)?.let { track ->
-                rendererHolder.get()?.let { renderer -> runCatching { track.removeSink(renderer) } }
+                frameSinkHolder.get()?.let { sink -> runCatching { track.removeSink(sink) } }
             }
             wsStreamHolder.getAndSet(null)?.cancel()
             wsGlobalHolder.getAndSet(null)?.cancel()
             pcHolder.getAndSet(null)?.dispose()
-            pcfHolder.getAndSet(null)?.dispose()
-            admHolder.getAndSet(null)?.release()
 
             videoRevealed = false
             liveState = LiveStreamState.Connecting(0)
@@ -430,35 +482,10 @@ fun WebRtcLiveTile(
                     )
                 wsGlobalHolder.set(globalWs)
 
-                // 2. PeerConnection Setup
-                PeerConnectionFactory.initialize(
-                    PeerConnectionFactory.InitializationOptions.builder(context).createInitializationOptions(),
-                )
-
-                // WebRTC's default audio device module plays out with USAGE_VOICE_COMMUNICATION,
-                // which makes Android treat a muted camera tile like an active phone call —
-                // ducking/reprocessing other apps' audio even though this app emits no sound.
-                // Media-style attributes avoid that call-like audio focus/routing behavior.
-                val adm =
-                    JavaAudioDeviceModule
-                        .builder(context)
-                        .setAudioAttributes(
-                            AudioAttributes
-                                .Builder()
-                                .setUsage(AudioAttributes.USAGE_MEDIA)
-                                .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
-                                .build(),
-                        ).createAudioDeviceModule()
-                admHolder.set(adm)
-
-                val pcf =
-                    PeerConnectionFactory
-                        .builder()
-                        .setAudioDeviceModule(adm)
-                        .setVideoEncoderFactory(DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true))
-                        .setVideoDecoderFactory(DefaultVideoDecoderFactory(eglBase.eglBaseContext))
-                        .createPeerConnectionFactory()
-                pcfHolder.set(pcf)
+                // 2. PeerConnection setup. The factory (and its audio device module and EGL context)
+                // is process-wide and outlives this tile — only the PeerConnection below is
+                // per-session, and only it gets disposed.
+                val pcf = WebRtcCore.factory(context)
 
                 val rtcConfig =
                     PeerConnection
@@ -718,13 +745,11 @@ fun WebRtcLiveTile(
             audioTrackHolder.getAndSet(null)?.setEnabled(false)
             // Drop the sink before the PeerConnection (and with it the track) is disposed below.
             videoTrackHolder.getAndSet(null)?.let { track ->
-                rendererHolder.get()?.let { renderer -> runCatching { track.removeSink(renderer) } }
+                frameSinkHolder.get()?.let { sink -> runCatching { track.removeSink(sink) } }
             }
             wsStreamHolder.getAndSet(null)?.cancel()
             wsGlobalHolder.getAndSet(null)?.cancel()
             pcHolder.getAndSet(null)?.dispose()
-            pcfHolder.getAndSet(null)?.dispose()
-            admHolder.getAndSet(null)?.release()
         }
     }
 
@@ -807,7 +832,7 @@ fun WebRtcLiveTile(
                 onRelease = { renderer ->
                     // Detach before releasing: a track still holding a released renderer as a sink
                     // hands frames to a dead surface.
-                    runCatching { videoTrackHolder.get()?.removeSink(renderer) }
+                    runCatching { frameSinkHolder.get()?.let { videoTrackHolder.get()?.removeSink(it) } }
                     renderer.release()
                     rendererHolder.compareAndSet(renderer, null)
                 },

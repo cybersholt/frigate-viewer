@@ -3,6 +3,8 @@ package net.triton.frigateviewer.feature.settings
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.SyncAlt
@@ -13,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import java.util.Locale
 
 @Composable
 fun CamerasViewSettingsScreen(
@@ -64,6 +67,26 @@ fun CamerasViewSettingsScreen(
             icon = Icons.Filled.SyncAlt,
             checked = state.keepOffscreenTilesAlive,
             onCheckedChange = vm::setKeepOffscreenTilesAlive,
+        )
+
+        SettingsSectionHeader("Tile style")
+
+        PickerSettingRow(
+            title = "Surface tint",
+            icon = Icons.Filled.Palette,
+            value = state.cameraTileTint,
+            options = listOf("none", "surface", "primary", "secondary", "tertiary"),
+            labelFor = { option -> option.replaceFirstChar { it.uppercase(Locale.US) } },
+            onSelect = vm::setCameraTileTint,
+        )
+
+        PickerSettingRow(
+            title = "Shadow",
+            icon = Icons.Filled.Layers,
+            value = state.cameraTileShadow,
+            options = listOf(0, 2, 4, 8, 12),
+            labelFor = { if (it == 0) "None" else "${it}dp" },
+            onSelect = vm::setCameraTileShadow,
         )
 
         SettingsSectionHeader("Layout")

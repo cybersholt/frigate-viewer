@@ -8,15 +8,22 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.VideocamOff
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.CircularWavyProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -27,6 +34,8 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
+import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 
 private const val POSTER_FADE_MS = 150
 
@@ -35,6 +44,72 @@ private const val POSTER_FADE_MS = 150
  * centered spinner/label for every non-terminal state, or an error card with Retry. Draw this
  * on top of the actual player surface (WebRTC SurfaceViewRenderer / ExoPlayer PlayerView).
  */
+
+/** 85% + 10 points of creep = 95%, the ceiling for "connected but no frame yet". */
+private const val BUFFERING_CREEP_MAX_POINTS = 10
+
+/**
+ * Material 3 Expressive wavy progress for a connecting stream.
+ *
+ * The percentage is **connection phase**, not bytes: a live stream has no total to divide by, so
+ * there is no honest byte-wise percentage to show. What it does encode is real — how far through the
+ * handshake we are (dial → SDP negotiate → first frames buffering) — which is exactly the question
+ * someone staring at a spinner is asking. Recorded playback is different and gets a genuine
+ * percentage from ExoPlayer's buffered position; see RecordingPlayback.
+ *
+ * Reconnecting deliberately spins indeterminate: we're retrying, not progressing.
+ */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun ConnectionProgress(state: LiveStreamState) {
+    val phase =
+        when (state) {
+            is LiveStreamState.Idle -> 0.10f
+            is LiveStreamState.Connecting -> 0.30f
+            is LiveStreamState.Negotiating -> 0.60f
+            is LiveStreamState.Buffering -> 0.85f
+            else -> null
+        }
+
+    if (phase == null) {
+        // Reconnecting / anything else: no meaningful progress to report.
+        LoadingIndicator(color = Color.White.copy(alpha = 0.85f), modifier = Modifier.size(56.dp))
+        return
+    }
+
+    // Buffering is the last phase before frames arrive, so the ring would otherwise park at 85% for
+    // as long as the first frame takes and read as stalled. Creep a point a second while we wait,
+    // capped short of 100%: the last points are spent only by an actual frame arriving, so the ring
+    // can never claim to be finished while the picture is still black.
+    var creep by remember(state is LiveStreamState.Buffering) { mutableIntStateOf(0) }
+    LaunchedEffect(state is LiveStreamState.Buffering) {
+        if (state !is LiveStreamState.Buffering) return@LaunchedEffect
+        while (creep < BUFFERING_CREEP_MAX_POINTS) {
+            delay(100)
+            creep++
+        }
+    }
+    val target = (phase + creep / 100f).coerceAtMost(0.95f)
+
+    // Animated so the ring eases between phases instead of snapping — the phases are coarse, and
+    // motion is what makes them read as progress rather than as a stuttering gauge.
+    val animatedPhase by animateFloatAsState(targetValue = target, animationSpec = tween(450), label = "connectPhase")
+
+    Box(contentAlignment = Alignment.Center) {
+        CircularWavyProgressIndicator(
+            progress = { animatedPhase },
+            color = Color.White,
+            trackColor = Color.White.copy(alpha = 0.25f),
+            modifier = Modifier.size(56.dp),
+        )
+        Text(
+            "${(animatedPhase * 100).roundToInt()}%",
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
 @Composable
 fun StreamOverlay(
     state: LiveStreamState,
@@ -86,7 +161,7 @@ fun StreamOverlay(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    CircularProgressIndicator(color = Color.White.copy(alpha = 0.85f))
+                    ConnectionProgress(state)
                     Text(
                         labelFor(state),
                         color = Color.White,

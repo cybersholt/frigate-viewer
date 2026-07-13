@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
@@ -59,12 +60,20 @@ data class StreamStats(
     val resolution: String? = null,
     val codec: String? = null,
 ) {
-    /** Fraction of frames lost, 0..1. Null when the transport doesn't report frame counts. */
+    /**
+     * Fraction of frames lost, 0..1. Null when the transport doesn't report frame counts.
+     *
+     * Denominator is received + dropped, not received alone: WebRTC's framesDropped is not a subset
+     * of framesReceived — a frame dropped before it was ever handed up never appears in
+     * framesReceived — so dividing by framesReceived yields impossible numbers (a real capture read
+     * 46 received, 97 dropped, "210.87%").
+     */
     val droppedFrameRate: Double?
         get() {
-            val total = framesTotal ?: return null
+            val received = framesTotal ?: return null
             val dropped = framesDropped ?: return null
-            return if (total <= 0L) 0.0 else dropped.toDouble() / total.toDouble()
+            val considered = received + dropped
+            return if (considered <= 0L) 0.0 else dropped.toDouble() / considered.toDouble()
         }
 }
 
@@ -78,6 +87,10 @@ data class StreamStats(
 data class StreamStatsHistory(
     val bandwidthKbps: List<Double> = emptyList(),
 ) {
+    /** Mean bandwidth over the retained window. Null until something has actually been measured. */
+    val average: Double?
+        get() = bandwidthKbps.filter { it > 0.0 }.takeIf { it.isNotEmpty() }?.average()
+
     operator fun plus(sample: StreamStats): StreamStatsHistory =
         StreamStatsHistory(
             bandwidthKbps = (bandwidthKbps + (sample.bandwidthKbps ?: 0.0)).takeLast(HISTORY_SIZE),
@@ -112,15 +125,19 @@ fun StreamStatsOverlay(
                     dragOffset += drag
                 }
             }.width(190.dp)
-            .background(Color.Black.copy(alpha = 0.62f), RoundedCornerShape(6.dp))
+            // Opaque enough to stay legible over a bright daylight frame — at 0.62 the labels washed
+            // out against sunlit grass and the panel read as broken rather than translucent.
+            .background(Color.Black.copy(alpha = 0.82f), RoundedCornerShape(6.dp))
             .padding(horizontal = 8.dp, vertical = 6.dp),
     ) {
         stats.resolution?.let { StatRow("Resolution", it) }
         stats.codec?.let { StatRow("Codec", it) }
         StatRow("Bandwidth", stats.bandwidthKbps?.let { formatBandwidth(it) } ?: EMPTY)
+        StatRow("Bandwidth avg", history.average?.let { formatBandwidth(it) } ?: EMPTY)
         StatRow("Latency", stats.latencyMs?.let { "${it.toInt()} ms" } ?: EMPTY)
+        // No "Decoded" row: framesDecoded tracks framesReceived so closely that the two are always the
+        // same number on screen, and a stat that never differs from the one above it is just noise.
         StatRow("Frames", stats.framesTotal?.toString() ?: EMPTY)
-        StatRow("Decoded", stats.framesDecoded?.toString() ?: EMPTY)
         StatRow("Dropped", stats.framesDropped?.toString() ?: EMPTY)
         StatRow(
             label = "Drop rate",
@@ -204,9 +221,10 @@ private fun Sparkline(
     lineColor: Color,
     formatPeak: (Double) -> String,
 ) {
-    // Peak only: the live value already has its own "Bandwidth" row above the chart, so repeating it
-    // in the chart's header was redundant.
+    // Peak only in the header: the live value already has its own "Bandwidth" row above the chart, so
+    // repeating it here was redundant.
     val peak = values.maxOrNull() ?: 0.0
+    val average = if (values.isEmpty()) 0.0 else values.average()
     Row(Modifier.fillMaxWidth()) {
         StatText(label, Color.White.copy(alpha = 0.65f), Modifier.weight(1f))
         StatText(
@@ -223,13 +241,43 @@ private fun Sparkline(
     ) {
         if (values.size < 2 || peak <= 0.0) return@Canvas
         val stepX = size.width / (values.size - 1).toFloat()
-        val path = Path()
+
+        fun yFor(value: Double): Float = size.height - (value / peak).toFloat() * size.height
+
+        // Two paths, not one: the fill has to include the baseline corners, the stroke must not —
+        // stroking a closed path would draw a line along the bottom edge and back up both sides.
+        val line = Path()
+        val area = Path()
         values.forEachIndexed { i, v ->
             val x = i * stepX
-            val y = size.height - (v / peak).toFloat() * size.height
-            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            val y = yFor(v)
+            if (i == 0) {
+                line.moveTo(x, y)
+                area.moveTo(x, size.height)
+                area.lineTo(x, y)
+            } else {
+                line.lineTo(x, y)
+                area.lineTo(x, y)
+            }
         }
-        drawPath(path = path, color = lineColor, style = Stroke(width = 1.5f, cap = StrokeCap.Round))
+        area.lineTo((values.size - 1) * stepX, size.height)
+        area.close()
+
+        drawPath(path = area, color = lineColor.copy(alpha = 0.25f))
+        drawPath(path = line, color = lineColor, style = Stroke(width = 1.5f, cap = StrokeCap.Round))
+
+        // Mean of the window: makes a momentary spike visibly distinguishable from a raised floor.
+        if (average > 0) {
+            val avgY = yFor(average)
+            drawLine(
+                color = Color.White.copy(alpha = 0.55f),
+                start = Offset(0f, avgY),
+                end = Offset(size.width, avgY),
+                strokeWidth = 1f,
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 3f)),
+            )
+        }
+
         // Baseline, so an all-zero stretch reads as "measured zero" rather than "no data".
         drawLine(
             color = Color.White.copy(alpha = 0.15f),

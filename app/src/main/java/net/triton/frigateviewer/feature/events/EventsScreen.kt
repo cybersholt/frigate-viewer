@@ -27,7 +27,7 @@ import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -145,7 +145,7 @@ fun EventsScreen(
                 Box(Modifier.weight(1f).fillMaxHeight()) {
                     when {
                         state.loading && state.events.isEmpty() -> {
-                            CircularProgressIndicator(Modifier.align(Alignment.Center))
+                            LoadingIndicator(Modifier.align(Alignment.Center))
                         }
 
                         state.error != null && state.events.isEmpty() -> {

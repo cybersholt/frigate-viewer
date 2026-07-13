@@ -107,6 +107,10 @@ kotlin {
         freeCompilerArgs.addAll(
             "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi",
             "-opt-in=kotlin.RequiresOptIn",
+            // Material 3 Expressive (wavy/loading indicators, button groups, expressive motion) is
+            // opted into once here rather than with an @OptIn on every call site — the app uses these
+            // components throughout, so per-site annotations would be pure noise.
+            "-opt-in=androidx.compose.material3.ExperimentalMaterial3ExpressiveApi",
         )
     }
 }
