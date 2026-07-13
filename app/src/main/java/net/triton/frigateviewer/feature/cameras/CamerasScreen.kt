@@ -56,7 +56,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -266,6 +265,9 @@ fun CamerasScreen(
                             autoLandscapeOnStream = state.autoLandscapeOnStream,
                             showLastImageWhileLoading = state.showLastImageWhileLoading,
                             showStreamStats = state.showStreamStats,
+                            autoRefresh = state.autoRefresh,
+                            autoRefreshIntervalSeconds = state.autoRefreshInterval,
+                            audioEnabled = state.cameras[focused!!]?.audio?.enabled == true,
                             currentSsid = state.currentSsid,
                             onSubStreamFallback = { vm.markSubStreamFallback(focused!!) },
                             allCameraNames = state.displayedCameras,
@@ -357,6 +359,9 @@ fun CamerasScreen(
                                             currentSsid = state.currentSsid,
                                             showLastImageWhileLoading = state.showLastImageWhileLoading,
                                             showStreamStats = state.showStreamStats,
+                                            autoRefresh = state.autoRefresh,
+                                            autoRefreshIntervalSeconds = state.autoRefreshInterval,
+                                            audioEnabled = state.cameras[name]?.audio?.enabled == true,
                                             cameraTileTint = state.cameraTileTint,
                                             cameraTileShadow = state.cameraTileShadow,
                                             isActive = isActive,
@@ -412,6 +417,9 @@ private fun SwipeableCameraTile(
     currentSsid: String?,
     showLastImageWhileLoading: Boolean,
     showStreamStats: Boolean,
+    autoRefresh: Boolean,
+    autoRefreshIntervalSeconds: Int,
+    audioEnabled: Boolean,
     cameraTileTint: String,
     cameraTileShadow: Int,
     isActive: Boolean,
@@ -706,6 +714,9 @@ private fun SwipeableCameraTile(
                 autoLandscapeOnStream = false,
                 showLastImageWhileLoading = showLastImageWhileLoading,
                 showStreamStats = showStreamStats,
+                autoRefresh = autoRefresh,
+                autoRefreshIntervalSeconds = autoRefreshIntervalSeconds,
+                audioEnabled = audioEnabled,
                 refreshTimestamp = refreshTimestamp,
                 onSubStreamFallback = onSubStreamFallback,
                 recordingEnabled = recordingEnabled,
@@ -753,6 +764,9 @@ private fun FocusedTile(
     autoLandscapeOnStream: Boolean,
     showLastImageWhileLoading: Boolean,
     showStreamStats: Boolean = false,
+    autoRefresh: Boolean = true,
+    autoRefreshIntervalSeconds: Int = 3,
+    audioEnabled: Boolean = false,
     currentSsid: String?,
     onSubStreamFallback: () -> Unit,
     allCameraNames: List<String> = emptyList(),
@@ -959,6 +973,9 @@ private fun FocusedTile(
                     autoLandscapeOnStream = autoLandscapeOnStream,
                     showLastImageWhileLoading = showLastImageWhileLoading,
                     showStreamStats = showStreamStats,
+                    autoRefresh = autoRefresh,
+                    autoRefreshIntervalSeconds = autoRefreshIntervalSeconds,
+                    audioEnabled = audioEnabled,
                     refreshTimestamp = refreshTimestamp,
                     onSubStreamFallback = onSubStreamFallback,
                     hideBadgeLayer = isFullScreen,
@@ -1146,6 +1163,19 @@ private fun FullscreenChrome(
             ) {
                 Text(if (isSubStreamActive) "SD" else "HD", color = Color.White)
             }
+        }
+
+        // PiP sits beside the overflow button rather than only inside the menu — it's a one-tap action
+        // people reach for constantly, and burying it in a menu made it feel hidden.
+        IconButton(
+            onClick = onEnterPip,
+            modifier =
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 56.dp, bottom = 48.dp)
+                    .testTag("fullscreen_pip_button"),
+        ) {
+            Icon(Icons.Filled.PictureInPictureAlt, contentDescription = "Picture-in-picture", tint = Color.White)
         }
 
         Box(Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 48.dp)) {
@@ -1357,6 +1387,10 @@ private fun StreamContent(
     showLastImageWhileLoading: Boolean,
     refreshTimestamp: Long,
     showStreamStats: Boolean = false,
+    autoRefresh: Boolean = true,
+    autoRefreshIntervalSeconds: Int = 3,
+    /** From Frigate's config (cameras.<name>.audio.enabled). No audio published = no unmute control. */
+    audioEnabled: Boolean = false,
     onSubStreamFallback: () -> Unit = {},
     hideBadgeLayer: Boolean = false,
     onStreamStateChanged: (LiveStreamState) -> Unit = {},
@@ -1436,6 +1470,7 @@ private fun StreamContent(
                             onToggleFullScreen = { fullScreen.value = !fullScreen.value },
                             showLastImageWhileLoading = showLastImageWhileLoading,
                             showStreamStats = showStreamStats,
+                            audioEnabled = audioEnabled,
                             onStateChanged = { streamState = it },
                             onRtspUnsupported = { rtspUnsupported = true },
                             onFatal = {
@@ -1460,6 +1495,9 @@ private fun StreamContent(
                         imageLoader = imageLoader,
                         showBoundingBoxes = showBoundingBoxes,
                         snapshotUrl = snapshotUrl,
+                        autoRefresh = autoRefresh,
+                        autoRefreshIntervalSeconds = autoRefreshIntervalSeconds,
+                        refreshTimestamp = refreshTimestamp,
                         onStateChanged = { streamState = it },
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -1476,6 +1514,7 @@ private fun StreamContent(
                         showBoundingBoxes = showBoundingBoxes,
                         showLastImageWhileLoading = showLastImageWhileLoading,
                         showStreamStats = showStreamStats,
+                        audioEnabled = audioEnabled,
                         onFatal = {
                             if (liveCameraName != cameraName) {
                                 onSubStreamFallback()

@@ -114,6 +114,8 @@ fun RtspLiveTile(
     onToggleFullScreen: () -> Unit = {},
     showLastImageWhileLoading: Boolean = true,
     showStreamStats: Boolean = false,
+    /** From Frigate's config (cameras.<name>.audio.enabled). With audio off there is nothing to unmute. */
+    audioEnabled: Boolean = false,
     onStateChanged: (LiveStreamState) -> Unit = {},
     onFatal: () -> Unit = {},
     /** ExoPlayer can't play this SDP at all (see [StreamError.RTSP_UNSUPPORTED]) — caller should switch transport. */
@@ -432,17 +434,21 @@ fun RtspLiveTile(
         // for a full-size tile just cover the picture. Matches WebRtcLiveTile, and Android's PiP
         // guidance (minimal chrome; the system supplies its own controls).
         if (!LocalIsInPip.current) {
-            // Mute toggle
-            IconButton(
-                onClick = { isMuted = !isMuted },
-                modifier = Modifier.align(Alignment.BottomStart).padding(4.dp).testTag("rtsp_mute_button"),
-            ) {
-                Icon(
-                    imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
-                    contentDescription = if (isMuted) "Unmute" else "Mute",
-                    tint = Color.White,
-                    modifier = Modifier.size(24.dp),
-                )
+            // Mute toggle — only when the camera actually publishes audio. Frigate's config says
+            // whether it does; offering an unmute control for a silent camera is a dead button.
+            if (audioEnabled) {
+                IconButton(
+                    onClick = { isMuted = !isMuted },
+                    modifier = Modifier.align(Alignment.BottomStart).padding(4.dp).testTag("rtsp_mute_button"),
+                ) {
+                    Icon(
+                        imageVector =
+                            if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = if (isMuted) "Unmute" else "Mute",
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp),
+                    )
+                }
             }
 
             // Fullscreen toggle

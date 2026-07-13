@@ -57,6 +57,7 @@ class UserSettingsRepository
         private val showLastImageWhileLoadingKey = booleanPreferencesKey(KEY_SHOW_LAST_IMAGE_WHILE_LOADING)
         private val showLiveEventsPanelKey = booleanPreferencesKey(KEY_SHOW_LIVE_EVENTS_PANEL)
         private val showStreamStatsKey = booleanPreferencesKey(KEY_SHOW_STREAM_STATS)
+        private val statsPollSecondsKey = intPreferencesKey(KEY_STATS_POLL_SECONDS)
         private val cameraTileTintKey = stringPreferencesKey(KEY_CAMERA_TILE_TINT)
         private val cameraTileShadowKey = intPreferencesKey(KEY_CAMERA_TILE_SHADOW)
 
@@ -250,6 +251,11 @@ class UserSettingsRepository
 
         suspend fun setShowStreamStats(show: Boolean) = store.edit { it[showStreamStatsKey] = show }
 
+        /** How often system/stream stats are sampled, in seconds. Faster costs battery and CPU. */
+        val statsPollSeconds: Flow<Int> = store.data.map { it[statsPollSecondsKey] ?: 1 }
+
+        suspend fun setStatsPollSeconds(seconds: Int) = store.edit { it[statsPollSecondsKey] = seconds }
+
         /** Camera tile surface tint: none | surface | primary | secondary | tertiary. */
         val cameraTileTint: Flow<String> = store.data.map { it[cameraTileTintKey] ?: "none" }
 
@@ -387,6 +393,7 @@ class UserSettingsRepository
             private const val KEY_SHOW_LAST_IMAGE_WHILE_LOADING = "show_last_image_while_loading_v1"
             private const val KEY_SHOW_LIVE_EVENTS_PANEL = "show_live_events_panel_v1"
             private const val KEY_SHOW_STREAM_STATS = "show_stream_stats_v1"
+            private const val KEY_STATS_POLL_SECONDS = "stats_poll_seconds_v1"
             private const val KEY_CAMERA_TILE_TINT = "camera_tile_tint_v1"
             private const val KEY_CAMERA_TILE_SHADOW = "camera_tile_shadow_v1"
 
@@ -443,6 +450,7 @@ class UserSettingsRepository
                     KEY_SHOW_LAST_IMAGE_WHILE_LOADING to PrefType.BOOL,
                     KEY_SHOW_LIVE_EVENTS_PANEL to PrefType.BOOL,
                     KEY_SHOW_STREAM_STATS to PrefType.BOOL,
+                    KEY_STATS_POLL_SECONDS to PrefType.INT,
                     KEY_CAMERA_TILE_TINT to PrefType.STRING,
                     KEY_CAMERA_TILE_SHADOW to PrefType.INT,
                     KEY_GRID_STREAM_TYPE to PrefType.STRING,

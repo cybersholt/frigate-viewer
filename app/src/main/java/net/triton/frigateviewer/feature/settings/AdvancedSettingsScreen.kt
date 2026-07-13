@@ -22,26 +22,29 @@ import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonObject
 import net.triton.frigateviewer.core.network.ApiResult
 
-private const val AUTO_REFRESH_INTERVAL_MS = 3_000L
-
 @Composable
 fun AdvancedSettingsScreen(
     onBack: () -> Unit,
     vm: SettingsViewModel = hiltViewModel(),
 ) {
     val stats by vm.stats.collectAsStateWithLifecycle()
+    val state by vm.state.collectAsStateWithLifecycle()
     var autoRefresh by remember { mutableStateOf(true) }
 
     LaunchedEffect(Unit) { vm.fetchStats() }
 
-    LaunchedEffect(autoRefresh) {
+    // Poll rate is user-configurable (Developer Options → Stats poll rate) rather than a hardcoded
+    // 3s: this screen is the one place a faster refresh is genuinely useful and a slower one saves
+    // battery, and only the person watching it knows which they want.
+    val statsPollSeconds = state.statsPollSeconds
+    LaunchedEffect(autoRefresh, statsPollSeconds) {
         while (autoRefresh) {
-            delay(AUTO_REFRESH_INTERVAL_MS)
+            delay(statsPollSeconds.coerceAtLeast(1) * 1_000L)
             vm.fetchStats()
         }
     }
 
-    SettingsSubPageScaffold(title = "Advanced", onBack = onBack) {
+    SettingsSubPageScaffold(title = "System Metrics", onBack = onBack) {
         SettingsSectionHeader("System stats")
 
         SwitchSetting(

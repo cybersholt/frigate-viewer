@@ -216,7 +216,7 @@ fun SettingsScreen(
                         icon = Icons.Filled.Build,
                         iconTint = cs.onSecondaryContainer,
                         iconContainerColor = cs.secondaryContainer.copy(alpha = 0.4f),
-                        title = "Advanced",
+                        title = "System Metrics",
                         subtitle = "System stats",
                         onClick = { onNavigate(SettingsRoutes.ADVANCED) },
                     )

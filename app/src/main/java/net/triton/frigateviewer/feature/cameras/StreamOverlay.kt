@@ -46,7 +46,7 @@ private const val POSTER_FADE_MS = 150
  */
 
 /** 85% + 10 points of creep = 95%, the ceiling for "connected but no frame yet". */
-private const val BUFFERING_CREEP_MAX_POINTS = 10
+private const val BUFFERING_CREEP_MAX_POINTS = 13
 
 /**
  * Material 3 Expressive wavy progress for a connecting stream.

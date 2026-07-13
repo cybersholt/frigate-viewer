@@ -100,6 +100,8 @@ data class SettingsUiState(
     val cameraTileTint: String = "none",
     /** Camera tile elevation/shadow in dp. 0 = flat. */
     val cameraTileShadow: Int = 0,
+    /** Developer Options: stats sampling interval, in seconds. */
+    val statsPollSeconds: Int = 1,
     val knownCameraNames: List<String> = emptyList(),
 )
 
@@ -161,6 +163,7 @@ class SettingsViewModel
                 userSettingsRepo.showStreamStats,
                 userSettingsRepo.cameraTileTint,
                 userSettingsRepo.cameraTileShadow,
+                userSettingsRepo.statsPollSeconds,
             ) { args ->
                 @Suppress("UNCHECKED_CAST")
                 SettingsUiState(
@@ -203,6 +206,7 @@ class SettingsViewModel
                     showStreamStats = args[36] as Boolean,
                     cameraTileTint = args[37] as String,
                     cameraTileShadow = args[38] as Int,
+                    statsPollSeconds = args[39] as Int,
                 )
             }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
@@ -416,6 +420,8 @@ class SettingsViewModel
         fun setCameraTileTint(tint: String) = viewModelScope.launch { userSettingsRepo.setCameraTileTint(tint) }
 
         fun setCameraTileShadow(dp: Int) = viewModelScope.launch { userSettingsRepo.setCameraTileShadow(dp) }
+
+        fun setStatsPollSeconds(seconds: Int) = viewModelScope.launch { userSettingsRepo.setStatsPollSeconds(seconds) }
 
         fun setRtspPort(port: Int) {
             viewModelScope.launch {

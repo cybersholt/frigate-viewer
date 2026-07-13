@@ -31,6 +31,12 @@ fun SnapshotLiveTile(
     imageLoader: ImageLoader,
     showBoundingBoxes: Boolean = true,
     snapshotUrl: String? = null,
+    /** Settings → Cameras view → Auto refresh. When off, the tile only updates on a manual refresh. */
+    autoRefresh: Boolean = true,
+    /** Settings → Cameras view → Refresh interval, in seconds. */
+    autoRefreshIntervalSeconds: Int = 3,
+    /** Bumped by a manual refresh (pull-to-refresh / Refresh now) — repolls even with auto refresh off. */
+    refreshTimestamp: Long = 0L,
     modifier: Modifier = Modifier,
     onStateChanged: (LiveStreamState) -> Unit = {},
 ) {
@@ -58,11 +64,22 @@ fun SnapshotLiveTile(
         }
     }
 
-    LaunchedEffect(baseUrl, cameraName) {
+    // This loop used to be unconditional and hardcoded to 800ms, which is why the Auto refresh toggle
+    // appeared to do nothing in snapshot mode and the interval setting had no effect: the tile polled
+    // on its own schedule, entirely ignoring both. The ViewModel's polling was never the problem.
+    LaunchedEffect(baseUrl, cameraName, autoRefresh, autoRefreshIntervalSeconds) {
+        if (!autoRefresh) return@LaunchedEffect
+        val intervalMs = (autoRefreshIntervalSeconds.coerceAtLeast(1)) * 1_000L
         while (true) {
-            delay(800)
+            delay(intervalMs)
             refreshTime = System.currentTimeMillis()
         }
+    }
+
+    // A manual refresh must still repaint the tile even with auto refresh off — otherwise "Refresh
+    // now" and pull-to-refresh would do nothing at all in snapshot mode.
+    LaunchedEffect(refreshTimestamp) {
+        if (refreshTimestamp > 0L) refreshTime = refreshTimestamp
     }
 
     Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {

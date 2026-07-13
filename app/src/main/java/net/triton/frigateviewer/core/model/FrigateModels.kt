@@ -48,6 +48,18 @@ data class CameraConfig(
     @SerialName("zones") val zones: Map<String, JsonElement> = emptyMap(),
     /** Per-camera object filter; falls back to global objects.track when absent. */
     @SerialName("objects") val objects: CameraObjectsConfig? = null,
+    /** Audio config. Absent on older Frigate versions — treated as disabled. */
+    @SerialName("audio") val audio: AudioConfig? = null,
+)
+
+/**
+ * `cameras.<name>.audio` from Frigate's config. Only [enabled] matters here: with audio off the
+ * camera publishes no audio at all, so offering an unmute control is a lie — there is nothing to
+ * unmute.
+ */
+@Serializable
+data class AudioConfig(
+    val enabled: Boolean = false,
 )
 
 @Serializable

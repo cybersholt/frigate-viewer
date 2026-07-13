@@ -3,6 +3,7 @@ package net.triton.frigateviewer.feature.settings
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.QueryStats
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -30,6 +31,15 @@ fun DeveloperOptionsSettingsScreen(
             icon = Icons.Filled.QueryStats,
             checked = state.showStreamStats,
             onCheckedChange = vm::setShowStreamStats,
+        )
+
+        PickerSettingRow(
+            title = "Stats poll rate",
+            icon = Icons.Filled.Timer,
+            value = state.statsPollSeconds,
+            options = listOf(1, 2, 5, 10),
+            labelFor = { "${it}s" },
+            onSelect = vm::setStatsPollSeconds,
         )
 
         SettingsSectionHeader("Crash testing")
