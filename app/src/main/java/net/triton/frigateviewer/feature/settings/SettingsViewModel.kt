@@ -210,9 +210,6 @@ class SettingsViewModel
                 )
             }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
-        @Suppress("unused")
-        private val _testResult = MutableStateFlow<String?>(null)
-
         private val _certPinResult = MutableStateFlow<CertPinResult?>(null)
         val certPinResult: StateFlow<CertPinResult?> = _certPinResult.asStateFlow()
 
@@ -289,9 +286,16 @@ class SettingsViewModel
             pem: ByteArray,
         ) {
             viewModelScope.launch {
-                val valid = runCatching { CertificateFactory.getInstance("X.509").generateCertificate(pem.inputStream()) }.isSuccess
+                val valid =
+                    runCatching {
+                        CertificateFactory
+                            .getInstance(
+                                "X.509",
+                            ).generateCertificate(pem.inputStream())
+                    }.isSuccess
                 if (!valid) {
-                    _certPinResult.value = CertPinResult(serverId, success = false, message = "Not a valid certificate file")
+                    _certPinResult.value =
+                        CertPinResult(serverId, success = false, message = "Not a valid certificate file")
                     return@launch
                 }
                 credentialStore.setPinnedCert(serverId, pem)
@@ -338,11 +342,18 @@ class SettingsViewModel
         /** Restores app preferences from a previously exported file. Returns false if invalid/unrecognized. */
         suspend fun importSettingsJson(json: String): Boolean = userSettingsRepo.importPreferencesJson(json)
 
-        fun setPreferSubStreamGrid(prefer: Boolean) = viewModelScope.launch { userSettingsRepo.setPreferSubStreamGrid(prefer) }
+        fun setPreferSubStreamGrid(prefer: Boolean) =
+            viewModelScope.launch { userSettingsRepo.setPreferSubStreamGrid(prefer) }
 
-        fun setPreferSubStreamFullscreen(prefer: Boolean) = viewModelScope.launch { userSettingsRepo.setPreferSubStreamFullscreen(prefer) }
+        fun setPreferSubStreamFullscreen(prefer: Boolean) =
+            viewModelScope.launch {
+                userSettingsRepo.setPreferSubStreamFullscreen(prefer)
+            }
 
-        fun setKeepOffscreenTilesAlive(keep: Boolean) = viewModelScope.launch { userSettingsRepo.setKeepOffscreenTilesAlive(keep) }
+        fun setKeepOffscreenTilesAlive(keep: Boolean) =
+            viewModelScope.launch {
+                userSettingsRepo.setKeepOffscreenTilesAlive(keep)
+            }
 
         fun setThemeMode(mode: String) = viewModelScope.launch { userSettingsRepo.setThemeMode(mode) }
 
@@ -354,26 +365,38 @@ class SettingsViewModel
 
         fun setAmoledBlack(enabled: Boolean) = viewModelScope.launch { userSettingsRepo.setAmoledBlack(enabled) }
 
-        fun setAutoRefreshCameras(enabled: Boolean) = viewModelScope.launch { userSettingsRepo.setAutoRefreshCameras(enabled) }
+        fun setAutoRefreshCameras(enabled: Boolean) =
+            viewModelScope.launch { userSettingsRepo.setAutoRefreshCameras(enabled) }
 
-        fun setCameraGridColumns(columns: Int) = viewModelScope.launch { userSettingsRepo.setCameraGridColumns(columns) }
+        fun setCameraGridColumns(columns: Int) =
+            viewModelScope.launch { userSettingsRepo.setCameraGridColumns(columns) }
 
-        fun setHideEventImageInStream(hide: Boolean) = viewModelScope.launch { userSettingsRepo.setHideEventImageInStream(hide) }
+        fun setHideEventImageInStream(hide: Boolean) =
+            viewModelScope.launch {
+                userSettingsRepo.setHideEventImageInStream(hide)
+            }
 
-        fun setAutoLandscapeOnStream(auto: Boolean) = viewModelScope.launch { userSettingsRepo.setAutoLandscapeOnStream(auto) }
+        fun setAutoLandscapeOnStream(auto: Boolean) =
+            viewModelScope.launch { userSettingsRepo.setAutoLandscapeOnStream(auto) }
 
-        fun setRtspReconnectAttempts(attempts: Int) = viewModelScope.launch { userSettingsRepo.setRtspReconnectAttempts(attempts) }
+        fun setRtspReconnectAttempts(attempts: Int) =
+            viewModelScope.launch {
+                userSettingsRepo.setRtspReconnectAttempts(attempts)
+            }
 
         fun setRtspReconnectBaseDelaySeconds(seconds: Int) =
             viewModelScope.launch { userSettingsRepo.setRtspReconnectBaseDelaySeconds(seconds) }
 
-        fun setAutoRefreshInterval(seconds: Int) = viewModelScope.launch { userSettingsRepo.setAutoRefreshInterval(seconds) }
+        fun setAutoRefreshInterval(seconds: Int) =
+            viewModelScope.launch { userSettingsRepo.setAutoRefreshInterval(seconds) }
 
-        fun setEventPhotoPreference(pref: String) = viewModelScope.launch { userSettingsRepo.setEventPhotoPreference(pref) }
+        fun setEventPhotoPreference(pref: String) =
+            viewModelScope.launch { userSettingsRepo.setEventPhotoPreference(pref) }
 
         fun setGridStreamType(option: String) = viewModelScope.launch { userSettingsRepo.setGridStreamType(option) }
 
-        fun setFullscreenStreamType(option: String) = viewModelScope.launch { userSettingsRepo.setFullscreenStreamType(option) }
+        fun setFullscreenStreamType(option: String) =
+            viewModelScope.launch { userSettingsRepo.setFullscreenStreamType(option) }
 
         fun setShowBoundingBoxes(show: Boolean) = viewModelScope.launch { userSettingsRepo.setShowBoundingBoxes(show) }
 
@@ -383,20 +406,34 @@ class SettingsViewModel
 
         fun setContrastLevel(level: Int) = viewModelScope.launch { userSettingsRepo.setContrastLevel(level) }
 
-        fun setNotificationsEnabled(enabled: Boolean) = viewModelScope.launch { userSettingsRepo.setNotificationsEnabled(enabled) }
+        fun setNotificationsEnabled(enabled: Boolean) =
+            viewModelScope.launch {
+                userSettingsRepo.setNotificationsEnabled(enabled)
+            }
 
         fun setNotificationCameraFilter(cameras: Set<String>) =
             viewModelScope.launch { userSettingsRepo.setNotificationCameraFilter(cameras) }
 
-        fun setNotificationLabelFilter(labels: Set<String>) = viewModelScope.launch { userSettingsRepo.setNotificationLabelFilter(labels) }
+        fun setNotificationLabelFilter(labels: Set<String>) =
+            viewModelScope.launch {
+                userSettingsRepo.setNotificationLabelFilter(labels)
+            }
 
-        fun setNotificationZoneFilter(zones: Set<String>) = viewModelScope.launch { userSettingsRepo.setNotificationZoneFilter(zones) }
+        fun setNotificationZoneFilter(zones: Set<String>) =
+            viewModelScope.launch {
+                userSettingsRepo.setNotificationZoneFilter(zones)
+            }
 
-        fun setQuietHoursEnabled(enabled: Boolean) = viewModelScope.launch { userSettingsRepo.setQuietHoursEnabled(enabled) }
+        fun setQuietHoursEnabled(enabled: Boolean) =
+            viewModelScope.launch { userSettingsRepo.setQuietHoursEnabled(enabled) }
 
-        fun setQuietHoursStartMinutes(minutes: Int) = viewModelScope.launch { userSettingsRepo.setQuietHoursStartMinutes(minutes) }
+        fun setQuietHoursStartMinutes(minutes: Int) =
+            viewModelScope.launch {
+                userSettingsRepo.setQuietHoursStartMinutes(minutes)
+            }
 
-        fun setQuietHoursEndMinutes(minutes: Int) = viewModelScope.launch { userSettingsRepo.setQuietHoursEndMinutes(minutes) }
+        fun setQuietHoursEndMinutes(minutes: Int) =
+            viewModelScope.launch { userSettingsRepo.setQuietHoursEndMinutes(minutes) }
 
         fun setCardCornerRadius(radius: Int) = viewModelScope.launch { userSettingsRepo.setCardCornerRadius(radius) }
 
@@ -413,7 +450,10 @@ class SettingsViewModel
                 userSettingsRepo.setCustomAccentColors(state.value.customAccentColors - color)
             }
 
-        fun setShowLastImageWhileLoading(show: Boolean) = viewModelScope.launch { userSettingsRepo.setShowLastImageWhileLoading(show) }
+        fun setShowLastImageWhileLoading(show: Boolean) =
+            viewModelScope.launch {
+                userSettingsRepo.setShowLastImageWhileLoading(show)
+            }
 
         fun setShowStreamStats(show: Boolean) = viewModelScope.launch { userSettingsRepo.setShowStreamStats(show) }
 
@@ -444,10 +484,36 @@ class SettingsViewModel
                 val elapsed = System.currentTimeMillis() - start
                 _connectionTest.value =
                     when (result) {
-                        is ApiResult.Success -> ConnectionTestResult(serverId, true, elapsed, "Reachable")
-                        is ApiResult.HttpError -> ConnectionTestResult(serverId, false, elapsed, "HTTP ${result.code}: ${result.message}")
-                        is ApiResult.NetworkError -> ConnectionTestResult(serverId, false, null, result.cause.message ?: "Network error")
-                        is ApiResult.ParseError -> ConnectionTestResult(serverId, false, elapsed, "Server returned an unexpected response")
+                        is ApiResult.Success -> {
+                            ConnectionTestResult(serverId, true, elapsed, "Reachable")
+                        }
+
+                        is ApiResult.HttpError -> {
+                            ConnectionTestResult(
+                                serverId,
+                                false,
+                                elapsed,
+                                "HTTP ${result.code}: ${result.message}",
+                            )
+                        }
+
+                        is ApiResult.NetworkError -> {
+                            ConnectionTestResult(
+                                serverId,
+                                false,
+                                null,
+                                result.cause.message ?: "Network error",
+                            )
+                        }
+
+                        is ApiResult.ParseError -> {
+                            ConnectionTestResult(
+                                serverId,
+                                false,
+                                elapsed,
+                                "Server returned an unexpected response",
+                            )
+                        }
                     }
             }
         }

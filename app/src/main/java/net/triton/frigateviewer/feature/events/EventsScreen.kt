@@ -27,11 +27,11 @@ import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Switch
@@ -156,7 +156,10 @@ fun EventsScreen(
                             ) {
                                 Text("Couldn't load events", style = MaterialTheme.typography.titleLarge)
                                 Text(state.error!!, style = MaterialTheme.typography.bodyMedium)
-                                Button(onClick = { vm.refresh() }, modifier = Modifier.padding(top = 16.dp)) { Text("Retry") }
+                                Button(
+                                    onClick = { vm.refresh() },
+                                    modifier = Modifier.padding(top = 16.dp),
+                                ) { Text("Retry") }
                             }
                         }
 
@@ -179,7 +182,12 @@ fun EventsScreen(
                                     modifier = Modifier.fillMaxSize(),
                                 ) {
                                     items(state.events, key = { it.id }) { ev ->
-                                        EventCard(ev, state.baseUrl, imageLoader, state.dateFormat) { onEventClick(ev.id) }
+                                        EventCard(
+                                            ev,
+                                            state.baseUrl,
+                                            imageLoader,
+                                            state.dateFormat,
+                                        ) { onEventClick(ev.id) }
                                     }
                                 }
                             }

@@ -41,7 +41,8 @@ private data class ParsedStats(
 
 /** Frigate's api/stats shape varies by version — every field here is best-effort and optional. */
 private fun parseStats(root: JsonObject): ParsedStats {
-    fun JsonObject.numOrNull(key: String): Double? = ((this[key] as? JsonPrimitive)?.content)?.trimEnd('%')?.toDoubleOrNull()
+    fun JsonObject.numOrNull(key: String): Double? =
+        ((this[key] as? JsonPrimitive)?.content)?.trimEnd('%')?.toDoubleOrNull()
 
     // Frigate's cpu_usages includes a "frigate.full_system" entry (alongside per-process
     // entries) holding psutil.cpu_percent()/virtual_memory().percent — already normalized

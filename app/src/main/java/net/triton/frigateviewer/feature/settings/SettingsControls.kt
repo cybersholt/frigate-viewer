@@ -143,7 +143,11 @@ internal fun SwitchSetting(
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(title, style = MaterialTheme.typography.titleMedium)
                 if (description != null) {
-                    Text(description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        description,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
             Switch(checked = checked, onCheckedChange = onCheckedChange)
@@ -171,7 +175,11 @@ internal fun ActionSetting(
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(title, style = MaterialTheme.typography.titleMedium)
                 if (description != null) {
-                    Text(description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        description,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
             Button(
@@ -224,7 +232,12 @@ private fun <T> OptionPickerSheet(
                 Surface(
                     onClick = { onSelect(option) },
                     shape = RoundedCornerShape(20.dp),
-                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+                    color =
+                        if (isSelected) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceContainer
+                        },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Row(
@@ -343,7 +356,10 @@ internal fun MultiSelectSettingRow(
                     Modifier.fillMaxWidth().padding(top = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    OutlinedButton(onClick = { draft = emptySet() }, modifier = Modifier.weight(1f)) { Text("Clear (All)") }
+                    OutlinedButton(
+                        onClick = { draft = emptySet() },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Clear (All)") }
                     Button(
                         onClick = {
                             onApply(draft)
@@ -388,7 +404,11 @@ internal fun TagInputSettingRow(
             ) {
                 Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 if (description != null) {
-                    Text(description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        description,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 values.forEach { tag ->
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -416,7 +436,10 @@ internal fun TagInputSettingRow(
                         input = ""
                     }) { Text("Add") }
                 }
-                Button(onClick = { showSheet = false }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 8.dp)) {
+                Button(
+                    onClick = { showSheet = false },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 8.dp),
+                ) {
                     Text("Done")
                 }
             }

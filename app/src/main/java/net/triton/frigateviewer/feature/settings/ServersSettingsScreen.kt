@@ -24,13 +24,13 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -150,7 +150,10 @@ fun ServersSettingsScreen(
             confirmButton = {},
             title = { Text("Testing connection…") },
             text = {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
                     LoadingIndicator(modifier = Modifier.padding(4.dp))
                     Text("Contacting server…")
                 }
@@ -288,7 +291,13 @@ internal fun ServerFormSheet(
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri == null) return@rememberLauncherForActivityResult
             scope.launch(Dispatchers.IO) {
-                val bytes = runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()
+                val bytes =
+                    runCatching {
+                        context.contentResolver
+                            .openInputStream(
+                                uri,
+                            )?.use { it.readBytes() }
+                    }.getOrNull()
                 if (bytes != null) onImportCert(current.id, bytes) else certError = "Couldn't read that file"
             }
         }
@@ -406,7 +415,12 @@ internal fun ServerFormSheet(
                         current.password,
                         { current = current.copy(password = it) },
                         label = { Text("Password") },
-                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        visualTransformation =
+                            if (passwordVisible) {
+                                VisualTransformation.None
+                            } else {
+                                PasswordVisualTransformation()
+                            },
                         trailingIcon = {
                             IconButton(onClick = { passwordVisible = !passwordVisible }) {
                                 Icon(
@@ -529,7 +543,10 @@ internal fun ServerFormSheet(
             confirmButton = {},
             title = { Text("Testing connection…") },
             text = {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
                     LoadingIndicator(modifier = Modifier.padding(4.dp))
                     Text("Contacting server…")
                 }
@@ -554,12 +571,18 @@ private fun CertificatePinRow(
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("Pinned certificate", style = MaterialTheme.typography.bodyLarge)
         Text(
-            if (hasPinnedCert) "A certificate is pinned for this server." else "No certificate pinned — needed only for self-signed servers.",
+            if (hasPinnedCert) {
+                "A certificate is pinned for this server."
+            } else {
+                "No certificate pinned — needed only for self-signed servers."
+            },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onImport) { Text(if (hasPinnedCert) "Replace certificate" else "Import certificate") }
+            OutlinedButton(
+                onClick = onImport,
+            ) { Text(if (hasPinnedCert) "Replace certificate" else "Import certificate") }
             if (hasPinnedCert) {
                 TextButton(onClick = onRemove) { Text("Remove") }
             }

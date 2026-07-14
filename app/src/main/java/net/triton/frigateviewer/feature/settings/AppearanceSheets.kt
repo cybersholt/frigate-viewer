@@ -73,12 +73,16 @@ private val paletteStyleInfo: Map<PaletteStyle, Pair<String, String>> =
         PaletteStyle.Fidelity to
             ("Fidelity" to "Stays closest to your exact seed color. Great when brand color accuracy matters."),
         PaletteStyle.Content to
-            ("Content" to "Derived from content rather than a fixed seed. Best when using wallpaper or image-based theming."),
+            (
+                "Content" to
+                    "Derived from content rather than a fixed seed. Best when using wallpaper or image-based theming."
+            ),
     )
 
 /** Display label for a stored [PaletteStyle] name (e.g. "TonalSpot" -> "Tonal Spot"), for use
  *  outside this file's own picker sheet — e.g. the value pill on the Appearance settings row. */
-fun paletteStyleLabel(value: String): String = paletteStyleInfo[PaletteStyle.entries.find { it.name == value }]?.first ?: value
+fun paletteStyleLabel(value: String): String =
+    paletteStyleInfo[PaletteStyle.entries.find { it.name == value }]?.first ?: value
 
 data class CardShapeOption(
     val label: String,
@@ -271,7 +275,11 @@ fun AccentColorRow(
     onRemoveCustom: (Long) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Preset colors", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            "Preset colors",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(presetAccentColors) { color ->
                 ColorDot(
@@ -282,7 +290,11 @@ fun AccentColorRow(
             }
         }
         if (customColors.isNotEmpty()) {
-            Text("Custom colors", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "Custom colors",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(customColors) { color ->
                     Box {

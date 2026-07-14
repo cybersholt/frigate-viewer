@@ -18,27 +18,27 @@ fun ThemeFontPreview() {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(
                     text = "Headline Medium (Settings Header)",
-                    style = MaterialTheme.typography.headlineMedium
+                    style = MaterialTheme.typography.headlineMedium,
                 )
                 Text(
                     text = "Title Large",
                     style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.padding(top = 8.dp)
+                    modifier = Modifier.padding(top = 8.dp),
                 )
                 Text(
                     text = "Title Medium (Settings Title)",
                     style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(top = 8.dp)
+                    modifier = Modifier.padding(top = 8.dp),
                 )
                 Text(
                     text = "Body Medium (Settings Subtitle)",
                     style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(top = 8.dp)
+                    modifier = Modifier.padding(top = 8.dp),
                 )
                 Text(
                     text = "Label Small",
                     style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.padding(top = 8.dp)
+                    modifier = Modifier.padding(top = 8.dp),
                 )
             }
         }

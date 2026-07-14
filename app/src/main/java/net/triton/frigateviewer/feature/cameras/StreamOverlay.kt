@@ -39,7 +39,7 @@ import kotlin.math.roundToInt
 
 private const val POSTER_FADE_MS = 150
 
-/**
+/*
  * Shared fullscreen/focused live-tile overlay: poster image (fades out on first real frame) +
  * centered spinner/label for every non-terminal state, or an error card with Retry. Draw this
  * on top of the actual player surface (WebRTC SurfaceViewRenderer / ExoPlayer PlayerView).

@@ -392,7 +392,10 @@ fun WebRtcLiveTile(
             delay(500)
             elapsed += 500
             val s = liveState
-            if (s !is LiveStreamState.Connecting && s !is LiveStreamState.Negotiating && s !is LiveStreamState.Buffering) {
+            if (s !is LiveStreamState.Connecting &&
+                s !is LiveStreamState.Negotiating &&
+                s !is LiveStreamState.Buffering
+            ) {
                 break
             }
             if (elapsed >= 20_000) {
@@ -548,7 +551,10 @@ fun WebRtcLiveTile(
 
                             override fun onTrack(transceiver: org.webrtc.RtpTransceiver?) {
                                 val track = transceiver?.receiver?.track() ?: return
-                                Log.d("WebRtcLiveTile", "[DEBUG-WebRTC] Received track: ${track.id()} type: ${track.kind()}")
+                                Log.d(
+                                    "WebRtcLiveTile",
+                                    "[DEBUG-WebRTC] Received track: ${track.id()} type: ${track.kind()}",
+                                )
                                 when (track) {
                                     is VideoTrack -> {
                                         track.setEnabled(true)
@@ -570,11 +576,15 @@ fun WebRtcLiveTile(
                 session.use {
                     it.addTransceiver(
                         org.webrtc.MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO,
-                        org.webrtc.RtpTransceiver.RtpTransceiverInit(org.webrtc.RtpTransceiver.RtpTransceiverDirection.RECV_ONLY),
+                        org.webrtc.RtpTransceiver.RtpTransceiverInit(
+                            org.webrtc.RtpTransceiver.RtpTransceiverDirection.RECV_ONLY,
+                        ),
                     )
                     it.addTransceiver(
                         org.webrtc.MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO,
-                        org.webrtc.RtpTransceiver.RtpTransceiverInit(org.webrtc.RtpTransceiver.RtpTransceiverDirection.RECV_ONLY),
+                        org.webrtc.RtpTransceiver.RtpTransceiverInit(
+                            org.webrtc.RtpTransceiver.RtpTransceiverDirection.RECV_ONLY,
+                        ),
                     )
                 }
 
@@ -632,7 +642,9 @@ fun WebRtcLiveTile(
                                 // ICE candidates or object states into the tile that replaced it.
                                 if (!isCurrent()) return
                                 Log.v("WebRtcLiveTile", "WS message: $text")
-                                val obj = runCatching { Json.parseToJsonElement(text).let { it as JsonObject } }.getOrNull() ?: return
+                                val obj =
+                                    runCatching { Json.parseToJsonElement(text).let { it as JsonObject } }.getOrNull()
+                                        ?: return
 
                                 // Handle object states for bounding boxes
                                 if (obj.containsKey("objects")) {
@@ -683,7 +695,10 @@ fun WebRtcLiveTile(
                                                         override fun onCreateSuccess(sdp: SessionDescription?) {}
 
                                                         override fun onSetSuccess() {
-                                                            Log.d("WebRtcLiveTile", "[DEBUG-WebRTC] Remote Description Set")
+                                                            Log.d(
+                                                                "WebRtcLiveTile",
+                                                                "[DEBUG-WebRTC] Remote Description Set",
+                                                            )
                                                         }
 
                                                         override fun onCreateFailure(s: String?) {}
@@ -699,7 +714,10 @@ fun WebRtcLiveTile(
                                                 )
                                             }
                                         if (!applied) {
-                                            Log.d("WebRtcLiveTile", "Answer arrived after teardown for $cameraName — dropped")
+                                            Log.d(
+                                                "WebRtcLiveTile",
+                                                "Answer arrived after teardown for $cameraName — dropped",
+                                            )
                                         }
                                     }
 
@@ -719,7 +737,10 @@ fun WebRtcLiveTile(
                                 // our own doing — reporting it would schedule a retry that kills the
                                 // session which replaced us.
                                 if (!isCurrent()) {
-                                    Log.d("WebRtcLiveTile", "Ignoring WS failure from superseded session for $cameraName")
+                                    Log.d(
+                                        "WebRtcLiveTile",
+                                        "Ignoring WS failure from superseded session for $cameraName",
+                                    )
                                     return
                                 }
                                 Log.w("WebRtcLiveTile", "Stream WS failure, retrying...", t)

@@ -382,7 +382,12 @@ class CamerasViewModel
                 _state.value =
                     _state.value.copy(
                         cameraOrder = ordered,
-                        displayedCameras = buildDisplayedCameras(_state.value.cameras, ordered, _state.value.hiddenCameras),
+                        displayedCameras =
+                            buildDisplayedCameras(
+                                _state.value.cameras,
+                                ordered,
+                                _state.value.hiddenCameras,
+                            ),
                     )
             }
         }

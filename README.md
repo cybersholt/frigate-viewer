@@ -41,7 +41,8 @@ living sources of truth instead of duplicating them:
 | Live streaming — WebRTC / RTSP / snapshot, fullscreen, pinch-zoom, PiP | implemented |
 | Camera grid — auto-refresh, skeleton loading, swipe actions, drag-reorder/hide | implemented |
 | Events — Room offline cache, filters, activity timeline, VOD + clip playback | implemented |
-| MQTT push notifications with deep-link to event detail | implemented |
+| MQTT push notifications | implemented |
+| ↳ deep-link from a notification to event detail | partial — the app *receives* `frigateviewer://event?id=…` (manifest intent filter + `resolveDeepLink()`), but the end-to-end hop from a Home Assistant notification is unconfigured and unverified. See [`CHANGELOG.md`](CHANGELOG.md) › Not yet done. |
 | Server management — multi-server CRUD, switch active, per-server local-network URL | implemented |
 | Encrypted credential storage (Tink AEAD + Android Keystore) | implemented |
 | Self-signed certificate support (per-server pinned PEM import UI) | implemented |
@@ -315,9 +316,13 @@ The keystore lives on one developer's machine. The repo has one human contributo
 
 Native Kotlin + Compose + Media3 + WebRTC + MQTT + Tink + Hilt is a heavier dependency set than RN + a single JS bundle. Expect ~12–18 MB AAB vs the RN app's ~10 MB. Worth it for the latency improvement; mitigated by R8 minification.
 
-### Trade-off: Android Studio required for first build
+### Trade-off: the build is pinned to Android Studio's bundled JDK
 
-The Gradle wrapper jar isn't checked in (it's binary). First-time setup requires Android Studio (which generates the wrapper) or a system Gradle 8.13+ install. After that, CI and headless builds work normally.
+`gradle.properties` pins `org.gradle.java.home` to Android Studio's bundled JBR. AGP 9.2.1's `androidJdkImage`
+transform needs `jlink`, which some IDE-bundled JREs (notably Cursor/Antigravity's) ship without — those builds
+fail at `:app:compileDebugJavaWithJavac`. A vanilla JDK 17 with `jlink` works fine; the pin exists to stop the
+local IDE silently picking the wrong one. Details, and the `gradle-daemon-jvm.properties` footgun that overrides
+the pin, are in [`CLAUDE.md`](CLAUDE.md) › Build Environment.
 
 ---
 
@@ -348,7 +353,10 @@ The local `CLAUDE.md` files are the most important defense against re-introducin
 
 ### Prerequisites
 
-- JDK 17 (Temurin recommended)
+- JDK 17. Any distribution that ships `jlink` works (Temurin is fine); AGP 9.2.1's `androidJdkImage` transform
+  requires it. Note that this repo's `gradle.properties` pins `org.gradle.java.home` to **Android Studio's
+  bundled JBR** — if you build from a different IDE or JDK, see [`CLAUDE.md`](CLAUDE.md) › Build Environment
+  before changing that pin.
 - Android Studio Otter (2026.1) or newer, OR system Gradle 8.13+
 - Android SDK 36
 

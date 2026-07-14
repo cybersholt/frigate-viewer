@@ -625,7 +625,8 @@ private fun SwipeableCameraTile(
 
         val subStreamName = "${name}_sub"
         val liveCameraName =
-            if (preferSubStreamGrid && go2rtcStreams.contains(subStreamName) &&
+            if (preferSubStreamGrid &&
+                go2rtcStreams.contains(subStreamName) &&
                 subStreamFallbacks[name] != true
             ) {
                 subStreamName
@@ -823,7 +824,8 @@ private fun FocusedTile(
     val subStreamName = "${cameraName}_sub"
     val hasSubStream = go2rtcStreams.contains(subStreamName)
     val liveCameraName =
-        if (effectivePreferSubStream && hasSubStream &&
+        if (effectivePreferSubStream &&
+            hasSubStream &&
             subStreamFallbacks[cameraName] != true
         ) {
             subStreamName
@@ -842,7 +844,14 @@ private fun FocusedTile(
                 server.localNetworkSsids.isNotEmpty() &&
                 currentSsid !in server.localNetworkSsids
         }
-    val effectiveStreamOption = if (effectiveLiveStreamOption == "rtsp" && rtspOffLan) "webrtc" else effectiveLiveStreamOption
+    val effectiveStreamOption =
+        if (effectiveLiveStreamOption == "rtsp" &&
+            rtspOffLan
+        ) {
+            "webrtc"
+        } else {
+            effectiveLiveStreamOption
+        }
     val streamTypeLabel =
         when {
             effectiveLiveStreamOption == "rtsp" && rtspOffLan -> "WebRTC (RTSP: home network only)"
@@ -1024,7 +1033,14 @@ private fun FocusedTile(
             if (isFullScreen) Modifier.fillMaxWidth().weight(1f) else Modifier.fillMaxWidth(),
         ) {
             Box(
-                if (isFullScreen) Modifier.weight(1f).fillMaxHeight() else Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+                if (isFullScreen) {
+                    Modifier
+                        .weight(
+                            1f,
+                        ).fillMaxHeight()
+                } else {
+                    Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                },
             ) {
                 videoContent()
             }
@@ -1255,7 +1271,10 @@ private fun FullscreenChrome(
                         StreamInfoRow("Camera", cameraName)
                         StreamInfoRow("Protocol", streamTypeLabel)
                         if (hasSubStream) {
-                            StreamInfoRow("Resolution", if (isSubStreamActive) "SD (sub stream)" else "HD (main stream)")
+                            StreamInfoRow(
+                                "Resolution",
+                                if (isSubStreamActive) "SD (sub stream)" else "HD (main stream)",
+                            )
                         }
                         StreamInfoRow("Status", liveStreamStateLabel(liveStreamState))
                         StreamInfoRow("Recording", if (recordingEnabled) "Enabled" else "Disabled")

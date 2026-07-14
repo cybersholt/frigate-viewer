@@ -98,8 +98,16 @@ class UserSettingsRepository
         val rtspReconnectBaseDelaySeconds: Flow<Int> = store.data.map { it[rtspReconnectBaseDelaySecondsKey] ?: 2 }
 
         val gridStreamType: Flow<String> = store.data.map { it[gridStreamTypeKey] ?: "snapshot" }
-        val fullscreenStreamType: Flow<String> = store.data.map { it[fullscreenStreamTypeKey] ?: it[liveStreamOptionKey] ?: "webrtc" }
-        val preferSubStreamGrid: Flow<Boolean> = store.data.map { it[preferSubStreamGridKey] ?: it[preferSubStreamKey] ?: true }
+        val fullscreenStreamType: Flow<String> =
+            store.data.map {
+                it[fullscreenStreamTypeKey] ?: it[liveStreamOptionKey]
+                    ?: "webrtc"
+            }
+        val preferSubStreamGrid: Flow<Boolean> =
+            store.data.map {
+                it[preferSubStreamGridKey] ?: it[preferSubStreamKey]
+                    ?: true
+            }
         val preferSubStreamFullscreen: Flow<Boolean> =
             store.data.map {
                 it[preferSubStreamFullscreenKey] ?: it[preferSubStreamKey] ?: false
@@ -164,11 +172,19 @@ class UserSettingsRepository
 
         suspend fun setPreferSubStreamGrid(prefer: Boolean) = store.edit { it[preferSubStreamGridKey] = prefer }
 
-        suspend fun setPreferSubStreamFullscreen(prefer: Boolean) = store.edit { it[preferSubStreamFullscreenKey] = prefer }
+        suspend fun setPreferSubStreamFullscreen(prefer: Boolean) =
+            store.edit {
+                it[preferSubStreamFullscreenKey] =
+                    prefer
+            }
 
         suspend fun setKeepOffscreenTilesAlive(keep: Boolean) = store.edit { it[keepOffscreenTilesAliveKey] = keep }
 
-        suspend fun setRtspReconnectAttempts(attempts: Int) = store.edit { it[rtspReconnectAttemptsKey] = attempts.coerceIn(0, 10) }
+        suspend fun setRtspReconnectAttempts(attempts: Int) =
+            store.edit {
+                it[rtspReconnectAttemptsKey] =
+                    attempts.coerceIn(0, 10)
+            }
 
         suspend fun setRtspReconnectBaseDelaySeconds(seconds: Int) =
             store.edit { it[rtspReconnectBaseDelaySecondsKey] = seconds.coerceIn(1, 30) }
@@ -222,11 +238,19 @@ class UserSettingsRepository
 
         suspend fun setCameraOrder(names: List<String>) = store.edit { it[cameraOrderKey] = names.joinToString(",") }
 
-        suspend fun setHiddenCameras(cameras: Set<String>) = store.edit { it[hiddenCamerasKey] = cameras.joinToString(",") }
+        suspend fun setHiddenCameras(cameras: Set<String>) =
+            store.edit {
+                it[hiddenCamerasKey] =
+                    cameras.joinToString(",")
+            }
 
         suspend fun setShowCameraSwipeActions(show: Boolean) = store.edit { it[showCameraSwipeActionsKey] = show }
 
-        suspend fun setLastKnownCameraNames(names: List<String>) = store.edit { it[lastKnownCameraNameListKey] = names.joinToString(",") }
+        suspend fun setLastKnownCameraNames(names: List<String>) =
+            store.edit {
+                it[lastKnownCameraNameListKey] =
+                    names.joinToString(",")
+            }
 
         suspend fun setContrastLevel(level: Int) = store.edit { it[contrastLevelKey] = level }
 
@@ -234,7 +258,11 @@ class UserSettingsRepository
 
         suspend fun setCardBorderWidth(width: Int) = store.edit { it[cardBorderWidthKey] = width }
 
-        suspend fun setCustomAccentColors(colors: List<Long>) = store.edit { it[customAccentColorsKey] = colors.joinToString(",") }
+        suspend fun setCustomAccentColors(colors: List<Long>) =
+            store.edit {
+                it[customAccentColorsKey] =
+                    colors.joinToString(",")
+            }
 
         /** Show the last cached snapshot under the loading spinner instead of a blank fill. Default ON. */
         val showLastImageWhileLoading: Flow<Boolean> = store.data.map { it[showLastImageWhileLoadingKey] ?: true }
@@ -304,13 +332,25 @@ class UserSettingsRepository
         suspend fun setNotificationLabelFilter(labels: Set<String>) =
             store.edit { it[notificationLabelFilterKey] = labels.joinToString(",") }
 
-        suspend fun setNotificationZoneFilter(zones: Set<String>) = store.edit { it[notificationZoneFilterKey] = zones.joinToString(",") }
+        suspend fun setNotificationZoneFilter(zones: Set<String>) =
+            store.edit {
+                it[notificationZoneFilterKey] =
+                    zones.joinToString(",")
+            }
 
         suspend fun setQuietHoursEnabled(enabled: Boolean) = store.edit { it[quietHoursEnabledKey] = enabled }
 
-        suspend fun setQuietHoursStartMinutes(minutes: Int) = store.edit { it[quietHoursStartMinutesKey] = minutes.coerceIn(0, 1439) }
+        suspend fun setQuietHoursStartMinutes(minutes: Int) =
+            store.edit {
+                it[quietHoursStartMinutesKey] =
+                    minutes.coerceIn(0, 1439)
+            }
 
-        suspend fun setQuietHoursEndMinutes(minutes: Int) = store.edit { it[quietHoursEndMinutesKey] = minutes.coerceIn(0, 1439) }
+        suspend fun setQuietHoursEndMinutes(minutes: Int) =
+            store.edit {
+                it[quietHoursEndMinutesKey] =
+                    minutes.coerceIn(0, 1439)
+            }
 
         /**
          * Serializes every exportable preference to JSON (#15) — deliberately app-preferences-only:

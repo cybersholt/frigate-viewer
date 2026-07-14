@@ -96,28 +96,33 @@ fun SettingsScreen(
 
     LaunchedEffect(headerHeight.value, maxHeaderHeightPx) {
         collapseFraction =
-            1f - ((headerHeight.value - minHeaderHeightPx) / (maxHeaderHeightPx - minHeaderHeightPx))
+            1f -
+            ((headerHeight.value - minHeaderHeightPx) / (maxHeaderHeightPx - minHeaderHeightPx))
                 .coerceIn(0f, 1f)
     }
 
-    val nestedScrollConnection = remember {
-        object : NestedScrollConnection {
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                val delta = available.y
-                val isScrollingDown = delta < 0
-                if (!isScrollingDown && scrollState.value > 0) return Offset.Zero
+    val nestedScrollConnection =
+        remember {
+            object : NestedScrollConnection {
+                override fun onPreScroll(
+                    available: Offset,
+                    source: NestedScrollSource,
+                ): Offset {
+                    val delta = available.y
+                    val isScrollingDown = delta < 0
+                    if (!isScrollingDown && scrollState.value > 0) return Offset.Zero
 
-                val previousHeight = headerHeight.value
-                val newHeight = (previousHeight + delta).coerceIn(minHeaderHeightPx, maxHeaderHeightPx)
-                val consumed = newHeight - previousHeight
-                if (consumed.roundToInt() != 0) {
-                    scope.launch { headerHeight.snapTo(newHeight) }
+                    val previousHeight = headerHeight.value
+                    val newHeight = (previousHeight + delta).coerceIn(minHeaderHeightPx, maxHeaderHeightPx)
+                    val consumed = newHeight - previousHeight
+                    if (consumed.roundToInt() != 0) {
+                        scope.launch { headerHeight.snapTo(newHeight) }
+                    }
+                    val canConsumeScroll = !(isScrollingDown && newHeight == minHeaderHeightPx)
+                    return if (canConsumeScroll) Offset(0f, consumed) else Offset.Zero
                 }
-                val canConsumeScroll = !(isScrollingDown && newHeight == minHeaderHeightPx)
-                return if (canConsumeScroll) Offset(0f, consumed) else Offset.Zero
             }
         }
-    }
 
     LaunchedEffect(scrollState.isScrollInProgress) {
         if (!scrollState.isScrollInProgress) {
@@ -144,10 +149,11 @@ fun SettingsScreen(
             val activeServerName = state.servers.find { it.id == state.activeId }?.name
             Card(
                 shape = MaterialTheme.shapes.extraLarge,
-                colors = CardDefaults.cardColors(
-                    containerColor = cs.surfaceVariant.copy(alpha = 0.3f)
-                ),
-                modifier = Modifier.fillMaxWidth()
+                colors =
+                    CardDefaults.cardColors(
+                        containerColor = cs.surfaceVariant.copy(alpha = 0.3f),
+                    ),
+                modifier = Modifier.fillMaxWidth(),
             ) {
                 Column {
                     SettingsNavRow(
@@ -158,7 +164,10 @@ fun SettingsScreen(
                         subtitle = activeServerName ?: "No server configured",
                         onClick = { onNavigate(SettingsRoutes.SERVERS) },
                     )
-                    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = cs.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(
+                        Modifier.padding(horizontal = 16.dp),
+                        color = cs.outlineVariant.copy(alpha = 0.5f),
+                    )
                     SettingsNavRow(
                         icon = Icons.Filled.Palette,
                         iconTint = cs.onSecondaryContainer,
@@ -167,7 +176,10 @@ fun SettingsScreen(
                         subtitle = "Themes, layout, and visual styles",
                         onClick = { onNavigate(SettingsRoutes.APPEARANCE) },
                     )
-                    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = cs.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(
+                        Modifier.padding(horizontal = 16.dp),
+                        color = cs.outlineVariant.copy(alpha = 0.5f),
+                    )
                     SettingsNavRow(
                         icon = Icons.Filled.GridView,
                         iconTint = cs.onTertiaryContainer,
@@ -176,7 +188,10 @@ fun SettingsScreen(
                         subtitle = "Grid layout, refresh, bounding boxes",
                         onClick = { onNavigate(SettingsRoutes.CAMERAS_VIEW) },
                     )
-                    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = cs.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(
+                        Modifier.padding(horizontal = 16.dp),
+                        color = cs.outlineVariant.copy(alpha = 0.5f),
+                    )
                     SettingsNavRow(
                         icon = Icons.Filled.PlayCircle,
                         iconTint = cs.onPrimaryContainer,
@@ -185,7 +200,10 @@ fun SettingsScreen(
                         subtitle = "Live stream type, sub stream",
                         onClick = { onNavigate(SettingsRoutes.STREAMING) },
                     )
-                    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = cs.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(
+                        Modifier.padding(horizontal = 16.dp),
+                        color = cs.outlineVariant.copy(alpha = 0.5f),
+                    )
                     SettingsNavRow(
                         icon = Icons.AutoMirrored.Filled.EventNote,
                         iconTint = cs.onSecondaryContainer,
@@ -194,7 +212,10 @@ fun SettingsScreen(
                         subtitle = "Grid, photo preference, date format",
                         onClick = { onNavigate(SettingsRoutes.EVENTS) },
                     )
-                    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = cs.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(
+                        Modifier.padding(horizontal = 16.dp),
+                        color = cs.outlineVariant.copy(alpha = 0.5f),
+                    )
                     SettingsNavRow(
                         icon = Icons.Filled.Notifications,
                         iconTint = cs.onTertiaryContainer,
@@ -202,7 +223,10 @@ fun SettingsScreen(
                         title = "Notifications",
                         onClick = { onNavigate(SettingsRoutes.NOTIFICATIONS) },
                     )
-                    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = cs.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(
+                        Modifier.padding(horizontal = 16.dp),
+                        color = cs.outlineVariant.copy(alpha = 0.5f),
+                    )
                     SettingsNavRow(
                         icon = Icons.Filled.SettingsBackupRestore,
                         iconTint = cs.onSecondaryContainer,
@@ -211,7 +235,10 @@ fun SettingsScreen(
                         subtitle = "Export/import app preferences",
                         onClick = { onNavigate(SettingsRoutes.BACKUP) },
                     )
-                    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = cs.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(
+                        Modifier.padding(horizontal = 16.dp),
+                        color = cs.outlineVariant.copy(alpha = 0.5f),
+                    )
                     SettingsNavRow(
                         icon = Icons.Filled.Build,
                         iconTint = cs.onSecondaryContainer,
@@ -220,7 +247,10 @@ fun SettingsScreen(
                         subtitle = "System stats",
                         onClick = { onNavigate(SettingsRoutes.ADVANCED) },
                     )
-                    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = cs.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(
+                        Modifier.padding(horizontal = 16.dp),
+                        color = cs.outlineVariant.copy(alpha = 0.5f),
+                    )
                     SettingsNavRow(
                         icon = Icons.Filled.BugReport,
                         iconTint = cs.onSecondaryContainer,
@@ -228,7 +258,10 @@ fun SettingsScreen(
                         title = "Developer Options",
                         onClick = { onNavigate(SettingsRoutes.DEVELOPER_OPTIONS) },
                     )
-                    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = cs.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(
+                        Modifier.padding(horizontal = 16.dp),
+                        color = cs.outlineVariant.copy(alpha = 0.5f),
+                    )
                     SettingsNavRow(
                         icon = Icons.Filled.Info,
                         iconTint = cs.onPrimaryContainer,
@@ -247,7 +280,7 @@ fun SettingsScreen(
                 .fillMaxWidth()
                 .height(currentHeaderHeightDp)
                 .background(MaterialTheme.colorScheme.background.copy(alpha = surfaceAlpha))
-                .zIndex(5f)
+                .zIndex(5f),
         ) {
             Box(Modifier.fillMaxSize().statusBarsPadding()) {
                 val titlePaddingStart = 20.dp
@@ -257,17 +290,18 @@ fun SettingsScreen(
                 Box(
                     Modifier
                         .align(BiasAlignment(horizontalBias = -1f, verticalBias = titleVerticalBias))
-                        .padding(start = titlePaddingStart)
+                        .padding(start = titlePaddingStart),
                 ) {
                     Text(
                         text = "Settings",
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.ExtraBold,
-                        modifier = Modifier.graphicsLayer {
-                            scaleX = titleScale
-                            scaleY = titleScale
-                            transformOrigin = TransformOrigin(0f, 0.5f)
-                        }
+                        modifier =
+                            Modifier.graphicsLayer {
+                                scaleX = titleScale
+                                scaleY = titleScale
+                                transformOrigin = TransformOrigin(0f, 0.5f)
+                            },
                     )
                 }
             }

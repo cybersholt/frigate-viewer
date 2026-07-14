@@ -81,7 +81,9 @@ class FrigateRepository
             limit: Int = 50,
         ): ApiResult<List<FrigateEvent>> {
             val api = api() ?: return ApiResult.NetworkError(IllegalStateException("No active server"))
-            return safeApiCall { api.events(camera = camera, label = label, zone = zone, after = after, before = before, limit = limit) }
+            return safeApiCall {
+                api.events(camera = camera, label = label, zone = zone, after = after, before = before, limit = limit)
+            }
         }
 
         suspend fun event(id: String): ApiResult<FrigateEvent> {
@@ -169,7 +171,16 @@ class FrigateRepository
                 }
 
                 else -> {
-                    when (val result = safeApiCall { api.previewClip(camera = camera, startTs = startTs, endTs = endTs) }) {
+                    when (
+                        val result =
+                            safeApiCall {
+                                api.previewClip(
+                                    camera = camera,
+                                    startTs = startTs,
+                                    endTs = endTs,
+                                )
+                            }
+                    ) {
                         is ApiResult.Success -> {
                             // Large MP4 bytes must be read on IO, not the caller's thread (Main).
                             withContext(Dispatchers.IO) {
@@ -196,7 +207,9 @@ class FrigateRepository
                 }
             }
 
-        suspend fun go2rtcStreams(forceRefresh: Boolean = false): ApiResult<Map<String, kotlinx.serialization.json.JsonElement>> {
+        suspend fun go2rtcStreams(
+            forceRefresh: Boolean = false,
+        ): ApiResult<Map<String, kotlinx.serialization.json.JsonElement>> {
             if (!forceRefresh && cachedStreams != null) return ApiResult.Success(cachedStreams!!)
             val api = api() ?: return ApiResult.NetworkError(IllegalStateException("No active server"))
             return safeApiCall { api.go2rtcStreams() }.also {

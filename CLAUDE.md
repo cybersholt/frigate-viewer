@@ -82,7 +82,8 @@ Native Android client for Frigate NVR. Rewritten in Kotlin to fix the JSON-parse
 ./gradlew :app:assembleRelease        build signed release (needs keystore.properties)
 ./gradlew :app:testDebugUnitTest      unit tests
 ./gradlew :app:lintDebug              Android lint
-./gradlew ktlintCheck                 style (when ktlint plugin added)
+./gradlew ktlintCheck                 style check (ktlint CLI; rules in .editorconfig)
+./gradlew ktlintFormat                auto-fix style violations
 ```
 
 ## Branches

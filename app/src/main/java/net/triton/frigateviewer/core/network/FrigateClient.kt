@@ -124,7 +124,11 @@ class FrigateClient
             } catch (e: Exception) {
                 // If the URL is malformed, we log it and avoid crashing the whole app.
                 // The user can then at least open settings and fix it.
-                android.util.Log.e("FrigateClient", "Failed to create API for server ${server.id} with URL $effectiveUrl", e)
+                android.util.Log.e(
+                    "FrigateClient",
+                    "Failed to create API for server ${server.id} with URL $effectiveUrl",
+                    e,
+                )
             }
         }
 

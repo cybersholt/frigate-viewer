@@ -9,6 +9,32 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
+// ktlint via the CLI rather than the Gradle plugin: ktlint-gradle discovers sources through the
+// `org.jetbrains.kotlin.android` plugin, which AGP 9's built-in Kotlin doesn't apply — so the plugin
+// silently lints only *.kts and reports green. Driving the CLI keeps the check honest.
+val ktlint: Configuration by configurations.creating
+
+dependencies {
+    ktlint(libs.ktlint.cli)
+}
+
+tasks.register<JavaExec>("ktlintCheck") {
+    group = "verification"
+    description = "Check Kotlin code style."
+    classpath = ktlint
+    mainClass.set("com.pinterest.ktlint.Main")
+    args("src/**/*.kt", "**/*.kts", "!**/build/**")
+}
+
+tasks.register<JavaExec>("ktlintFormat") {
+    group = "formatting"
+    description = "Auto-fix Kotlin code style violations."
+    classpath = ktlint
+    mainClass.set("com.pinterest.ktlint.Main")
+    args("-F", "src/**/*.kt", "**/*.kts", "!**/build/**")
+    jvmArgs("--add-opens=java.base/java.lang=ALL-UNNAMED")
+}
+
 // Signing config loaded from keystore.properties (gitignored).
 val keystoreProps =
     Properties().apply {

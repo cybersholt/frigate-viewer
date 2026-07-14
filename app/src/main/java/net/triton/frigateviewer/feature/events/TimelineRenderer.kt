@@ -248,6 +248,11 @@ internal fun DrawScope.drawActivityTimeline(
         }
     drawIntoCanvas { canvas ->
         canvas.nativeCanvas.drawRoundRect(pillLeft, pillTop, pillLeft + pillW, pillTop + pillH, 8f, 8f, bgPaint)
-        canvas.nativeCanvas.drawText(pillText, pillLeft + pillPad, pillTop + pillPad + pillPaint.textSize * 0.85f, pillPaint)
+        canvas.nativeCanvas.drawText(
+            pillText,
+            pillLeft + pillPad,
+            pillTop + pillPad + pillPaint.textSize * 0.85f,
+            pillPaint,
+        )
     }
 }

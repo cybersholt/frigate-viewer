@@ -194,6 +194,14 @@ Accessed via any event card; flag icon top-right cycles views:
 
 - Camera tap action setting (open stream vs open event list).
 - MQTT / notification service polish.
-- Push notification deep-link to event detail.
+- Push notification deep-link to event detail — **end-to-end from Home Assistant is the real target and is
+  unverified.** Notifications in practice come from HA, not from this app's MQTT service. The *receiving* half
+  is built: `AndroidManifest.xml` declares the `frigateviewer://` intent filter and
+  `MainActivity.resolveDeepLink()` parses `frigateviewer://event?id=<id>&camera=<cam>` (with an extras fallback
+  for HA's `intent://` wrapping). What's missing is the HA-side notification config and a live test proving a
+  tapped HA notification lands on the right event.
+  - Separately, the app's own `MqttForegroundService` notification cannot deep-link even in principle: it builds
+    an explicit `Intent(MainActivity)` with the extra `event_id`, while `resolveDeepLink()` reads a
+    `frigateviewer://` data URI or extras named `camera`/`id`. Key mismatch → resolves to `null` → default tab.
 - Multiple server support in the camera grid.
 - Persist `score` field in `CachedEvent` (requires Room migration).

@@ -48,7 +48,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -58,7 +57,6 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.materialkolor.PaletteStyle
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.launch
 import net.triton.frigateviewer.core.crash.CrashReportStore
 import net.triton.frigateviewer.core.data.UserSettingsRepository
 import net.triton.frigateviewer.feature.cameras.CamerasScreen
@@ -231,7 +229,14 @@ private val tabs = listOf(Dest.Cameras, Dest.Events, Dest.Settings)
 // Route with an optional camera to auto-focus (live?camera= deep links land here)
 private const val CAMERAS_ROUTE = "cameras?camera={camera}"
 
-private fun camerasRouteWith(camera: String? = null): String = if (camera != null) "cameras?camera=$camera" else "cameras"
+private fun camerasRouteWith(camera: String? = null): String =
+    if (camera !=
+        null
+    ) {
+        "cameras?camera=$camera"
+    } else {
+        "cameras"
+    }
 
 // Route for events with optional filter query params
 private const val EVENTS_ROUTE = "events?camera={camera}&label={label}&zone={zone}"
@@ -412,10 +417,14 @@ private fun AppRoot(
                 composable(SettingsRoutes.CAMERAS_VIEW) { CamerasViewSettingsScreen(onBack = { nav.popBackStack() }) }
                 composable(SettingsRoutes.STREAMING) { StreamingSettingsScreen(onBack = { nav.popBackStack() }) }
                 composable(SettingsRoutes.EVENTS) { EventsSettingsScreen(onBack = { nav.popBackStack() }) }
-                composable(SettingsRoutes.NOTIFICATIONS) { NotificationsSettingsScreen(onBack = { nav.popBackStack() }) }
+                composable(
+                    SettingsRoutes.NOTIFICATIONS,
+                ) { NotificationsSettingsScreen(onBack = { nav.popBackStack() }) }
                 composable(SettingsRoutes.BACKUP) { BackupSettingsScreen(onBack = { nav.popBackStack() }) }
                 composable(SettingsRoutes.ADVANCED) { AdvancedSettingsScreen(onBack = { nav.popBackStack() }) }
-                composable(SettingsRoutes.DEVELOPER_OPTIONS) { DeveloperOptionsSettingsScreen(onBack = { nav.popBackStack() }) }
+                composable(
+                    SettingsRoutes.DEVELOPER_OPTIONS,
+                ) { DeveloperOptionsSettingsScreen(onBack = { nav.popBackStack() }) }
                 composable(SettingsRoutes.ABOUT) { AboutSettingsScreen(onBack = { nav.popBackStack() }) }
                 composable("event/{id}") { entry ->
                     val id = entry.arguments?.getString("id") ?: return@composable

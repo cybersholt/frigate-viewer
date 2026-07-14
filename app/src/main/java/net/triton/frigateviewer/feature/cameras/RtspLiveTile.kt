@@ -224,7 +224,10 @@ fun RtspLiveTile(
         if (reason == StreamError.RTSP_UNSUPPORTED) {
             // Not a failure to retry or to surface as "offline": the stream is simply unplayable by
             // ExoPlayer's RTSP stack. Hand it back to the caller, which re-runs this camera on WebRTC.
-            Log.w(TAG, "RTSP unplayable (no sprop-parameter-sets in SDP) for ${maskRtspUrl(url)} — falling back to WebRTC")
+            Log.w(
+                TAG,
+                "RTSP unplayable (no sprop-parameter-sets in SDP) for ${maskRtspUrl(url)} — falling back to WebRTC",
+            )
             liveState = LiveStreamState.Error(reason)
             onRtspUnsupported()
             return
@@ -254,7 +257,10 @@ fun RtspLiveTile(
             delay(500)
             elapsed += 500
             val s = liveState
-            if (s !is LiveStreamState.Connecting && s !is LiveStreamState.Negotiating && s !is LiveStreamState.Buffering) {
+            if (s !is LiveStreamState.Connecting &&
+                s !is LiveStreamState.Negotiating &&
+                s !is LiveStreamState.Buffering
+            ) {
                 break
             }
             if (elapsed >= 20_000) {
@@ -301,7 +307,11 @@ fun RtspLiveTile(
                         }
 
                         override fun onPlayerError(e: PlaybackException) {
-                            Log.e(TAG, "[DEBUG-RTSP] Error on ${maskRtspUrl(url)}: code=${e.errorCode} — ${e.message}", e)
+                            Log.e(
+                                TAG,
+                                "[DEBUG-RTSP] Error on ${maskRtspUrl(url)}: code=${e.errorCode} — ${e.message}",
+                                e,
+                            )
                             e.cause?.let { cause ->
                                 Log.e(TAG, "[DEBUG-RTSP]   caused by: ${cause.javaClass.simpleName}: ${cause.message}")
                             }

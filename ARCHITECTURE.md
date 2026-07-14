@@ -2,7 +2,7 @@
 
 ## Stack
 
-- Kotlin 2.1, AGP 8.10, JDK 17
+- Kotlin 2.3.10, AGP 9.2.1, JDK 17 (Android Studio JBR — see `CLAUDE.md` › Build Environment)
 - Jetpack Compose (Material 3), Compose BOM 2026.05
 - Hilt DI
 - Coroutines + StateFlow
@@ -13,7 +13,7 @@
 - stream-webrtc-android for low-latency focused tile (v0.2)
 - HiveMQ MQTT client for push (v0.2)
 - Coil 3 for image loading
-- min SDK 26, target SDK 35
+- min SDK 26, target SDK 36 (compile SDK 36)
 
 ## Module layout (single `:app` module for v0.1, will split when it grows)
 
@@ -32,14 +32,14 @@ net.triton.frigateviewer
 │   │   ├── TokenRefreshAuth  OkHttp Authenticator for 401 → re-login retry
 │   │   └── TrustConfig       Per-host pinned cert from user-imported PEM
 │   └── data/
-│       ├── Server            Persistent server configxcdf
-│       ├── ServerRepository  DataStore-backed CRUD + active selectionxcdf
-│       ├── CredentialStore   Tink AEAD secrets, Android Keystore-wrappedxcdf
-│       └── FrigateRepository Single entry point for ViewModelsxcdf
-├── feature/xcdf
-│   ├── cameras/              CamerasScreen + ViewModel + LivePlayerxcdf
-│   ├── events/               EventsScreen + ViewModelxcdf
-│   └── settings/             SettingsScreen + ViewModel + ServerFormSheetxcdf
+│       ├── Server            Persistent server config
+│       ├── ServerRepository  DataStore-backed CRUD + active selection
+│       ├── CredentialStore   Tink AEAD secrets, Android Keystore-wrapped
+│       └── FrigateRepository Single entry point for ViewModels
+├── feature/
+│   ├── cameras/              CamerasScreen + ViewModel + LivePlayer
+│   ├── events/               EventsScreen + ViewModel
+│   └── settings/             SettingsScreen + ViewModel + ServerFormSheet
 └── notification/             MqttForegroundService
 ```
 

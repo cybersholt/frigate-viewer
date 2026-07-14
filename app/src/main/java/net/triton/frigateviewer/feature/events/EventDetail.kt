@@ -64,7 +64,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -76,7 +75,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -87,8 +85,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -131,6 +132,8 @@ import java.util.Locale
 import javax.inject.Inject
 
 /** Half-width of the preview-clip fetch window on either side of a scrubbed time. */
+private const val TAG = "EventDetail"
+
 internal const val PREVIEW_FRAME_WINDOW_HALF_MS = 90_000L
 
 enum class EventDetailView { TIMELINE, EVENTS, DETAIL }
@@ -180,6 +183,9 @@ data class EventDetailUiState(
     /** Physical recording segments for the current chunk — drives seek math (VodSeekUtil). */
     val recordings: List<net.triton.frigateviewer.core.model.RecordingSegment> = emptyList(),
     val recordingsLoading: Boolean = false,
+    // Whether this event's camera has audio configured in Frigate. Gates the player's mute button,
+    // matching the live tiles (which read the same `audio.enabled` flag).
+    val audioEnabled: Boolean = false,
 )
 
 @HiltViewModel
@@ -191,6 +197,38 @@ class EventDetailViewModel
     ) : ViewModel() {
         private val _state = MutableStateFlow(EventDetailUiState())
         val state = _state.asStateFlow()
+
+        /**
+         * Resolves whether [camera] has audio configured, to decide if the player shows a mute
+         * button at all. A failure here is not worth surfacing to the user — it only means we
+         * fall back to hiding the control — but it is logged rather than silently swallowed.
+         */
+        private suspend fun loadCameraAudio(camera: String) {
+            val enabled =
+                when (val r = repo.config()) {
+                    is ApiResult.Success -> {
+                        r.data.cameras[camera]
+                            ?.audio
+                            ?.enabled == true
+                    }
+
+                    is ApiResult.HttpError -> {
+                        Log.w(TAG, "audio config unavailable for $camera: HTTP ${r.code}")
+                        false
+                    }
+
+                    is ApiResult.NetworkError -> {
+                        Log.w(TAG, "audio config unavailable for $camera: network", r.cause)
+                        false
+                    }
+
+                    is ApiResult.ParseError -> {
+                        Log.w(TAG, "audio config unavailable for $camera: parse", r.cause)
+                        false
+                    }
+                }
+            _state.value = _state.value.copy(audioEnabled = enabled)
+        }
 
         fun load(id: String) {
             viewModelScope.launch {
@@ -218,6 +256,7 @@ class EventDetailViewModel
                                 viewEndMs = initialViewEnd,
                                 selectedView = EventDetailViewPrefs.selected,
                             )
+                        loadCameraAudio(ev.camera)
                         loadCameraEvents()
                         loadRecordingsForTime(evStartMs)
                         loadTimelineData()
@@ -739,6 +778,7 @@ fun EventDetailScreen(
                             okHttpClient = okHttpClient!!,
                             seekSeconds = seekSeconds ?: 0.0,
                             onEnded = vm::advanceToNextChunk,
+                            audioEnabled = state.audioEnabled,
                             modifier = Modifier.fillMaxSize(),
                         )
                     } else if (state.recordingsLoading) {
@@ -984,7 +1024,11 @@ private fun EventDetailTimeline(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text("${annotationOffset.toInt()}", style = MaterialTheme.typography.bodySmall, modifier = Modifier.width(36.dp))
+                    Text(
+                        "${annotationOffset.toInt()}",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.width(36.dp),
+                    )
                     Slider(
                         value = annotationOffset,
                         onValueChange = { annotationOffset = it },
@@ -1030,12 +1074,23 @@ private fun EventDetailTimeline(
                     val objectCount = (ev.zones.size + 1).coerceAtLeast(1)
                     val subEvents =
                         buildList {
-                            add("${ev.label.replaceFirstChar { it.uppercase() }} detected" to fmtShortTime(ev.startTime))
+                            add(
+                                "${ev.label.replaceFirstChar { it.uppercase() }} detected" to
+                                    fmtShortTime(
+                                        ev.startTime,
+                                    ),
+                            )
                             ev.zones.forEach { zone ->
                                 val zoneName = zone.replace('_', ' ').replaceFirstChar { it.uppercase() }
-                                add("${ev.label.replaceFirstChar { it.uppercase() }} entered $zoneName" to fmtShortTime(ev.startTime + 1.0))
+                                add(
+                                    "${ev.label.replaceFirstChar { it.uppercase() }} entered $zoneName" to
+                                        fmtShortTime(ev.startTime + 1.0),
+                                )
                             }
-                            add("${ev.label.replaceFirstChar { it.uppercase() }} left" to fmtShortTime(ev.endTime ?: (ev.startTime + 30.0)))
+                            add(
+                                "${ev.label.replaceFirstChar { it.uppercase() }} left" to
+                                    fmtShortTime(ev.endTime ?: (ev.startTime + 30.0)),
+                            )
                         }
 
                     // ── Event header row ──
@@ -1056,7 +1111,11 @@ private fun EventDetailTimeline(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Box(Modifier.size(10.dp).background(Color(0xFFE53935), CircleShape))
-                        Text(fmtShortTime(ev.startTime), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            fmtShortTime(ev.startTime),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
                         Icon(Icons.Filled.Person, contentDescription = null, modifier = Modifier.size(16.dp))
                         Text(
                             "$objectCount object${if (objectCount != 1) "s" else ""} · ${durationSecs}s",
@@ -1104,9 +1163,16 @@ private fun EventDetailTimeline(
                                             .padding(
                                                 start = 4.dp,
                                             ).size(6.dp)
-                                            .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.6f), CircleShape),
+                                            .background(
+                                                MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
+                                                CircleShape,
+                                            ),
                                     )
-                                    Text(label, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                                    Text(
+                                        label,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.weight(1f),
+                                    )
                                     Text(
                                         time,
                                         style = MaterialTheme.typography.labelSmall,
@@ -1148,9 +1214,11 @@ private fun RecordingPlayer(
     okHttpClient: okhttp3.OkHttpClient,
     seekSeconds: Double = 0.0,
     onEnded: () -> Unit = {},
+    audioEnabled: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val view = LocalView.current
     val fullScreen = LocalFullScreenMode.current
 
     var isPlaying by remember { mutableStateOf(true) }
@@ -1186,6 +1254,22 @@ private fun RecordingPlayer(
                     playWhenReady = true
                 }
         }
+
+    // Fullscreen playback letterboxes the video against black. Leaving the status bar up means its
+    // icons keep the app theme's tint — black-on-black, i.e. invisible, in light mode. The live
+    // tiles solve this by hiding the system bars outright in fullscreen; do the same here.
+    DisposableEffect(fullScreen.value) {
+        val window = (context as? Activity)?.window ?: return@DisposableEffect onDispose {}
+        val controller = WindowInsetsControllerCompat(window, view)
+        if (fullScreen.value) {
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        } else {
+            controller.show(WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose { controller.show(WindowInsetsCompat.Type.systemBars()) }
+    }
 
     LaunchedEffect(fullScreen.value) {
         val activity = context as? Activity
@@ -1362,13 +1446,19 @@ private fun RecordingPlayer(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(onClick = { player.volume = if (isMuted) 1f else 0f }) {
-                    Icon(
-                        if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
-                        contentDescription = if (isMuted) "Unmute" else "Mute",
-                        tint = Color.White,
-                        modifier = Modifier.size(22.dp),
-                    )
+                if (audioEnabled) {
+                    IconButton(onClick = { player.volume = if (isMuted) 1f else 0f }) {
+                        Icon(
+                            if (isMuted) {
+                                Icons.AutoMirrored.Filled.VolumeOff
+                            } else {
+                                Icons.AutoMirrored.Filled.VolumeUp
+                            },
+                            contentDescription = if (isMuted) "Unmute" else "Mute",
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
                 }
                 IconButton(onClick = { player.seekTo((player.currentPosition - 10_000).coerceAtLeast(0)) }) {
                     Icon(Icons.Filled.Replay10, "Rewind 10s", tint = Color.White, modifier = Modifier.size(22.dp))
@@ -1390,7 +1480,13 @@ private fun RecordingPlayer(
                 Box {
                     IconButton(onClick = { showSpeedMenu = true }) {
                         Text(
-                            if (playbackSpeed == playbackSpeed.toInt().toFloat()) "${playbackSpeed.toInt()}x" else "${playbackSpeed}x",
+                            if (playbackSpeed ==
+                                playbackSpeed.toInt().toFloat()
+                            ) {
+                                "${playbackSpeed.toInt()}x"
+                            } else {
+                                "${playbackSpeed}x"
+                            },
                             color = Color.White,
                             style = MaterialTheme.typography.labelMedium,
                         )

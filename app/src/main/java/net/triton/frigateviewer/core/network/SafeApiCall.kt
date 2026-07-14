@@ -32,9 +32,10 @@ suspend fun <T> safeApiCall(block: suspend () -> Response<T>): ApiResult<T> =
                 ApiResult.ParseError(IllegalStateException("Empty body on ${response.raw().request.url}"))
             }
         } else {
-            val raw = withContext(Dispatchers.IO) {
-                runCatching { response.errorBody()?.string() }.getOrNull()
-            }
+            val raw =
+                withContext(Dispatchers.IO) {
+                    runCatching { response.errorBody()?.string() }.getOrNull()
+                }
             ApiResult.HttpError(code = response.code(), message = response.message(), rawBody = raw)
         }
     } catch (ce: CancellationException) {
