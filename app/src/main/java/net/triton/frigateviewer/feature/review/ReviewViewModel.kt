@@ -16,21 +16,47 @@ import javax.inject.Inject
 
 private const val TAG = "ReviewViewModel"
 
-/** How far back the feed looks. Frigate's own review UI is a "what happened recently" surface. */
+/** How much history the feed loads. Frigate's review UI is a "what happened recently" surface. */
 private const val WINDOW_HOURS = 24
 
 data class ReviewUiState(
     val loading: Boolean = true,
     val error: String? = null,
     val baseUrl: String? = null,
-    /** Segments matching [severity], newest first — what the grid renders. */
+    /** Segments passing every active filter, newest first — what the grid and the rail render. */
     val segments: List<ReviewSegment> = emptyList(),
-    /** Every segment in the window, regardless of severity. Backs the counts and the rail. */
+    /** Everything in the loaded window. Backs the header counts, which ignore the filters. */
     val allSegments: List<ReviewSegment> = emptyList(),
-    val severity: Severity = Severity.ALERT,
+    // ── filters ──
+    val severities: Set<Severity> = setOf(Severity.ALERT),
+    val selectedCameras: Set<String> = emptySet(),
+    val selectedLabels: Set<String> = emptySet(),
+    val selectedZones: Set<String> = emptySet(),
+    /** When false, segments Frigate has flagged `has_been_reviewed` are hidden. */
+    val showReviewed: Boolean = true,
+    // ── timeline ──
+    val scrubberTimeMs: Long = System.currentTimeMillis(),
+    // The *fetch* window is WINDOW_HOURS (all 130-ish segments load regardless). This is only the
+    // initial *render* zoom of the rail — Frigate's own timeline is a tall virtualized strip you
+    // scroll through at a fixed pixel-per-second rate; ours squeezes whatever range is selected
+    // into a fixed height instead, so starting at the full 24h squashes every pill to a sliver.
+    // Starting dense (recent activity, clearly visible pills) and letting zoom-out reach the full
+    // day is the cheap approximation of that without a scrollable-strip rewrite.
+    val timeRangeHours: Float = 2f,
 ) {
+    // Counts describe the window, not the current filter — they're the thing you filter *with*.
     val alertCount: Int get() = allSegments.count { it.severityType == Severity.ALERT }
     val detectionCount: Int get() = allSegments.count { it.severityType == Severity.DETECTION }
+
+    /** Filter options are derived from the loaded data, so they only ever offer what exists. */
+    val availableCameras: List<String> get() = allSegments.map { it.camera }.distinct().sorted()
+    val availableLabels: List<String> get() = allSegments.flatMap { it.data.objects }.distinct().sorted()
+    val availableZones: List<String> get() = allSegments.flatMap { it.data.zones }.distinct().sorted()
+
+    val activeFilterCount: Int
+        get() =
+            selectedCameras.size + selectedLabels.size + selectedZones.size +
+                (if (showReviewed) 0 else 1)
 }
 
 @HiltViewModel
@@ -47,8 +73,42 @@ class ReviewViewModel
             refresh()
         }
 
-        fun setSeverity(severity: Severity) {
-            _state.value = _state.value.copy(severity = severity).withFilterApplied()
+        fun toggleSeverity(severity: Severity) =
+            update {
+                val next =
+                    if (severity in it.severities) it.severities - severity else it.severities + severity
+                // Empty would mean "show nothing", which reads as a broken screen rather than a
+                // filter. Refuse to clear the last one.
+                it.copy(severities = next.ifEmpty { it.severities })
+            }
+
+        fun toggleCamera(camera: String) = update { it.copy(selectedCameras = it.selectedCameras.toggle(camera)) }
+
+        fun toggleLabel(label: String) = update { it.copy(selectedLabels = it.selectedLabels.toggle(label)) }
+
+        fun toggleZone(zone: String) = update { it.copy(selectedZones = it.selectedZones.toggle(zone)) }
+
+        fun setShowReviewed(show: Boolean) = update { it.copy(showReviewed = show) }
+
+        /** Clears every filter except severity, which always has at least one member. */
+        fun resetFilters() =
+            update {
+                it.copy(
+                    selectedCameras = emptySet(),
+                    selectedLabels = emptySet(),
+                    selectedZones = emptySet(),
+                    showReviewed = true,
+                    severities = setOf(Severity.ALERT),
+                )
+            }
+
+        fun setScrubberTime(timeMs: Long) {
+            _state.value = _state.value.copy(scrubberTimeMs = timeMs)
+        }
+
+        fun zoomTimeline(factor: Float) {
+            val next = (_state.value.timeRangeHours * factor).coerceIn(1f, WINDOW_HOURS.toFloat())
+            _state.value = _state.value.copy(timeRangeHours = next)
         }
 
         fun refresh() {
@@ -58,10 +118,10 @@ class ReviewViewModel
                 val nowSec = System.currentTimeMillis() / 1000.0
                 val afterSec = nowSec - WINDOW_HOURS * 3600
 
-                // Leave `reviewed` unset: it is a *filter*, not an include-flag. `reviewed=1`
-                // returns ONLY already-reviewed items (verified live — it returned 2 of 130),
-                // and `reviewed=0` only unreviewed ones. Omitting it returns both, which is what
-                // a feed showing counts of "everything that happened" needs.
+                // `reviewed` is deliberately NOT sent: it is a *filter*, not an include-flag —
+                // `reviewed=1` returns ONLY already-reviewed items (verified live: 2 of 130).
+                // We fetch the whole window and filter reviewed/camera/label/zone client-side, so
+                // toggling a filter is instant and never re-hits the network.
                 when (val r = repo.review(after = afterSec, before = nowSec)) {
                     is ApiResult.Success -> {
                         _state.value =
@@ -71,7 +131,7 @@ class ReviewViewModel
                                     error = null,
                                     baseUrl = baseUrl,
                                     allSegments = r.data.sortedByDescending { it.startTime },
-                                ).withFilterApplied()
+                                ).withFilters()
                     }
 
                     is ApiResult.HttpError -> {
@@ -98,6 +158,21 @@ class ReviewViewModel
             _state.value = _state.value.copy(loading = false, error = message, baseUrl = baseUrl)
         }
 
-        private fun ReviewUiState.withFilterApplied(): ReviewUiState =
-            copy(segments = allSegments.filter { it.severityType == severity })
+        private fun update(block: (ReviewUiState) -> ReviewUiState) {
+            _state.value = block(_state.value).withFilters()
+        }
+
+        private fun ReviewUiState.withFilters(): ReviewUiState =
+            copy(
+                segments =
+                    allSegments.filter { seg ->
+                        seg.severityType in severities &&
+                            (showReviewed || !seg.hasBeenReviewed) &&
+                            (selectedCameras.isEmpty() || seg.camera in selectedCameras) &&
+                            (selectedLabels.isEmpty() || seg.data.objects.any { it in selectedLabels }) &&
+                            (selectedZones.isEmpty() || seg.data.zones.any { it in selectedZones })
+                    },
+            )
+
+        private fun Set<String>.toggle(value: String): Set<String> = if (value in this) this - value else this + value
     }

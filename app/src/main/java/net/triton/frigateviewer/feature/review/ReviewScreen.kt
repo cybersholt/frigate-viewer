@@ -1,6 +1,5 @@
 package net.triton.frigateviewer.feature.review
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -8,7 +7,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -16,19 +17,36 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -41,6 +59,9 @@ import net.triton.frigateviewer.core.image.FrigateImage
 import net.triton.frigateviewer.core.model.ReviewSegment
 import net.triton.frigateviewer.core.model.Severity
 import net.triton.frigateviewer.feature.events.EventDetailEntryPoint
+import net.triton.frigateviewer.feature.events.TimelineSeverityAlertColor
+import net.triton.frigateviewer.feature.events.TimelineSeverityDetectionColor
+import net.triton.frigateviewer.feature.events.TimelineSeveritySignificantMotionColor
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -48,8 +69,13 @@ import java.util.Locale
 /**
  * Frigate's "Review" surface: severity-classified segments (alerts vs detections) rather than raw
  * per-object events. One card per [ReviewSegment] — a segment rolls up many detections, so this is
- * a far quieter feed than the Explore list it sits beside.
+ * a far quieter feed than the Explore list beside it.
+ *
+ * The timeline strip is [ReviewSeverityTimeline] — a dedicated component, not Explore's
+ * [net.triton.frigateviewer.feature.events.TimelinePanel]. Frigate's own frontend draws these two
+ * differently (solid severity pills here vs a motion waveform there); see that file's doc.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReviewScreen(
     onOpenEvent: (String) -> Unit = {},
@@ -64,12 +90,48 @@ fun ReviewScreen(
                 .imageLoader()
         }
 
+    val gridState = rememberLazyGridState()
+    var showFilters by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
     Column(Modifier.fillMaxSize()) {
-        SeverityFilterRow(
-            severity = state.severity,
-            alertCount = state.alertCount,
-            detectionCount = state.detectionCount,
-            onSelect = vm::setSeverity,
+        TopAppBar(
+            // The outer Scaffold (MainActivity) already insets NavHost content for the status
+            // bar. TopAppBar's default `windowInsets` reserves that space a SECOND time — the
+            // combination is what pushed this screen's content well below where Cameras/Explore
+            // sit, since neither of those uses its own TopAppBar.
+            windowInsets = WindowInsets(0),
+            title = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SeverityChip(
+                        label = "Alerts",
+                        count = state.alertCount,
+                        color = severityColor(Severity.ALERT),
+                        selected = Severity.ALERT in state.severities,
+                        onClick = { vm.toggleSeverity(Severity.ALERT) },
+                    )
+                    SeverityChip(
+                        label = "Detections",
+                        count = state.detectionCount,
+                        color = severityColor(Severity.DETECTION),
+                        selected = Severity.DETECTION in state.severities,
+                        onClick = { vm.toggleSeverity(Severity.DETECTION) },
+                    )
+                }
+            },
+            actions = {
+                IconButton(onClick = { showFilters = true }) {
+                    BadgedBox(
+                        badge = {
+                            if (state.activeFilterCount > 0) {
+                                Badge { Text("${state.activeFilterCount}") }
+                            }
+                        },
+                    ) {
+                        Icon(Icons.Filled.FilterList, contentDescription = "Filters")
+                    }
+                }
+            },
         )
 
         Row(Modifier.fillMaxSize()) {
@@ -90,7 +152,7 @@ fun ReviewScreen(
 
                     state.segments.isEmpty() -> {
                         Text(
-                            "Nothing to review",
+                            "Nothing matches these filters",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.align(Alignment.Center),
@@ -100,6 +162,7 @@ fun ReviewScreen(
                     else -> {
                         LazyVerticalGrid(
                             columns = GridCells.Fixed(1),
+                            state = gridState,
                             contentPadding = PaddingValues(8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
@@ -120,45 +183,134 @@ fun ReviewScreen(
                 }
             }
 
-            SeverityRail(
-                segments = state.allSegments,
+            ReviewSeverityTimeline(
+                segments = state.segments,
+                scrubberTimeMs = state.scrubberTimeMs,
+                timeRangeHours = state.timeRangeHours,
+                gridState = gridState,
+                onScrub = vm::setScrubberTime,
+                onZoomIn = { vm.zoomTimeline(0.5f) },
+                onZoomOut = { vm.zoomTimeline(2f) },
                 modifier =
                     Modifier
-                        .width(28.dp)
-                        .fillMaxSize(),
+                        .width(64.dp)
+                        .fillMaxHeight(),
             )
+        }
+    }
+
+    if (showFilters) {
+        ModalBottomSheet(
+            onDismissRequest = { showFilters = false },
+            sheetState = sheetState,
+        ) {
+            ReviewFilterSheet(state = state, vm = vm, onClose = { showFilters = false })
         }
     }
 }
 
-/** The red `37` / orange `92` chips from Frigate's review header. Counts come from the loaded window. */
 @Composable
-private fun SeverityFilterRow(
-    severity: Severity,
-    alertCount: Int,
-    detectionCount: Int,
-    onSelect: (Severity) -> Unit,
+private fun ReviewFilterSheet(
+    state: ReviewUiState,
+    vm: ReviewViewModel,
+    onClose: () -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp)
+            .padding(bottom = 24.dp),
+    ) {
+        Text("Filter", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(bottom = 12.dp))
+
+        SwitchRow("Alerts", Severity.ALERT in state.severities) { vm.toggleSeverity(Severity.ALERT) }
+        SwitchRow("Detections", Severity.DETECTION in state.severities) { vm.toggleSeverity(Severity.DETECTION) }
+
+        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+        SwitchRow("Show reviewed", state.showReviewed) { vm.setShowReviewed(it) }
+
+        FilterSection(
+            title = "Cameras",
+            allLabel = "All cameras",
+            options = state.availableCameras,
+            selected = state.selectedCameras,
+            onToggle = vm::toggleCamera,
+        )
+        FilterSection(
+            title = "Labels",
+            allLabel = "All labels",
+            options = state.availableLabels,
+            selected = state.selectedLabels,
+            onToggle = vm::toggleLabel,
+        )
+        FilterSection(
+            title = "Zones",
+            allLabel = "All zones",
+            options = state.availableZones,
+            selected = state.selectedZones,
+            onToggle = vm::toggleZone,
+        )
+
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Button(onClick = onClose, modifier = Modifier.weight(1f)) { Text("Done") }
+            OutlinedButton(onClick = vm::resetFilters, modifier = Modifier.weight(1f)) { Text("Reset") }
+        }
+    }
+}
+
+/**
+ * A filter group. An empty selection *is* "all" — so there's no separate all-toggle to keep in
+ * sync, and the two can never contradict each other. The group hides itself when the loaded window
+ * contains nothing to filter by (e.g. no zones configured).
+ */
+@Composable
+private fun FilterSection(
+    title: String,
+    allLabel: String,
+    options: List<String>,
+    selected: Set<String>,
+    onToggle: (String) -> Unit,
+) {
+    if (options.isEmpty()) return
+
+    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+    Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(vertical = 4.dp))
+    Text(
+        if (selected.isEmpty()) allLabel else "${selected.size} selected",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    options.forEach { option ->
+        SwitchRow(
+            label = option.replaceFirstChar { it.uppercase() },
+            checked = option in selected,
+        ) { onToggle(option) }
+    }
+}
+
+@Composable
+private fun SwitchRow(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
 ) {
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+            .clickable { onCheckedChange(!checked) }
+            .padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        SeverityChip(
-            label = "Alerts",
-            count = alertCount,
-            color = severityColor(Severity.ALERT),
-            selected = severity == Severity.ALERT,
-            onClick = { onSelect(Severity.ALERT) },
-        )
-        SeverityChip(
-            label = "Detections",
-            count = detectionCount,
-            color = severityColor(Severity.DETECTION),
-            selected = severity == Severity.DETECTION,
-            onClick = { onSelect(Severity.DETECTION) },
-        )
+        Text(label, style = MaterialTheme.typography.bodyLarge)
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
@@ -183,11 +335,10 @@ private fun SeverityChip(
 }
 
 /**
- * One review segment. The thumbnail reuses the tracked-object endpoint of the segment's first
- * detection rather than `thumb_path`: `thumb_path` is a server *filesystem* path
- * (`/media/frigate/clips/review/…`) with no documented HTTP route, whereas
- * `api/events/{id}/thumbnail.jpg` is documented and already flows through our authenticated
- * Coil pipeline.
+ * One review segment. The thumbnail resolves through the segment's first detection rather than
+ * `thumb_path`: `thumb_path` is a server *filesystem* path (`/media/frigate/clips/review/…`) with
+ * no documented HTTP route, whereas `api/events/{id}/thumbnail.jpg` is documented and already
+ * flows through our authenticated Coil pipeline.
  */
 @Composable
 private fun ReviewCard(
@@ -256,55 +407,17 @@ private fun ReviewCard(
 }
 
 /**
- * Vertical activity rail: one tick per segment, positioned by time within the loaded window and
- * colored by severity. Deliberately a plain strip, not a scrubber — dragging it to seek belongs to
- * the motion-review mode, which isn't built yet.
+ * Deliberately Frigate's own literal severity hues (dark red / orange / yellow — see
+ * `TimelineSeverity*Color` in the events package), not theme roles. This is the same exception
+ * [net.triton.frigateviewer.feature.events.TimelineRenderer] already documents: severity color
+ * encodes meaning shared with Frigate's own web frontend (chips, cards, calendar dots, the
+ * timeline rail), so it must read the same everywhere rather than following the theme.
  */
-@Composable
-private fun SeverityRail(
-    segments: List<ReviewSegment>,
-    modifier: Modifier = Modifier,
-) {
-    if (segments.isEmpty()) {
-        Box(modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh))
-        return
-    }
-
-    val newest = segments.maxOf { it.startTime }
-    val oldest = segments.minOf { it.startTime }
-    val span = (newest - oldest).takeIf { it > 0.0 } ?: 1.0
-
-    val alertColor = severityColor(Severity.ALERT)
-    val detectionColor = severityColor(Severity.DETECTION)
-    val motionColor = severityColor(Severity.SIGNIFICANT_MOTION)
-
-    Canvas(modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)) {
-        segments.forEach { segment ->
-            // Newest at the top, matching the feed's ordering.
-            val fraction = ((newest - segment.startTime) / span).toFloat()
-            val y = fraction * size.height
-            val color =
-                when (segment.severityType) {
-                    Severity.ALERT -> alertColor
-                    Severity.DETECTION -> detectionColor
-                    Severity.SIGNIFICANT_MOTION -> motionColor
-                }
-            drawRect(
-                color = color,
-                topLeft = Offset(0f, y),
-                size = Size(size.width, 3f),
-            )
-        }
-    }
-}
-
-/** Alerts read as "act on this", detections as "FYI" — mapped to theme roles, not literal colors. */
-@Composable
 private fun severityColor(severity: Severity): Color =
     when (severity) {
-        Severity.ALERT -> MaterialTheme.colorScheme.error
-        Severity.DETECTION -> MaterialTheme.colorScheme.tertiary
-        Severity.SIGNIFICANT_MOTION -> MaterialTheme.colorScheme.outline
+        Severity.ALERT -> TimelineSeverityAlertColor
+        Severity.DETECTION -> TimelineSeverityDetectionColor
+        Severity.SIGNIFICANT_MOTION -> TimelineSeveritySignificantMotionColor
     }
 
 private fun relativeTime(epochSecs: Double): String {

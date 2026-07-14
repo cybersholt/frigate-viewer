@@ -1,4 +1,4 @@
-package net.triton.frigateviewer.feature.events
+package net.triton.frigateviewer.feature.review
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -24,33 +24,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
-import net.triton.frigateviewer.core.model.MotionActivity
-import net.triton.frigateviewer.core.model.RecordingGap
 import net.triton.frigateviewer.core.model.ReviewSegment
+import net.triton.frigateviewer.feature.events.drawSeverityEventTimeline
+import net.triton.frigateviewer.feature.events.rememberTimelinePalette
 
 /**
- * Narrow vertical timeline strip for the Events screen right edge — the same severity-colored
- * motion-activity waveform as [HorizontalTimeline] (Event Detail), just compressed into a
- * sidebar-width strip. Mirrors Frigate's own `MotionReviewTimeline` (Explore/History), not the
- * `/review` page's timeline — that one draws solid severity pills, not a motion waveform; see
- * [net.triton.frigateviewer.feature.review.ReviewSeverityTimeline].
- *
- * Bidirectionally synced with [gridState]: scrolling the events grid moves the scrubber, and
- * tapping/dragging the strip scrolls the grid to the nearest event. The preview-frame thumbnail
- * bubble is rendered by the caller (this strip is too narrow — 64dp — to host a 120dp-wide
- * bubble itself without its size getting coerced down by the parent's width constraint).
+ * Review's vertical severity rail — one rounded pill per visible [ReviewSegment], spanning its
+ * actual start→end time, colored by severity (dimmed once reviewed). Deliberately a different
+ * visual from Explore's [net.triton.frigateviewer.feature.events.TimelinePanel]: Frigate's own
+ * frontend renders these with two separate components (`EventReviewTimeline` here vs
+ * `MotionReviewTimeline` there) because a bucketed motion waveform and a per-item severity bar
+ * answer different questions. See [drawSeverityEventTimeline] for the render logic.
  */
 @Composable
-fun TimelinePanel(
-    /**
-     * Start times (epoch seconds) of whatever the grid is showing, newest first — events on
-     * Explore, review segments on Review. Only used to sync the scrubber with the grid, so the
-     * strip doesn't care what the items actually are.
-     */
-    itemStartTimesSec: List<Double>,
-    reviewSegments: List<ReviewSegment>,
-    recordingGaps: List<RecordingGap>,
-    motionActivity: List<MotionActivity> = emptyList(),
+fun ReviewSeverityTimeline(
+    segments: List<ReviewSegment>,
     scrubberTimeMs: Long,
     timeRangeHours: Float,
     gridState: LazyGridState,
@@ -58,20 +46,16 @@ fun TimelinePanel(
     onZoomIn: () -> Unit,
     onZoomOut: () -> Unit,
     modifier: Modifier = Modifier,
-    onTouchPreview: (Long?) -> Unit = {},
-    onTouchPositionChanged: (Float?) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val nowMs = remember { System.currentTimeMillis() }
     val rangeMs = (timeRangeHours * 3_600_000L).toLong()
     val startMs = nowMs - rangeMs
 
-    // Grid scroll → scrubber: when the user scrolls the list, move the scrubber to match
     LaunchedEffect(gridState.firstVisibleItemIndex) {
-        if (itemStartTimesSec.isNotEmpty()) {
-            val idx = gridState.firstVisibleItemIndex.coerceIn(0, itemStartTimesSec.size - 1)
-            val timeMs = (itemStartTimesSec[idx] * 1000).toLong()
-            onScrub(timeMs)
+        if (segments.isNotEmpty()) {
+            val idx = gridState.firstVisibleItemIndex.coerceIn(0, segments.size - 1)
+            onScrub((segments[idx].startTime * 1000).toLong())
         }
     }
 
@@ -91,7 +75,6 @@ fun TimelinePanel(
                 .fillMaxSize()
                 .pointerInput(startMs, nowMs, rangeMs) {
                     awaitPointerEventScope {
-                        var wasTouching = false
                         var lastScrolledIdx = -1
                         while (true) {
                             val ev = awaitPointerEvent()
@@ -101,42 +84,33 @@ fun TimelinePanel(
                                 val frac = (change.position.y / size.height).coerceIn(0f, 1f)
                                 val timeMs = nowMs - (frac * rangeMs).toLong()
                                 onScrub(timeMs)
-                                onTouchPreview(timeMs)
-                                onTouchPositionChanged(frac)
-                                wasTouching = true
                                 val nearestIdx =
-                                    itemStartTimesSec.indexOfFirst {
-                                        (it * 1000.0).toLong() <= timeMs
+                                    segments.indexOfFirst {
+                                        (it.startTime * 1000.0).toLong() <= timeMs
                                     }
                                 if (nearestIdx >= 0 && nearestIdx != lastScrolledIdx) {
                                     lastScrolledIdx = nearestIdx
                                     scope.launch { gridState.scrollToItem(nearestIdx) }
                                 }
-                            } else if (wasTouching) {
-                                wasTouching = false
+                            } else {
                                 lastScrolledIdx = -1
-                                onTouchPreview(null)
-                                onTouchPositionChanged(null)
                             }
                         }
                     }
                 },
         ) {
-            drawActivityTimeline(
-                reviewSegments = reviewSegments,
-                recordingGaps = recordingGaps,
-                motionActivity = motionActivity,
+            drawSeverityEventTimeline(
+                reviewSegments = segments,
                 scrubberTimeMs = scrubberTimeMs,
                 viewEndMs = nowMs,
                 rangeMs = rangeMs,
                 timeRangeHours = timeRangeHours,
                 centerX = size.width * 0.65f,
-                maxBarHalfWidth = size.width * 0.30f,
-                numBuckets = 120,
-                palette = palette,
+                pillHalfWidth = size.width * 0.12f,
                 labelPaint = labelPaint,
                 drawLabels = true,
                 labelX = 2f,
+                palette = palette,
             )
         }
 

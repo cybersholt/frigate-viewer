@@ -15,10 +15,31 @@ import net.triton.frigateviewer.core.model.MotionActivity
 import net.triton.frigateviewer.core.model.RecordingGap
 import net.triton.frigateviewer.core.model.ReviewSegment
 
-internal val TimelineSeverityAlertColor = Color(0xFFEF4444)
-internal val TimelineSeverityDetectionColor = Color(0xFFF59E0B)
-internal val TimelineSeveritySignificantMotionColor = Color(0xFFA16207)
+// Exact values from Frigate's own default theme (web/themes/theme-default.css: --severity_alert
+// = red-800, --severity_detection = orange-600, --severity_significant_motion = yellow-400,
+// resolved against web/themes/tailwind-base.css). Matching upstream's literal hues, not our own
+// palette, is the point — see the class doc below.
+internal val TimelineSeverityAlertColor = Color(0xFF991B1B)
+internal val TimelineSeverityDetectionColor = Color(0xFFEA580C)
+internal val TimelineSeveritySignificantMotionColor = Color(0xFFFACC15)
+
+// "Dimmed" variants (Frigate's red-500 / orange-400 / yellow-200) — used for already-reviewed
+// review items on the severity rail, same as EventSegment.tsx's `severityColors[n]` when reviewed.
+internal val TimelineSeverityAlertDimmedColor = Color(0xFFEF4444)
+internal val TimelineSeverityDetectionDimmedColor = Color(0xFFFB923C)
+internal val TimelineSeveritySignificantMotionDimmedColor = Color(0xFFFEF08A)
+
 internal val TimelineScrubberColor = Color(0xFFE53935)
+
+internal fun severityColor(
+    severity: String,
+    reviewed: Boolean = false,
+): Color =
+    when (severity) {
+        "alert" -> if (reviewed) TimelineSeverityAlertDimmedColor else TimelineSeverityAlertColor
+        "detection" -> if (reviewed) TimelineSeverityDetectionDimmedColor else TimelineSeverityDetectionColor
+        else -> if (reviewed) TimelineSeveritySignificantMotionDimmedColor else TimelineSeveritySignificantMotionColor
+    }
 
 /**
  * The parts of the timeline that must invert between light and dark themes.
@@ -255,4 +276,100 @@ internal fun DrawScope.drawActivityTimeline(
             pillPaint,
         )
     }
+}
+
+/**
+ * Review page's dedicated severity rail — visually distinct from [drawActivityTimeline] on
+ * purpose. Frigate's own frontend renders these with two different components:
+ * `MotionReviewTimeline`/`MotionSegment` (Explore/History — thin motion-intensity ticks with a
+ * faint severity wash) vs `EventReviewTimeline`/`EventSegment` (Review — solid rounded pills, one
+ * per review item, spanning its actual start→end duration, full-saturation color, dimmed once
+ * reviewed). This draws the latter: no motion waveform, no recording-gap shading — Review's
+ * upstream component doesn't take that data either.
+ *
+ * [viewEndMs] anchors y=0 (top); past scrolls downward, matching [drawActivityTimeline]'s convention.
+ */
+internal fun DrawScope.drawSeverityEventTimeline(
+    reviewSegments: List<ReviewSegment>,
+    scrubberTimeMs: Long,
+    viewEndMs: Long,
+    rangeMs: Long,
+    timeRangeHours: Float,
+    centerX: Float,
+    pillHalfWidth: Float,
+    labelPaint: android.graphics.Paint,
+    drawLabels: Boolean,
+    labelX: Float,
+    palette: TimelinePalette,
+) {
+    val w = size.width
+    val h = size.height
+    val oldestMs = viewEndMs - rangeMs
+    val msPerPx = rangeMs.toFloat() / h
+    val dotRadius = pillHalfWidth.coerceAtMost(10f)
+
+    fun timeToY(timeMs: Long): Float = (viewEndMs - timeMs).toFloat() / msPerPx
+
+    // ── One dot per review item at its start time — matches Frigate's own Review rail, which
+    // marks a point in time rather than spanning a duration bar (confirmed against a live
+    // screenshot of the reference PWA: small fixed-size circles, not variable-height bars). ──
+    reviewSegments.forEach { seg ->
+        val startMs = (seg.startTime * 1000).toLong()
+        if (startMs < oldestMs || startMs > viewEndMs) return@forEach
+        drawCircle(
+            color = severityColor(seg.severity, seg.hasBeenReviewed),
+            radius = dotRadius,
+            center = Offset(centerX, timeToY(startMs)),
+        )
+    }
+
+    // ── Time grid lines + labels, with finer unlabeled ticks between them (ruler look, matching
+    // the reference) ──
+    val intervalMs =
+        when {
+            timeRangeHours <= 0.5f -> 2 * 60_000L
+            timeRangeHours <= 2f -> 15 * 60_000L
+            timeRangeHours <= 6f -> 30 * 60_000L
+            timeRangeHours <= 24f -> 60 * 60_000L
+            timeRangeHours <= 72f -> 4 * 3_600_000L
+            else -> 12 * 3_600_000L
+        }
+    val minorIntervalMs = intervalMs / 5
+    val showDayLabel = timeRangeHours > 24f
+
+    var minorMs = (viewEndMs / minorIntervalMs) * minorIntervalMs
+    while (minorMs >= oldestMs) {
+        val y = timeToY(minorMs)
+        if (y in 0f..h) {
+            val tickLen = if (minorMs % intervalMs == 0L) w else w * 0.35f
+            drawLine(palette.gridLine, Offset(w - tickLen, y), Offset(w, y), 0.5f)
+        }
+        minorMs -= minorIntervalMs
+    }
+
+    var gridMs = (viewEndMs / intervalMs) * intervalMs
+    while (gridMs >= oldestMs) {
+        val y = timeToY(gridMs)
+        if (y in 0f..h && drawLabels) {
+            drawIntoCanvas { canvas ->
+                canvas.nativeCanvas.drawText(
+                    fmtGridTime(gridMs, showDayLabel),
+                    labelX,
+                    (y - 5f).coerceAtLeast(labelPaint.textSize),
+                    labelPaint,
+                )
+            }
+        }
+        gridMs -= intervalMs
+    }
+
+    // ── Movable scrubber at the selected time ──
+    val scrubY = timeToY(scrubberTimeMs).coerceIn(0f, h)
+    drawLine(
+        TimelineScrubberColor,
+        Offset(0f, scrubY),
+        Offset(w, scrubY),
+        2.5f,
+        cap = StrokeCap.Round,
+    )
 }

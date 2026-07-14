@@ -196,7 +196,7 @@ fun EventsScreen(
                 }
 
                 TimelinePanel(
-                    events = state.events,
+                    itemStartTimesSec = state.events.map { it.startTime },
                     reviewSegments = state.reviewSegments,
                     recordingGaps = state.recordingGaps,
                     motionActivity = state.motionActivity,
