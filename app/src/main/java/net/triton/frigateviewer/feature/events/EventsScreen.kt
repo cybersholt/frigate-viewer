@@ -57,7 +57,6 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.ImageLoader
 import dagger.hilt.android.EntryPointAccessors
-import kotlinx.datetime.Clock
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
@@ -356,7 +355,7 @@ private fun formatEventTime(
         if (durationStr != null) "$numeric ($durationStr)" else numeric
     } else {
         val today =
-            Clock.System
+            kotlin.time.Clock.System
                 .now()
                 .toLocalDateTime(TimeZone.currentSystemDefault())
                 .date
