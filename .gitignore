@@ -48,3 +48,4 @@ jacoco.exec
 /memory
 /report
 /temp
+.artifacts/

@@ -58,10 +58,11 @@ class ReviewViewModel
                 val nowSec = System.currentTimeMillis() / 1000.0
                 val afterSec = nowSec - WINDOW_HOURS * 3600
 
-                // `reviewed = 1` keeps already-seen items in the feed. Hiding them is a separate
-                // decision that needs the mark-as-reviewed UI to exist first — otherwise items
-                // would vanish with no way for the user to have acted on them.
-                when (val r = repo.review(after = afterSec, before = nowSec, reviewed = 1)) {
+                // Leave `reviewed` unset: it is a *filter*, not an include-flag. `reviewed=1`
+                // returns ONLY already-reviewed items (verified live — it returned 2 of 130),
+                // and `reviewed=0` only unreviewed ones. Omitting it returns both, which is what
+                // a feed showing counts of "everything that happened" needs.
+                when (val r = repo.review(after = afterSec, before = nowSec)) {
                     is ApiResult.Success -> {
                         _state.value =
                             _state.value

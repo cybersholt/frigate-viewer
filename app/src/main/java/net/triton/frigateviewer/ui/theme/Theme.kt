@@ -19,8 +19,8 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
-import com.materialkolor.DynamicMaterialTheme
 import com.materialkolor.PaletteStyle
+import com.materialkolor.rememberDynamicColorScheme
 
 val LocalCardBorderWidth = compositionLocalOf { 0.dp }
 
@@ -82,8 +82,13 @@ fun FrigateViewerTheme(
         }
     }
 
-    if (useWallpaperColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        val colorScheme =
+    // Both branches resolve to a ColorScheme *value* feeding a single MaterialTheme call site.
+    // This used to be an if/else between two different theme composables (MaterialTheme vs
+    // materialkolor's DynamicMaterialTheme). Toggling "use wallpaper color" therefore swapped
+    // Compose call sites, so the entire subtree below the theme was discarded and rebuilt from
+    // scratch rather than merely re-colored — which is what made the toggle visibly glitch.
+    val colorScheme =
+        if (useWallpaperColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             if (darkTheme) {
                 dynamicDarkColorScheme(context).let {
                     if (amoledBlack) it.copy(surface = Color.Black, background = Color.Black) else it
@@ -91,23 +96,20 @@ fun FrigateViewerTheme(
             } else {
                 dynamicLightColorScheme(context)
             }
-        MaterialTheme(
-            colorScheme = colorScheme,
-            shapes = shapes,
-            typography = typography,
-            content = themedContent,
-        )
-    } else {
-        DynamicMaterialTheme(
-            seedColor = seedColor,
-            isDark = darkTheme,
-            style = paletteStyle,
-            contrastLevel = contrastLevel.toDouble() / 100.0,
-            isAmoled = amoledBlack,
-            shapes = shapes,
-            typography = typography,
-            animate = true,
-            content = themedContent,
-        )
-    }
+        } else {
+            rememberDynamicColorScheme(
+                seedColor = seedColor,
+                isDark = darkTheme,
+                isAmoled = amoledBlack,
+                style = paletteStyle,
+                contrastLevel = contrastLevel.toDouble() / 100.0,
+            )
+        }
+
+    MaterialTheme(
+        colorScheme = colorScheme,
+        shapes = shapes,
+        typography = typography,
+        content = themedContent,
+    )
 }
