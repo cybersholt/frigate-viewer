@@ -59,6 +59,14 @@ Native Android client for Frigate NVR. Rewritten in Kotlin to fix the JSON-parse
   all still load); the live "recovers from a real 401" path itself is not separately verified.
 - Frigate recordings have no "substream" VOD — `<camera>_sub` is a go2rtc *live*-restream name only. Don't reuse
   it for `/vod/.../index.m3u8` or `/api/events/.../clip.mp4` paths (confirmed via live 404 in production logs).
+- **OkHttp 5.x / Retrofit 3.x break LAN connectivity on this app (found + reverted 2026-07-14).** Android Studio's
+  library-update flow bumped OkHttp 4.12.0→5.4.0 and Retrofit 2.11.0→3.0.0. Both compiled clean, but
+  `FrigateClient`'s OkHttp client then failed every request to the local Frigate server with a consistent 15s
+  `SocketTimeoutException`, even though `adb shell nc` reached the same host:port instantly — the regression was
+  isolated to the OkHttp/Retrofit stack itself, not device networking. Root cause in OkHttp 5/Retrofit 3 not
+  further diagnosed; just reverted (see `gradle/libs.versions.toml`, pinned versions as of this commit). Don't
+  bump OkHttp past 4.12.0 or Retrofit past 2.11.0 without verifying LAN (not just internet-routed HTTPS)
+  connectivity on-device first.
 
 ## Rules (non-negotiable)
 1. **Never parse a non-OK HTTP response as JSON.** Every Retrofit call funnels through `safeApiCall()` which gates `.body()` behind `response.isSuccessful`. See `core/network/CLAUDE.md`.
