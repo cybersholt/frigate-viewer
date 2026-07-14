@@ -1,8 +1,11 @@
 # Issue tracker (local markdown)
 
+**See `docs/TODO.md` first.** As of 2026-07-14 that file is the main "what's still left" document —
+this index and the dated `backlog-*.md` files below are now historical/traceability records of
+already-resolved issues, not the place to look for or add open work.
+
 GitHub Issues are disabled on `cybersholt/frigate-viewer` as of 2026-07-10 (see `docs/agents/issue-tracker.md`).
-Until re-enabled, issues live here as markdown instead. `memory/project_state.md` → "Known gaps / not yet done"
-is the canonical backlog pointer for future sessions; this index is the working list.
+Until re-enabled, issues live here as markdown instead.
 
 Status legend: 🔴 open, 🟡 in progress, ✅ done (kept here briefly for traceability, then folded into
 `project_state.md` and removed from this table).

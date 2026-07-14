@@ -235,17 +235,7 @@ private sealed class Dest(
 
 private val tabs = listOf(Dest.Cameras, Dest.Review, Dest.Explore, Dest.Settings)
 
-// Route with an optional camera to auto-focus (live?camera= deep links land here)
-private const val CAMERAS_ROUTE = "cameras?camera={camera}"
-
-private fun camerasRouteWith(camera: String? = null): String =
-    if (camera !=
-        null
-    ) {
-        "cameras?camera=$camera"
-    } else {
-        "cameras"
-    }
+private const val CAMERAS_ROUTE = "cameras"
 
 // Route for events with optional filter query params
 private const val EVENTS_ROUTE = "events?camera={camera}&label={label}&zone={zone}"
@@ -293,6 +283,14 @@ private fun AppRoot(
     val onTab = tabs.any { tab -> current?.route?.startsWith(tab.route) == true }
     val fullScreen = remember { mutableStateOf(false) }
 
+    // Camera to auto-focus once the Cameras tab is showing, for a `live?camera=` deep link.
+    // Deliberately NOT carried as a NavBackStackEntry argument: ComposeNavigator doesn't
+    // override Navigator.onLaunchSingleTop, so re-navigating to an already-current destination
+    // via launchSingleTop never reaches the entry NavHost actually renders — the composable's
+    // arguments silently never update. Plain hoisted state sidesteps that entirely, since
+    // CamerasScreen reads it as a normal recomposition input regardless of Navigation's state.
+    var pendingCameraFocus by remember { mutableStateOf<String?>(null) }
+
     // Routes a frigateviewer:// deep link (cold or warm start) into the existing nav
     // graph, then clears the target so it isn't re-applied on the next recomposition.
     LaunchedEffect(deepLinkTarget.value) {
@@ -300,7 +298,8 @@ private fun AppRoot(
         if (target.eventId != null) {
             nav.navigate("event/${target.eventId}") { launchSingleTop = true }
         } else if (target.camera != null) {
-            nav.navigate(camerasRouteWith(target.camera)) {
+            pendingCameraFocus = target.camera
+            nav.navigate(CAMERAS_ROUTE) {
                 launchSingleTop = true
                 restoreState = true
                 popUpTo(nav.graph.startDestinationId) { saveState = true }
@@ -368,19 +367,10 @@ private fun AppRoot(
                 startDestination = CAMERAS_ROUTE,
                 modifier = Modifier.padding(padding),
             ) {
-                composable(
-                    route = CAMERAS_ROUTE,
-                    arguments =
-                        listOf(
-                            navArgument("camera") {
-                                type = NavType.StringType
-                                nullable = true
-                                defaultValue = null
-                            },
-                        ),
-                ) { entry ->
+                composable(route = CAMERAS_ROUTE) {
                     CamerasScreen(
-                        initialFocusedCamera = entry.arguments?.getString("camera"),
+                        initialFocusedCamera = pendingCameraFocus,
+                        onInitialFocusConsumed = { pendingCameraFocus = null },
                         onNavigateToEvents = { camera, label, zone ->
                             nav.navigate(eventsRouteWith(camera, label, zone)) {
                                 launchSingleTop = true

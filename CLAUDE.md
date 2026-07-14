@@ -9,6 +9,7 @@ Native Android client for Frigate NVR. Rewritten in Kotlin to fix the JSON-parse
 /ARCHITECTURE.md                      ← design + invariants
 /memory/project_state.md              ← what's working, what's next (update every session)
 /docs/
+  TODO.md                             ← main "what's left" backlog — check this first
   adr/                                ← architecture decision records (numbered)
   runbooks/                           ← release, signing, on-call
 /.claude/skills/                      ← reusable workflow playbooks
@@ -119,14 +120,20 @@ adb devices
 ## Build Environment
 
 JDK: Android Studio bundled JBR at `C:/Program Files/Android/Android Studio/jbr`
-- Pinned in `gradle.properties` via `org.gradle.java.home`
-- Required because Cursor IDE's embedded JRE (`.antigravity-ide`) lacks `jlink.exe`, which AGP 9.2.1 needs for the `androidJdkImage` transform
-- Do NOT remove `org.gradle.java.home` from `gradle.properties` or builds will break in Cursor
-- Do NOT let `gradle/gradle-daemon-jvm.properties` exist/reappear. Gradle 9's daemon-toolchain feature reads it
-  and OVERRIDES `org.gradle.java.home`, auto-selecting whatever JDK 21 it finds first — on this machine that's
+- Pinned via `org.gradle.java.home`, but **in `C:/Users/Sean/.gradle/gradle.properties`
+  (`GRADLE_USER_HOME`), NOT the repo's own `gradle.properties`.** The repo file is committed and
+  shared with GitHub Actions CI (`ubuntu-latest`) and any other contributor — a Windows-only path
+  there breaks their builds outright (this happened for real, commit `e2bae21` removed it from the
+  repo file for exactly that reason). Gradle merges `GRADLE_USER_HOME/gradle.properties` over a
+  project's own `gradle.properties` (higher precedence), so the machine-local file is the correct
+  place for this pin — it never reaches CI or anyone else's checkout.
+- Required because Cursor IDE's embedded JRE (`.antigravity-ide`) lacks `jlink.exe`, which AGP 9.2.1 needs for the `androidJdkImage` transform. Without the pin, Gradle also resolves whatever default JDK it finds instead of the one an already-running daemon used — real symptom seen once: duplicate Gradle + Kotlin-compile daemons piling up under mismatched JDKs, several GB of RAM, until Gradle's 3-hour idle timeout finally reaped them.
+- **Do NOT move this pin into the repo's `gradle.properties`** — that breaks CI. If Cursor builds start failing with a `jlink` error, check `C:/Users/Sean/.gradle/gradle.properties` still has the pin first.
+- Do NOT let `gradle/gradle-daemon-jvm.properties` exist/reappear **in the repo**. Gradle 9's daemon-toolchain feature reads it
+  and OVERRIDES both the user-level and project-level `org.gradle.java.home`, auto-selecting whatever JDK 21 it finds first — on this machine that's
   the Antigravity IDE's bundled JRE, which lacks `jlink.exe` and fails `:app:compileDebugJavaWithJavac` with
   `JdkImageTransform ... jlink executable ... does not exist`. If `./gradlew updateDaemonJvm` or an IDE
-  regenerates this file, delete it — the pinned `org.gradle.java.home` is the only source of truth here.
+  regenerates this file, delete it.
 
 ANDROID_HOME: `C:/Users/Sean/AppData/Local/Android/Sdk`
 
@@ -169,7 +176,7 @@ Launch: adb shell am start -n "net.triton.frigateviewer.debug/net.triton.frigate
 
 ### Issue tracker
 
-GitHub (`cybersholt/frigate-viewer`, the `origin` remote), via the `gh` CLI; external PRs are not treated as a triage surface. See `docs/agents/issue-tracker.md`.
+GitHub Issues are **disabled** on `cybersholt/frigate-viewer` (the `origin` remote) as of 2026-07-10 — `gh issue create`/`list` fail outright. Until re-enabled, `docs/TODO.md` is the working backlog; `docs/issues/` holds historical/resolved write-ups. See `docs/agents/issue-tracker.md` for the GitHub-native conventions to resume once issues come back.
 
 ### Triage labels
 

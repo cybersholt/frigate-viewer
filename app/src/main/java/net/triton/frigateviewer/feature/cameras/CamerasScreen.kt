@@ -136,6 +136,7 @@ interface CamerasEntryPoint {
 fun CamerasScreen(
     onNavigateToEvents: (camera: String?, label: String?, zone: String?) -> Unit = { _, _, _ -> },
     initialFocusedCamera: String? = null,
+    onInitialFocusConsumed: () -> Unit = {},
     vm: CamerasViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -162,13 +163,15 @@ fun CamerasScreen(
             RtspReconnectSettings(state.rtspReconnectAttempts, state.rtspReconnectBaseDelaySeconds)
         }
 
-    // frigateviewer://live?camera= deep link — focus once the camera list has loaded
-    // and actually contains the requested name (resolve against the real camera list).
-    var consumedInitialFocus by remember { mutableStateOf(false) }
+    // frigateviewer://live?camera= deep link — focus once the camera list has loaded and
+    // actually contains the requested name (resolve against the real camera list). The caller
+    // (AppRoot) clears initialFocusedCamera back to null immediately after onInitialFocusConsumed
+    // fires, so this key naturally cycles null -> camera -> null for every deep link, including
+    // a second one for a different camera while this screen is already showing.
     LaunchedEffect(initialFocusedCamera, state.cameras) {
-        if (!consumedInitialFocus && initialFocusedCamera != null && initialFocusedCamera in state.cameras) {
+        if (initialFocusedCamera != null && initialFocusedCamera in state.cameras) {
             focused = initialFocusedCamera
-            consumedInitialFocus = true
+            onInitialFocusConsumed()
         }
     }
 
