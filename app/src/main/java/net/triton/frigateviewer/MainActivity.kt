@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Warning
@@ -63,6 +64,7 @@ import net.triton.frigateviewer.feature.cameras.CamerasScreen
 import net.triton.frigateviewer.feature.crash.CrashReportScreen
 import net.triton.frigateviewer.feature.events.EventDetailScreen
 import net.triton.frigateviewer.feature.events.EventsScreen
+import net.triton.frigateviewer.feature.review.ReviewScreen
 import net.triton.frigateviewer.feature.settings.AboutSettingsScreen
 import net.triton.frigateviewer.feature.settings.AdvancedSettingsScreen
 import net.triton.frigateviewer.feature.settings.AppearanceSettingsScreen
@@ -219,12 +221,19 @@ private sealed class Dest(
 ) {
     data object Cameras : Dest("cameras", R.string.nav_cameras, Icons.Filled.Videocam)
 
-    data object Events : Dest("events", R.string.nav_events, Icons.Filled.Warning)
+    /** Frigate's curated alerts/detections feed. */
+    data object Review : Dest("review", R.string.nav_review, Icons.Filled.Warning)
+
+    /**
+     * The raw per-object event list. Keeps the `events` route on purpose: `eventsRouteWith()`, the
+     * back-navigation out of event detail, and the `frigateviewer://` deep links all target it.
+     */
+    data object Explore : Dest("events", R.string.nav_explore, Icons.Filled.Search)
 
     data object Settings : Dest("settings", R.string.nav_settings, Icons.Filled.Settings)
 }
 
-private val tabs = listOf(Dest.Cameras, Dest.Events, Dest.Settings)
+private val tabs = listOf(Dest.Cameras, Dest.Review, Dest.Explore, Dest.Settings)
 
 // Route with an optional camera to auto-focus (live?camera= deep links land here)
 private const val CAMERAS_ROUTE = "cameras?camera={camera}"
@@ -407,6 +416,11 @@ private fun AppRoot(
                         initialCamera = entry.arguments?.getString("camera"),
                         initialLabel = entry.arguments?.getString("label"),
                         initialZone = entry.arguments?.getString("zone"),
+                    )
+                }
+                composable(Dest.Review.route) {
+                    ReviewScreen(
+                        onOpenEvent = { id -> nav.navigate("event/$id") },
                     )
                 }
                 composable(Dest.Settings.route) {

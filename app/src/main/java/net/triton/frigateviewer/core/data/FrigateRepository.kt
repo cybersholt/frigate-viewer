@@ -136,9 +136,22 @@ class FrigateRepository
             cameras: String? = null,
             after: Double? = null,
             before: Double? = null,
+            labels: String? = null,
+            zones: String? = null,
+            /** 1 to include already-reviewed items, 0 to exclude them, null for the server default. */
+            reviewed: Int? = null,
         ): ApiResult<List<ReviewSegment>> {
             val api = api() ?: return ApiResult.NetworkError(IllegalStateException("No active server"))
-            return safeApiCall { api.review(cameras = cameras, after = after, before = before) }
+            return safeApiCall {
+                api.review(
+                    cameras = cameras,
+                    labels = labels,
+                    zones = zones,
+                    reviewed = reviewed,
+                    after = after,
+                    before = before,
+                )
+            }
         }
 
         /**

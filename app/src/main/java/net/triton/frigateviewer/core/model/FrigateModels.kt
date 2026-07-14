@@ -146,8 +146,42 @@ data class ReviewSegment(
     @SerialName("end_time") val endTime: Double? = null,
     @SerialName("thumb_path") val thumbPath: String? = null,
     @SerialName("has_been_reviewed") val hasBeenReviewed: Boolean = false,
-    val data: JsonElement? = null,
+    val data: ReviewData = ReviewData(),
+) {
+    /** Severity as a closed type. Unknown strings from a newer Frigate degrade to [Severity.DETECTION]. */
+    val severityType: Severity
+        get() = Severity.from(severity)
+}
+
+/**
+ * The `data` blob on a review segment. Frigate declares every field required, but we default them
+ * all: a segment with no tracked objects (pure `significant_motion`) legitimately has empty arrays,
+ * and defaulting keeps a schema addition from becoming a ParseError.
+ */
+@Serializable
+data class ReviewData(
+    /** Object labels seen in this segment, e.g. ["person", "car"]. Drives the card's icon chips. */
+    val objects: List<String> = emptyList(),
+    /** IDs of the `FrigateEvent`s rolled up into this segment. First one supplies the thumbnail. */
+    val detections: List<String> = emptyList(),
+    val zones: List<String> = emptyList(),
+    @SerialName("sub_labels") val subLabels: List<String> = emptyList(),
+    val audio: List<String> = emptyList(),
 )
+
+/** Frigate's review severities, ordered least → most significant. */
+enum class Severity(
+    val wire: String,
+) {
+    SIGNIFICANT_MOTION("significant_motion"),
+    DETECTION("detection"),
+    ALERT("alert"),
+    ;
+
+    companion object {
+        fun from(wire: String): Severity = entries.firstOrNull { it.wire == wire } ?: DETECTION
+    }
+}
 
 @Serializable
 data class FrigateEvent(
