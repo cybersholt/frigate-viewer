@@ -2,6 +2,8 @@ package net.triton.frigateviewer.feature.events
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,8 +19,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
@@ -27,6 +31,7 @@ import kotlinx.coroutines.launch
 import net.triton.frigateviewer.core.model.MotionActivity
 import net.triton.frigateviewer.core.model.RecordingGap
 import net.triton.frigateviewer.core.model.ReviewSegment
+import kotlin.math.abs
 
 /**
  * Narrow vertical timeline strip for the Events screen right edge — the same severity-colored
@@ -75,6 +80,9 @@ fun TimelinePanel(
         }
     }
 
+    // Keyed gesture block would otherwise hit-test against a stale handle position.
+    val currentScrubMs by rememberUpdatedState(scrubberTimeMs)
+
     val palette = rememberTimelinePalette()
     val labelPaint =
         remember(palette) {
@@ -89,36 +97,41 @@ fun TimelinePanel(
         Canvas(
             Modifier
                 .fillMaxSize()
-                .pointerInput(startMs, nowMs, rangeMs) {
-                    awaitPointerEventScope {
-                        var wasTouching = false
+                .pointerInput(nowMs, rangeMs) {
+                    val grabRadiusPx = 24.dp.toPx()
+                    // Grab-the-handle, same rule as every other timeline in the app: a press that
+                    // isn't on the red scrubber is ignored, so brushing the strip no longer yanks
+                    // the grid to a different time.
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val height = size.height.toFloat()
+                        if (height <= 0f) return@awaitEachGesture
+
+                        val scrubY = ((nowMs - currentScrubMs).toFloat() / rangeMs) * height
+                        if (abs(down.position.y - scrubY) > grabRadiusPx) return@awaitEachGesture
+                        down.consume()
+
                         var lastScrolledIdx = -1
                         while (true) {
-                            val ev = awaitPointerEvent()
-                            val change = ev.changes.firstOrNull() ?: continue
-                            if (change.pressed) {
-                                change.consume()
-                                val frac = (change.position.y / size.height).coerceIn(0f, 1f)
-                                val timeMs = nowMs - (frac * rangeMs).toLong()
-                                onScrub(timeMs)
-                                onTouchPreview(timeMs)
-                                onTouchPositionChanged(frac)
-                                wasTouching = true
-                                val nearestIdx =
-                                    itemStartTimesSec.indexOfFirst {
-                                        (it * 1000.0).toLong() <= timeMs
-                                    }
-                                if (nearestIdx >= 0 && nearestIdx != lastScrolledIdx) {
-                                    lastScrolledIdx = nearestIdx
-                                    scope.launch { gridState.scrollToItem(nearestIdx) }
+                            val change = awaitPointerEvent().changes.firstOrNull() ?: break
+                            if (!change.pressed) break
+                            change.consume()
+                            val frac = (change.position.y / height).coerceIn(0f, 1f)
+                            val timeMs = nowMs - (frac * rangeMs).toLong()
+                            onScrub(timeMs)
+                            onTouchPreview(timeMs)
+                            onTouchPositionChanged(frac)
+                            val nearestIdx =
+                                itemStartTimesSec.indexOfFirst {
+                                    (it * 1000.0).toLong() <= timeMs
                                 }
-                            } else if (wasTouching) {
-                                wasTouching = false
-                                lastScrolledIdx = -1
-                                onTouchPreview(null)
-                                onTouchPositionChanged(null)
+                            if (nearestIdx >= 0 && nearestIdx != lastScrolledIdx) {
+                                lastScrolledIdx = nearestIdx
+                                scope.launch { gridState.scrollToItem(nearestIdx) }
                             }
                         }
+                        onTouchPreview(null)
+                        onTouchPositionChanged(null)
                     }
                 },
         ) {

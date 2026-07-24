@@ -29,10 +29,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
@@ -128,8 +129,8 @@ fun RtspLiveTile(
     var retryTrigger by remember { mutableIntStateOf(0) }
     var autoReconnectAttempts by remember { mutableIntStateOf(0) }
     var isMuted by remember { mutableStateOf(true) }
-    var scale by remember { mutableStateOf(1f) }
-    var zoomOffset by remember { mutableStateOf(Offset.Zero) }
+    // Pinch-zoom / pan, clamped so the picture always covers the viewport. See ZoomPanState.kt.
+    val zoomPan = rememberZoomPanState()
     var videoRevealed by remember { mutableStateOf(false) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
@@ -306,6 +307,26 @@ fun RtspLiveTile(
                             liveState = LiveStreamState.Playing
                         }
 
+                        /**
+                         * PlayerView letterboxes internally (RESIZE_MODE_FIT), so the view's bounds
+                         * say nothing about where the picture's edges actually are. Without the real
+                         * frame shape the pan clamp would be computed against the black bars too,
+                         * and the video could still be dragged partway off on the letterboxed axis.
+                         */
+                        override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                            if (videoSize.width > 0 && videoSize.height > 0) {
+                                val pixelRatio =
+                                    if (videoSize.pixelWidthHeightRatio > 0f) {
+                                        videoSize.pixelWidthHeightRatio
+                                    } else {
+                                        1f
+                                    }
+                                zoomPan.onAspectRatioChanged(
+                                    videoSize.width * pixelRatio / videoSize.height,
+                                )
+                            }
+                        }
+
                         override fun onPlayerError(e: PlaybackException) {
                             Log.e(
                                 TAG,
@@ -378,16 +399,16 @@ fun RtspLiveTile(
         modifier =
             (if (isFullScreen) Modifier.fillMaxSize() else modifier)
                 .background(Color.Black)
-                .pointerInput("zoom") {
-                    detectTransformGestures { _, pan, zoom, _ ->
-                        scale = (scale * zoom).coerceIn(1f, 5f)
-                        zoomOffset = if (scale > 1f) zoomOffset + pan else Offset.Zero
+                // The viewport is what the pan is clamped against, so it has to be measured, not
+                // assumed — it changes on rotation and when the tile enters/leaves fullscreen.
+                .onSizeChanged {
+                    zoomPan.onViewportChanged(Size(it.width.toFloat(), it.height.toFloat()))
+                }.pointerInput("zoom") {
+                    detectTransformGestures { centroid, pan, zoom, _ ->
+                        zoomPan.onTransform(centroid, pan, zoom)
                     }
                 }.pointerInput("tap") {
-                    detectTapGestures(onDoubleTap = {
-                        scale = 1f
-                        zoomOffset = Offset.Zero
-                    })
+                    detectTapGestures(onDoubleTap = { zoomPan.reset() })
                 },
         contentAlignment = Alignment.Center,
     ) {
@@ -411,10 +432,10 @@ fun RtspLiveTile(
             update = { it.player = exoPlayer },
             modifier =
                 Modifier.fillMaxSize().graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                    translationX = zoomOffset.x
-                    translationY = zoomOffset.y
+                    scaleX = zoomPan.scale
+                    scaleY = zoomPan.scale
+                    translationX = zoomPan.offset.x
+                    translationY = zoomPan.offset.y
                     clip = true
                 },
         )
@@ -460,6 +481,15 @@ fun RtspLiveTile(
                     )
                 }
             }
+
+            // Bottom-left, above the mute button when there is one so the two never overlap.
+            ZoomIndicator(
+                state = zoomPan,
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(start = 12.dp, bottom = if (audioEnabled) 60.dp else 12.dp),
+            )
 
             // Fullscreen toggle
             IconButton(

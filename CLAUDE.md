@@ -3,6 +3,38 @@
 ## Why
 Native Android client for Frigate NVR. Rewritten in Kotlin to fix the JSON-parse-on-non-OK-response crash that broke the prior React Native fork on the cameras screen, and to deliver sub-second live video via Media3 + WebRTC instead of an RN-bridged VLC player. Unofficial, not affiliated with Frigate.
 
+## Finish the task (non-negotiable, read before anything else)
+
+**If the user asked for it, it gets done this session. Do not defer requested work into
+`docs/TODO.md`.**
+
+This was violated repeatedly on 2026-07-21: the same player changes were asked for three times
+because each round they were written into the backlog instead of built. Filing a request is not
+progress — it converts one request into a repeated one.
+
+1. **`docs/TODO.md` is for work nobody has asked for yet.** Ideas, observations, follow-ups you
+   spotted on your own. The moment the user asks for something it stops being backlog and becomes
+   the task. Never move a live request into it.
+2. **Cost and context warnings are informational. They never justify deferring.** The
+   `COST CRITICAL` and `StrategicCompact` hooks say so in their own text. Running long is not a
+   reason to stop; if context is genuinely the limit, compact and keep going.
+3. **"I'll do it next", "filed for the next pass", "remaining polish" are not outcomes.** If a turn
+   ends with requested work undone, that is an unfinished task, no matter how neat the summary is.
+4. **Don't invent scope boundaries to justify stopping.** "That belongs to the next feature",
+   "that's the same file so I'll batch it", "that's a separate surface" — if the user asked, none of
+   those are reasons. Batching is the user's call, not yours.
+5. **Small and adjacent means do it now.** A two-line change is never worth a backlog entry. The
+   speed menu got deferred as "polish" while carrying a real bug (`"${speed.toInt()}x"` renders
+   `0x` for `0.5`) — deferring cost more than fixing.
+6. **If you genuinely cannot finish, say so in the reply, in plain words, with the reason** — a
+   blocker only the user can resolve, or a decision only they can make. Say it out loud. Do not
+   record it in a doc and let the summary imply completion.
+7. **Ask only when the answer changes what you build.** Otherwise pick the sensible default, do it,
+   and say which default you picked.
+
+Verify on the emulator before reporting (see Device / Deployment), and check upstream Frigate before
+guessing (see When in doubt). Those are how a task gets *finished*, not extra credit.
+
 ## Map
 ```
 /CLAUDE.md                            ← this file (project north star)
@@ -41,8 +73,18 @@ Native Android client for Frigate NVR. Rewritten in Kotlin to fix the JSON-parse
       CamerasScreen.kt                ← grid (LazyVerticalGrid, per-tile state) + FocusedTile + StreamContent (mode routing) + StreamTypeBadge (per-camera override menu)
       CamerasViewModel.kt             ← camera list/order/hidden, liveStreamOption, cameraStreamOverrides, currentSsid
       RtspLiveTile.kt / WebRtcLiveTile.kt / SnapshotLiveTile.kt ← the three live-mode players (each owns fullscreen + BackHandler)
+      ZoomPanState.kt                 ← pinch/pan math, shared by the RTSP + WebRTC tiles. Pan is clamped so the
+                                         picture always covers the viewport; pinch anchors to the gesture centroid.
+                                         Pure functions (no Compose runtime) → unit-tested in ZoomPanStateTest.kt
+      ZoomIndicator.kt                ← Wyze-style zoom minimap: frame outline + visible-region fill, idle-fades
       CameraStreamState.kt            ← Skeleton/LoadingWithCache/Live/Offline sealed state shared by all tiles
       CameraEditSheet.kt              ← reorder/hide bottom sheet
+    review/
+      ReviewScreen.kt / ReviewViewModel.kt   ← review feed grid + filters; VM also loads the rail's motion waveform
+      ReviewSeverityTimeline.kt         ← the right-hand rail: paints, grab-the-handle drag gesture, zoom buttons
+      ReviewRailRenderer.kt             ← rail Canvas drawing (ruler + activity strip + bracketed handle).
+                                           All geometry dp/sp-derived — never hardcode Paint.textSize in px
+      ReviewTimelineLayout.kt           ← pure tick/waveform math (no Compose) → ReviewTimelineLayoutTest.kt
     events/
       EventsScreen.kt / EventsViewModel.kt   ← grid + filters (camera/label/zone), ordered by the same cameraOrder as Cameras
       EventDetail.kt                  ← event detail: VOD/Clip tabs (ClipPlayer, HLS via DefaultMediaSourceFactory), timeline
@@ -85,11 +127,33 @@ Native Android client for Frigate NVR. Rewritten in Kotlin to fix the JSON-parse
 - **Debug a live-stream issue** → `.claude/skills/debug-frigate.md`
 - **Cut a release** → `.claude/skills/release.md` + `docs/runbooks/release.md`
 
+## Testing
+**Unit tests are JUnit 5 (Jupiter), not JUnit 4.** `app/build.gradle.kts` declares
+`junit-jupiter` + `junit-jupiter-engine` and sets `tasks.withType<Test> { useJUnitPlatform() }`.
+There is no `junit-vintage` engine on the classpath, so a test written against JUnit 4 **compiles
+cleanly and is then silently never run** — the only symptom is
+`No tests found for given includes: [...]` from a `--tests` filter, or a green build that executed
+nothing. This cost a full debug cycle on 2026-07-21.
+
+- Import `org.junit.jupiter.api.Test` and `org.junit.jupiter.api.Assertions.*` — never `org.junit.*`.
+- **Argument order differs from JUnit 4:** the message is the *last* parameter, not the first.
+  `assertTrue(condition, "message")`, `assertEquals(expected, actual, delta, "message")`.
+- Setup/teardown are `@BeforeEach`/`@AfterEach`, not `@Before`/`@After`.
+- Run a single class with the fully qualified name:
+  `./gradlew :app:testDebugUnitTest --tests "net.triton.frigateviewer.feature.cameras.ZoomPanStateTest"`
+- Confirm tests actually ran — a passing task is not proof. Check the count in
+  `app/build/test-results/testDebugUnitTest/TEST-<fqcn>.xml` (`tests=` / `failures=`).
+- Test naming follows `SafeApiCallTest.kt`: backtick-quoted sentences describing the behaviour.
+
+Pull pure logic out of composables so it can be tested on the JVM at all — `ZoomPanState.kt` is the
+pattern: the clamp/zoom math lives in top-level functions with no Android or Compose-runtime
+dependency, and `ZoomPanStateTest.kt` covers it without an emulator.
+
 ## Commands
 ```
 ./gradlew :app:assembleDebug          build debug
 ./gradlew :app:assembleRelease        build signed release (needs keystore.properties)
-./gradlew :app:testDebugUnitTest      unit tests
+./gradlew :app:testDebugUnitTest      unit tests (JUnit 5 — see Testing above)
 ./gradlew :app:lintDebug              Android lint
 ./gradlew ktlintCheck                 style check (ktlint CLI; rules in .editorconfig)
 ./gradlew ktlintFormat                auto-fix style violations
@@ -100,6 +164,14 @@ Native Android client for Frigate NVR. Rewritten in Kotlin to fix the JSON-parse
 - `kotlin-rewrite` — active development trunk for the native rewrite
 
 ## When in doubt
+**Check upstream Frigate before guessing, or just ask.** The source is
+`https://github.com/blakeblackshear/frigate` — the web UI under `web/src/` is the reference this app
+is modelled on, and raw files fetch fine (e.g.
+`raw.githubusercontent.com/blakeblackshear/frigate/dev/web/src/components/player/VideoControls.tsx`).
+Reading how they actually do it beats inventing a version that then has to be redone: the player
+control bar was rebuilt twice because it was styled from imagination instead of from upstream's
+`w-auto ... rounded-lg bg-background/60 px-4 py-2`.
+
 Read `ARCHITECTURE.md` for the why. Read the nearest local `CLAUDE.md` for the gotchas. Read the relevant ADR in `docs/adr/` for prior decisions before reversing one.
 
 ## Documentation discipline
@@ -111,7 +183,28 @@ Do this before the context gets too long to remember what changed.
 
 ## Device / Deployment
 
-Pixel 8 connected via wireless ADB.
+**There is an emulator. Use it. Never report a UI change as "unverified" without trying it first.**
+
+`emulator-5554` (Android Studio AVD name: **Pixel8-Virt**) is normally already running, is 1080x2400
+like the real Pixel 8 so tap coordinates transfer directly, and is **already configured with the
+live Frigate server** — real cameras, real events, real motion data. Verifying a screen there costs
+about four commands.
+
+    adb -s emulator-5554 install -r app/build/outputs/apk/debug/app-debug.apk
+    adb -s emulator-5554 shell am start -n "net.triton.frigateviewer.debug/net.triton.frigateviewer.MainActivity"
+    adb -s emulator-5554 shell input tap <x> <y>
+    adb -s emulator-5554 exec-out screencap -p > screenshots/<name>.png
+
+Do not confuse this with the rule about the physical phone. **"Don't push builds to the phone"
+applies to the phone only** — the user collects those APKs over SMB. It says nothing about the
+emulator, which is the intended place to check work. Conflating the two is what caused a whole
+session of shipping UI changes marked "not device-verified" when they could simply have been
+verified (2026-07-21).
+
+Always pass `-s <serial>`: the emulator and the physical Pixel 8 are often attached at once, so a
+bare `adb` command is ambiguous and will fail or hit the wrong target.
+
+### Physical device (Pixel 8, wireless ADB) — for real-hardware checks only
 
 # Connect if session dropped
 adb connect 192.168.88.32:5555
@@ -179,6 +272,8 @@ Launch: adb shell am start -n "net.triton.frigateviewer.debug/net.triton.frigate
 6. All screens must support landscape and portrait mode
 7. All screens must support 1x1 aspect ratio, 2x2 aspect ratio, 3x3 aspect ratio
 8. All password fields must include a visibility toggle (eye icon) to reveal/hide the value — never a bare `PasswordVisualTransformation()` with no way to check what was typed
+9. **Timelines scrub by dragging the handle — never by tapping the track.** The handle must be a **real, sized composable** with its own `pointerInput` (48 dp tall, with a visible translucent band so the target is discoverable), *not* a hit-test inside the timeline's own gesture handler. This matches Frigate's `use-draggable-element`, where the handle element itself receives the drag. Sharing one gesture between "pan the window" and "is this press near the scrubber?" is what made fine adjustment impossible — a finger a few px off the line silently panned instead, worst in landscape where the rail is half as tall. Drag the handle → scrub only. Drag the track → pan only. At the ends the handle forwards leftover movement to the pan callback so a long drag can continue past the window.
+10. **Never set `android.graphics.Paint.textSize` to a raw number for Canvas drawing.** Those are device pixels: `15f` is ~5.7 dp on a 420 dpi phone. Derive from `Density` (`DrawScope` is one) via `sp.toPx()`, so it also honours the system font-size setting.
 
 ## Agent skills
 

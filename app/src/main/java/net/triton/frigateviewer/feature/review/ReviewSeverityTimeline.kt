@@ -2,6 +2,8 @@ package net.triton.frigateviewer.feature.review
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,28 +19,43 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import net.triton.frigateviewer.core.model.MotionActivity
 import net.triton.frigateviewer.core.model.ReviewSegment
-import net.triton.frigateviewer.feature.events.drawSeverityEventTimeline
 import net.triton.frigateviewer.feature.events.rememberTimelinePalette
+import kotlin.math.abs
+
+/** Ruler label size. `sp`, not `dp`, so it tracks the system font-size setting. */
+private val LabelTextSize = 10.sp
+
+/** The scrub handle's time capsule. Same size as the labels but bold, since it is the live value. */
+private val HandleTextSize = 10.sp
 
 /**
- * Review's vertical severity rail — one rounded pill per visible [ReviewSegment], spanning its
- * actual start→end time, colored by severity (dimmed once reviewed). Deliberately a different
- * visual from Explore's [net.triton.frigateviewer.feature.events.TimelinePanel]: Frigate's own
- * frontend renders these with two separate components (`EventReviewTimeline` here vs
- * `MotionReviewTimeline` there) because a bucketed motion waveform and a per-item severity bar
- * answer different questions. See [drawSeverityEventTimeline] for the render logic.
+ * How far from the scrub line a press still counts as grabbing the handle. Gives a 48 dp tall
+ * target — Material's minimum — around a handle whose bracket is only 20 dp of that.
+ */
+private val GrabRadius = 24.dp
+
+/**
+ * Review's vertical rail beside the card grid. Rendering lives in [drawReviewRail]; this composable
+ * owns the paints, the drag-to-scrub gesture, and the zoom buttons.
  */
 @Composable
 fun ReviewSeverityTimeline(
     segments: List<ReviewSegment>,
+    motionActivity: List<MotionActivity>,
     scrubberTimeMs: Long,
     timeRangeHours: Float,
     gridState: LazyGridState,
@@ -50,7 +67,10 @@ fun ReviewSeverityTimeline(
     val scope = rememberCoroutineScope()
     val nowMs = remember { System.currentTimeMillis() }
     val rangeMs = (timeRangeHours * 3_600_000L).toLong()
-    val startMs = nowMs - rangeMs
+
+    // The gesture block is keyed on nowMs/rangeMs only, so it would otherwise capture the scrub
+    // time from the composition that created it and hit-test against a stale handle position.
+    val currentScrubMs by rememberUpdatedState(scrubberTimeMs)
 
     LaunchedEffect(gridState.firstVisibleItemIndex) {
         if (segments.isNotEmpty()) {
@@ -60,12 +80,30 @@ fun ReviewSeverityTimeline(
     }
 
     val palette = rememberTimelinePalette()
+    val density = LocalDensity.current
+
+    // Deliberately more contrast than the shared `palette.labelArgb` (0.60 alpha), which is tuned
+    // for the wide Explore / Event-Detail panels. This rail is ~76 dp across with small type, and
+    // at 0.60 the labels wash out against the surface.
+    val labelColor =
+        MaterialTheme.colorScheme.onSurface
+            .copy(alpha = 0.78f)
+            .toArgb()
     val labelPaint =
-        remember(palette) {
+        remember(labelColor, density) {
             android.graphics.Paint().apply {
-                textSize = 15f
-                color = palette.labelArgb
+                textSize = with(density) { LabelTextSize.toPx() }
+                color = labelColor
                 isAntiAlias = true
+            }
+        }
+    val handlePaint =
+        remember(density) {
+            android.graphics.Paint().apply {
+                textSize = with(density) { HandleTextSize.toPx() }
+                color = android.graphics.Color.WHITE
+                isAntiAlias = true
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
             }
         }
 
@@ -73,43 +111,51 @@ fun ReviewSeverityTimeline(
         Canvas(
             Modifier
                 .fillMaxSize()
-                .pointerInput(startMs, nowMs, rangeMs) {
-                    awaitPointerEventScope {
+                .pointerInput(nowMs, rangeMs) {
+                    // Grab-the-handle, not tap-anywhere. A press that doesn't land on the scrub
+                    // handle is ignored outright, so brushing the rail while reading the grid no
+                    // longer throws playback to a random time. Standing rule for every timeline in
+                    // the app — see docs/TODO.md.
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val railHeight = size.height.toFloat()
+                        if (railHeight <= 0f) return@awaitEachGesture
+
+                        val handleY = ((nowMs - currentScrubMs).toFloat() / rangeMs) * railHeight
+                        if (abs(down.position.y - handleY) > GrabRadius.toPx()) {
+                            return@awaitEachGesture
+                        }
+                        down.consume()
+
                         var lastScrolledIdx = -1
                         while (true) {
-                            val ev = awaitPointerEvent()
-                            val change = ev.changes.firstOrNull() ?: continue
-                            if (change.pressed) {
-                                change.consume()
-                                val frac = (change.position.y / size.height).coerceIn(0f, 1f)
-                                val timeMs = nowMs - (frac * rangeMs).toLong()
-                                onScrub(timeMs)
-                                val nearestIdx =
-                                    segments.indexOfFirst {
-                                        (it.startTime * 1000.0).toLong() <= timeMs
-                                    }
-                                if (nearestIdx >= 0 && nearestIdx != lastScrolledIdx) {
-                                    lastScrolledIdx = nearestIdx
-                                    scope.launch { gridState.scrollToItem(nearestIdx) }
+                            val change = awaitPointerEvent().changes.firstOrNull() ?: break
+                            if (!change.pressed) break
+                            change.consume()
+                            val frac = (change.position.y / railHeight).coerceIn(0f, 1f)
+                            val timeMs = nowMs - (frac * rangeMs).toLong()
+                            onScrub(timeMs)
+                            val nearestIdx =
+                                segments.indexOfFirst {
+                                    (it.startTime * 1000.0).toLong() <= timeMs
                                 }
-                            } else {
-                                lastScrolledIdx = -1
+                            if (nearestIdx >= 0 && nearestIdx != lastScrolledIdx) {
+                                lastScrolledIdx = nearestIdx
+                                scope.launch { gridState.scrollToItem(nearestIdx) }
                             }
                         }
                     }
                 },
         ) {
-            drawSeverityEventTimeline(
+            drawReviewRail(
                 reviewSegments = segments,
+                motionActivity = motionActivity,
                 scrubberTimeMs = scrubberTimeMs,
                 viewEndMs = nowMs,
                 rangeMs = rangeMs,
                 timeRangeHours = timeRangeHours,
-                centerX = size.width * 0.65f,
-                pillHalfWidth = size.width * 0.12f,
                 labelPaint = labelPaint,
-                drawLabels = true,
-                labelX = 2f,
+                handlePaint = handlePaint,
                 palette = palette,
             )
         }

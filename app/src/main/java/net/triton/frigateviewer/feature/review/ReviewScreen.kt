@@ -185,6 +185,7 @@ fun ReviewScreen(
 
             ReviewSeverityTimeline(
                 segments = state.segments,
+                motionActivity = state.motionActivity,
                 scrubberTimeMs = state.scrubberTimeMs,
                 timeRangeHours = state.timeRangeHours,
                 gridState = gridState,
@@ -193,7 +194,10 @@ fun ReviewScreen(
                 onZoomOut = { vm.zoomTimeline(2f) },
                 modifier =
                     Modifier
-                        .width(64.dp)
+                        // 64.dp could not fit a time label, a ruler and the activity strip without
+                        // the label colliding with the ticks. The grid beside it is a single
+                        // column of wide cards, so it gives up the 12 dp without reflowing.
+                        .width(76.dp)
                         .fillMaxHeight(),
             )
         }
@@ -337,8 +341,13 @@ private fun SeverityChip(
 /**
  * One review segment. The thumbnail resolves through the segment's first detection rather than
  * `thumb_path`: `thumb_path` is a server *filesystem* path (`/media/frigate/clips/review/…`) with
- * no documented HTTP route, whereas `api/events/{id}/thumbnail.jpg` is documented and already
- * flows through our authenticated Coil pipeline.
+ * no documented HTTP route, whereas the `api/events/{id}/…` routes are documented and already flow
+ * through our authenticated Coil pipeline.
+ *
+ * Uses `snapshot.jpg`, not `thumbnail.jpg`. Frigate's thumbnail is a small crop scaled around the
+ * detected object — fine for a list row, visibly mushy stretched across a full-width 16:9 card,
+ * which is why these cards read as much lower quality than Explore's (Explore has always used
+ * `snapshot.jpg`; see EventsScreen.kt).
  */
 @Composable
 private fun ReviewCard(
@@ -359,7 +368,7 @@ private fun ReviewCard(
     ) {
         if (thumbId != null) {
             FrigateImage(
-                relativePath = "api/events/$thumbId/thumbnail.jpg",
+                relativePath = "api/events/$thumbId/snapshot.jpg",
                 contentDescription = "${segment.camera} ${segment.severity}",
                 baseUrl = baseUrl,
                 imageLoader = imageLoader,

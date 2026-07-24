@@ -4,10 +4,12 @@ import android.app.Activity
 import android.app.DownloadManager
 import android.content.Context
 import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Environment
 import android.util.Log
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,11 +20,11 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -82,8 +84,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
@@ -705,7 +710,14 @@ fun EventDetailScreen(
                                 .padding(horizontal = 10.dp, vertical = 4.dp),
                         ) {
                             Text(
-                                fmtDatePill(state.scrubberTimeMs),
+                                // While the handle is being dragged the pill becomes a live
+                                // clock, matching the PWA — the date is not what you need to see
+                                // mid-scrub. `previewYFraction` is non-null only during a drag.
+                                if (previewYFraction != null) {
+                                    fmtScrubberTimeLong(state.scrubberTimeMs)
+                                } else {
+                                    fmtDatePill(state.scrubberTimeMs)
+                                },
                                 color = Color.White,
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.SemiBold,
@@ -764,53 +776,77 @@ fun EventDetailScreen(
                     HorizontalDivider()
                 }
 
+                val isLandscape =
+                    LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+                // Proportional, not a fixed width, so the split holds on a tablet as well as a
+                // phone. Matches the ~17:83 rail:video ratio Frigate's own PWA uses in landscape.
+                val landscapeTimelineFraction = 0.17f
+                val landscapeVideoFraction = 0.83f
+
                 // ── Player / Snapshot ──
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .then(
-                            if (fullScreen.value) Modifier.weight(1f) else Modifier.aspectRatio(16f / 9f),
-                        ),
-                ) {
-                    if (vodUrl != null && okHttpClient != null && state.recordings.isNotEmpty()) {
-                        RecordingPlayer(
-                            url = vodUrl,
-                            okHttpClient = okHttpClient!!,
-                            seekSeconds = seekSeconds ?: 0.0,
-                            onEnded = vm::advanceToNextChunk,
-                            audioEnabled = state.audioEnabled,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    } else if (state.recordingsLoading) {
-                        Box(Modifier.fillMaxSize().background(Color.Black)) {
-                            LoadingIndicator(Modifier.align(Alignment.Center), color = Color.White)
+                // Declared as panes rather than emitted inline so portrait can stack them down the
+                // Column while landscape sets them side by side, without duplicating either body.
+                val playerPane: @Composable () -> Unit = {
+                    Box(Modifier.fillMaxSize()) {
+                        if (vodUrl != null && okHttpClient != null && state.recordings.isNotEmpty()) {
+                            RecordingPlayer(
+                                url = vodUrl,
+                                okHttpClient = okHttpClient!!,
+                                seekSeconds = seekSeconds ?: 0.0,
+                                onEnded = vm::advanceToNextChunk,
+                                audioEnabled = state.audioEnabled,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        } else if (state.recordingsLoading) {
+                            Box(Modifier.fillMaxSize().background(Color.Black)) {
+                                LoadingIndicator(Modifier.align(Alignment.Center), color = Color.White)
+                            }
+                        } else if (ev.hasSnapshot) {
+                            FrigateImage(
+                                relativePath = "api/events/${ev.id}/snapshot.jpg?h=720",
+                                contentDescription = "${ev.camera} ${ev.label}",
+                                baseUrl = state.baseUrl,
+                                imageLoader = imageLoader,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        } else {
+                            Box(
+                                Modifier
+                                    .fillMaxSize()
+                                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                            ) {
+                                Text(
+                                    "No media available",
+                                    Modifier.align(Alignment.Center),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            }
                         }
-                    } else if (ev.hasSnapshot) {
-                        FrigateImage(
-                            relativePath = "api/events/${ev.id}/snapshot.jpg?h=720",
-                            contentDescription = "${ev.camera} ${ev.label}",
-                            baseUrl = state.baseUrl,
-                            imageLoader = imageLoader,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    } else {
-                        Box(
-                            Modifier
-                                .fillMaxSize()
-                                .background(MaterialTheme.colorScheme.surfaceVariant),
-                        ) {
-                            Text(
-                                "No media available",
-                                Modifier.align(Alignment.Center),
-                                style = MaterialTheme.typography.bodyMedium,
+
+                        // ── Scrub preview ──
+                        // While the timeline handle is being dragged, the preview frame replaces
+                        // the player image itself rather than appearing as a little floating
+                        // thumbnail over the timeline. This is what Frigate's own player does, and
+                        // the bubble was actively disliked: it covered the timeline it was
+                        // supposed to be helping you read.
+                        state.scrubPreviewBitmap?.let { preview ->
+                            Image(
+                                bitmap = preview.asImageBitmap(),
+                                contentDescription = "Preview at the scrubbed time",
+                                contentScale = ContentScale.Fit,
+                                modifier =
+                                    Modifier
+                                        .fillMaxSize()
+                                        .background(Color.Black),
                             )
                         }
                     }
                 }
 
                 // ── View content ──
-                if (!fullScreen.value) {
-                    BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                val viewPane: @Composable () -> Unit = {
+                    BoxWithConstraints(Modifier.fillMaxSize()) {
                         when (state.selectedView) {
                             EventDetailView.TIMELINE -> {
                                 HorizontalTimeline(
@@ -850,21 +886,40 @@ fun EventDetailScreen(
                             }
                         }
 
-                        // ── Preview-frame thumbnail bubble while touching the timeline.
-                        // Rendered at this outer level (full width) rather than inside
-                        // HorizontalTimeline itself, which lets it follow the touch Y
-                        // without any parent-width-constraint risk. ──
-                        if (state.selectedView == EventDetailView.TIMELINE && state.scrubPreviewBitmap != null) {
-                            val bubbleHeight = 120.dp * 9f / 16f
-                            val offsetY =
-                                previewYFraction?.let { frac ->
-                                    (maxHeight * frac - bubbleHeight / 2).coerceIn(0.dp, maxHeight - bubbleHeight)
-                                } ?: (maxHeight / 2 - bubbleHeight / 2)
-                            PreviewThumbnailBubble(
-                                bitmap = state.scrubPreviewBitmap,
-                                modifier = Modifier.align(Alignment.TopCenter).offset(y = offsetY),
-                            )
-                        }
+                        // The scrub preview deliberately does NOT render here as a floating
+                        // thumbnail any more — it replaces the main player image instead, the way
+                        // Frigate's own player does. See `playerPane`.
+                    }
+                }
+
+                if (isLandscape) {
+                    // Landscape mirrors the PWA: video letterboxed against black on the left, the
+                    // timeline as a vertical rail down the right. Stacking them the portrait way
+                    // asks for a 16:9 box wider than the screen is tall, so the video ate the whole
+                    // height and squeezed the timeline into an unusable sliver at the bottom.
+                    Row(Modifier.weight(1f).fillMaxWidth()) {
+                        Box(
+                            Modifier
+                                .weight(landscapeVideoFraction)
+                                .fillMaxHeight()
+                                .background(Color.Black),
+                        ) { playerPane() }
+                        Box(
+                            Modifier
+                                .weight(landscapeTimelineFraction)
+                                .fillMaxHeight(),
+                        ) { viewPane() }
+                    }
+                } else {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .then(
+                                if (fullScreen.value) Modifier.weight(1f) else Modifier.aspectRatio(16f / 9f),
+                            ),
+                    ) { playerPane() }
+                    if (!fullScreen.value) {
+                        Box(Modifier.weight(1f).fillMaxWidth()) { viewPane() }
                     }
                 }
             }
@@ -1432,18 +1487,24 @@ private fun RecordingPlayer(
         }
 
         // ── Playback controls ──
-        Column(
+        // A rounded bar that hugs its buttons, not a full-width scrim. This mirrors Frigate's own
+        // web player, whose control container is
+        // `w-auto ... rounded-lg bg-background/60 px-4 py-2` — a semi-transparent solid, no
+        // gradient. The previous full-width `Brush.verticalGradient(Transparent → Black 0.75)`
+        // smeared a dark band across the lower third of every frame.
+        Box(
             Modifier
-                .fillMaxWidth()
                 .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .background(
-                    Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.75f))),
-                ).padding(bottom = 4.dp),
+                // Only in fullscreen is the player actually against the system bars. Inline, the
+                // video sits mid-screen and this padding just lifts the bar off the frame edge.
+                .then(if (fullScreen.value) Modifier.navigationBarsPadding() else Modifier)
+                .padding(bottom = 10.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color.Black.copy(alpha = 0.60f)),
         ) {
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (audioEnabled) {
@@ -1480,21 +1541,18 @@ private fun RecordingPlayer(
                 Box {
                     IconButton(onClick = { showSpeedMenu = true }) {
                         Text(
-                            if (playbackSpeed ==
-                                playbackSpeed.toInt().toFloat()
-                            ) {
-                                "${playbackSpeed.toInt()}x"
-                            } else {
-                                "${playbackSpeed}x"
-                            },
+                            fmtSpeed(playbackSpeed),
                             color = Color.White,
                             style = MaterialTheme.typography.labelMedium,
                         )
                     }
                     DropdownMenu(expanded = showSpeedMenu, onDismissRequest = { showSpeedMenu = false }) {
-                        listOf(1f, 2f, 4f, 8f).forEach { speed ->
+                        // The single-event player's speeds, read off Frigate's own player
+                        // (pwa_play_speeds.png). NOT the same set as the Review motion-scrub grid,
+                        // which is 4x/8x/12x/16x — don't unify them.
+                        EventPlaybackSpeeds.forEach { speed ->
                             DropdownMenuItem(
-                                text = { Text("${speed.toInt()}x") },
+                                text = { Text(fmtSpeed(speed)) },
                                 onClick = {
                                     player.playbackParameters = PlaybackParameters(speed)
                                     showSpeedMenu = false
@@ -1517,6 +1575,12 @@ private fun RecordingPlayer(
 }
 
 // ── Helpers ──
+
+/** Speeds offered by the single-event player, matching Frigate's own web player. */
+private val EventPlaybackSpeeds = listOf(0.5f, 1f, 2f, 4f, 8f, 16f)
+
+/** "0.5x" / "1x" — drops the decimal only when the speed is whole. */
+private fun fmtSpeed(speed: Float): String = if (speed == speed.toInt().toFloat()) "${speed.toInt()}x" else "${speed}x"
 
 private fun fmtDatePill(epochMs: Long): String {
     val ldt =

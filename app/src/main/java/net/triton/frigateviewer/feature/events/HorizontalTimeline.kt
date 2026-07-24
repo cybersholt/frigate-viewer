@@ -4,9 +4,14 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -24,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
@@ -70,6 +76,7 @@ fun HorizontalTimeline(
     val currentViewEndMs by rememberUpdatedState(viewEndMs)
     val currentRangeMs by rememberUpdatedState(rangeMs)
     val currentOldestMs by rememberUpdatedState(oldestMs)
+    val currentScrubMs by rememberUpdatedState(scrubberTimeMs)
     val currentOnScrub by rememberUpdatedState(onScrub)
     val currentOnPan by rememberUpdatedState(onPan)
     val currentOnTouchPreview by rememberUpdatedState(onTouchPreview)
@@ -94,40 +101,35 @@ fun HorizontalTimeline(
                 .fillMaxSize()
                 // Unit key: gesture handler never restarts mid-drag when zoom/pan changes
                 .pointerInput(Unit) {
+                    // Pan only. Scrubbing belongs to the handle overlay below, which owns its own
+                    // pointer events — the way Frigate's `use-draggable-element` does it. Sharing
+                    // one gesture between "pan" and "hit-test the scrubber line" is what made fine
+                    // adjustment impossible: a finger a few px off the line silently panned
+                    // instead, and in landscape the rail is barely half as tall so missing was easy.
                     val touchSlop = viewConfiguration.touchSlop
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
+                        val height = size.height.toFloat()
+                        if (height <= 0f) return@awaitEachGesture
+
                         var isPanning = false
                         var lastY = down.position.y
-                        currentOnTouchPreview(timeAtFraction(down.position.y / size.height))
-                        currentOnTouchPositionChanged(down.position.y / size.height)
                         while (true) {
                             val ev = awaitPointerEvent()
                             val change = ev.changes.firstOrNull { it.id == down.id } ?: break
-                            if (change.changedToUpIgnoreConsumed()) {
-                                if (!isPanning) {
-                                    val frac = change.position.y / size.height
-                                    currentOnScrub(
-                                        (currentViewEndMs - frac * currentRangeMs)
-                                            .toLong()
-                                            .coerceIn(currentOldestMs, currentViewEndMs),
-                                    )
-                                }
-                                break
-                            }
+                            if (change.changedToUpIgnoreConsumed()) break
+
                             val dy = change.position.y - lastY
                             if (!isPanning && abs(change.position.y - down.position.y) > touchSlop) {
                                 isPanning = true
                             }
                             if (isPanning) {
                                 change.consume()
-                                val msPerPx = currentRangeMs.toFloat() / size.height
+                                val msPerPx = currentRangeMs.toFloat() / height
                                 // Content follows the finger: drag down reveals newer time
                                 // (toward now), drag up reveals further into the past.
                                 currentOnPan((dy * msPerPx).toLong())
                             }
-                            currentOnTouchPreview(timeAtFraction(change.position.y / size.height))
-                            currentOnTouchPositionChanged(change.position.y / size.height)
                             lastY = change.position.y
                         }
                         currentOnTouchPreview(null)
@@ -152,6 +154,61 @@ fun HorizontalTimeline(
                 palette = palette,
             )
         }
+
+        // ── Draggable scrub handle ──
+        // A real, sized element that owns its pointer events, not a hit-test inside the canvas
+        // gesture. This mirrors Frigate's `use-draggable-element`: the handle receives the drag,
+        // so dragging it can never be mistaken for panning, and it needs no grab threshold
+        // because it has genuine size. The faint red band is that touch target made visible —
+        // the reference PWA draws the same band around its scrubber.
+        val handleHeightPx = with(LocalDensity.current) { maxHeight.toPx() }
+        val handleFraction = ((viewEndMs - scrubberTimeMs).toFloat() / rangeMs).coerceIn(0f, 1f)
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(ScrubHandleTouchHeight)
+                .offset(y = maxHeight * handleFraction - ScrubHandleTouchHeight / 2)
+                .background(TimelineScrubberColor.copy(alpha = 0.12f))
+                .pointerInput(Unit) {
+                    detectDragGestures(
+                        onDragStart = {
+                            currentOnTouchPreview(currentScrubMs)
+                            currentOnTouchPositionChanged(
+                                ((currentViewEndMs - currentScrubMs).toFloat() / currentRangeMs)
+                                    .coerceIn(0f, 1f),
+                            )
+                        },
+                        onDragEnd = {
+                            currentOnTouchPreview(null)
+                            currentOnTouchPositionChanged(null)
+                        },
+                        onDragCancel = {
+                            currentOnTouchPreview(null)
+                            currentOnTouchPositionChanged(null)
+                        },
+                    ) { change, drag ->
+                        change.consume()
+                        if (handleHeightPx <= 0f) return@detectDragGestures
+                        val msPerPx = currentRangeMs.toFloat() / handleHeightPx
+                        // Dragging down moves toward older footage, matching the rail's top=now
+                        // orientation. Applying the delta to the *current* scrub time (rather than
+                        // mapping absolute finger position) is what makes fine adjustment work:
+                        // one pixel of movement is one pixel of time, wherever you grabbed.
+                        val deltaMs = (drag.y * msPerPx).toLong()
+                        val proposed = currentScrubMs - deltaMs
+                        val clamped = proposed.coerceIn(currentOldestMs, currentViewEndMs)
+                        currentOnScrub(clamped)
+                        currentOnTouchPreview(clamped)
+                        currentOnTouchPositionChanged(
+                            ((currentViewEndMs - clamped).toFloat() / currentRangeMs)
+                                .coerceIn(0f, 1f),
+                        )
+                        // At the edges Frigate auto-scrolls the timeline so a long drag can keep
+                        // going past the visible window; forward the leftover there.
+                        if (proposed != clamped) currentOnPan(deltaMs)
+                    }
+                },
+        )
 
         // ── Zoom buttons ──
         Column(
@@ -190,6 +247,9 @@ fun HorizontalTimeline(
         }
     }
 }
+
+/** Touch target for the scrub handle. Material's 48 dp minimum, centred on the red line. */
+private val ScrubHandleTouchHeight = 48.dp
 
 internal fun fmtGridTime(
     epochMs: Long,

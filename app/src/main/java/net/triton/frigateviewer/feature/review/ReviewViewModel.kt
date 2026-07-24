@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import net.triton.frigateviewer.core.data.FrigateRepository
 import net.triton.frigateviewer.core.data.ServerRepository
+import net.triton.frigateviewer.core.model.MotionActivity
 import net.triton.frigateviewer.core.model.ReviewSegment
 import net.triton.frigateviewer.core.model.Severity
 import net.triton.frigateviewer.core.network.ApiResult
@@ -43,6 +44,12 @@ data class ReviewUiState(
     // Starting dense (recent activity, clearly visible pills) and letting zoom-out reach the full
     // day is the cheap approximation of that without a scrollable-strip rewrite.
     val timeRangeHours: Float = 2f,
+    /**
+     * Motion waveform behind the rail's activity strip. Loaded separately from [allSegments] and
+     * allowed to stay empty — the rail falls back to review-item density, so a Frigate too old to
+     * serve `api/review/activity/motion` degrades instead of showing a blank strip.
+     */
+    val motionActivity: List<MotionActivity> = emptyList(),
 ) {
     // Counts describe the window, not the current filter — they're the thing you filter *with*.
     val alertCount: Int get() = allSegments.count { it.severityType == Severity.ALERT }
@@ -118,6 +125,11 @@ class ReviewViewModel
                 val nowSec = System.currentTimeMillis() / 1000.0
                 val afterSec = nowSec - WINDOW_HOURS * 3600
 
+                // Fire-and-forget alongside the review fetch: the rail renders without it, and
+                // making the grid wait on a secondary waveform would be a regression in perceived
+                // speed for a purely decorative lane.
+                loadMotionActivity(afterSec = afterSec, beforeSec = nowSec)
+
                 // `reviewed` is deliberately NOT sent: it is a *filter*, not an include-flag —
                 // `reviewed=1` returns ONLY already-reviewed items (verified live: 2 of 130).
                 // We fetch the whole window and filter reviewed/camera/label/zone client-side, so
@@ -144,6 +156,38 @@ class ReviewViewModel
 
                     is ApiResult.ParseError -> {
                         fail(baseUrl, "Unreadable response", r.cause)
+                    }
+                }
+            }
+        }
+
+        /**
+         * Loads the rail's motion waveform. Failure is deliberately non-fatal and never reaches
+         * [ReviewUiState.error]: the review feed is the screen, the waveform is a lane on the rail,
+         * and Frigate versions before 0.14 have no such endpoint. Every branch is logged — the
+         * strip silently falling back to review-item density with no trace is exactly the failure
+         * mode that makes "why is the timeline different on this server" unanswerable.
+         */
+        private fun loadMotionActivity(
+            afterSec: Double,
+            beforeSec: Double,
+        ) {
+            viewModelScope.launch {
+                when (val r = repo.motionActivity(after = afterSec, before = beforeSec)) {
+                    is ApiResult.Success -> {
+                        _state.value = _state.value.copy(motionActivity = r.data)
+                    }
+
+                    is ApiResult.HttpError -> {
+                        Log.w(TAG, "motion activity unavailable (HTTP ${r.code}); rail falls back to item density")
+                    }
+
+                    is ApiResult.NetworkError -> {
+                        Log.w(TAG, "motion activity unavailable (network); rail falls back to item density", r.cause)
+                    }
+
+                    is ApiResult.ParseError -> {
+                        Log.w(TAG, "motion activity unreadable; rail falls back to item density", r.cause)
                     }
                 }
             }

@@ -35,12 +35,26 @@ issue write-ups for traceability; `memory/project_state.md` is the full session-
 
 ## Bugs (open)
 
-- **Review severity rail still needs a live-device check.** Reworked in `dced08d` to match
-  Frigate's real `EventReviewTimeline` (dot markers, correct theme colors, 2h default zoom with
-  minor ruler ticks), but a mid-session screenshot showed only two gridline labels near the
-  bottom of the rail instead of one at every interval — the draw math checks out by hand-trace
-  against Explore's identical, working `drawActivityTimeline`, so code review alone didn't find
-  the cause. Confirm on a real device/emulator before trusting it renders densely throughout.
+- ~~**Review rail rework needs a live-device check.**~~ Checked on `emulator-5554` 2026-07-21:
+  labels legible, minor ticks dense, activity strip populated with real motion data, mid-rail tap
+  ignored, handle drag moved the scrubber and scrolled the grid in sync. Detail kept below because
+  the "why" is still useful. Rebuilt 2026-07-21 against the PWA reference
+  (`192.168.88.26:5005/review`): dense minor ticks with labelled major ticks (15 min over 1 min at
+  the 2 h default), a bracketed scrub handle (two rules + a bold red time capsule), and an
+  **activity strip** down the right edge carrying the amber motion waveform with severity-coloured
+  review pills on top. Rail widened 64→76 dp to fit.
+  - **Root cause of "hard to read" was density, not layout:** the rail set
+    `android.graphics.Paint.textSize = 15f` in *raw pixels*, which on a 420 dpi phone is ~5.7 dp of
+    text — under half the 26f the Event Detail timeline uses. All geometry is now dp/sp-derived
+    off `DrawScope`'s `Density`. Watch for this in any other `Paint` built for a Canvas.
+  - Renderer moved out of `feature/events/TimelineRenderer.kt` into
+    `feature/review/ReviewRailRenderer.kt` so it can use the review package's layout math without
+    events depending back on review. `drawSeverityEventTimeline` no longer exists.
+  - Ruler + waveform math is pure and unit-tested (`ReviewTimelineLayoutTest`, 11 tests) — but
+    **nothing has been seen on a device.** Confirm the strip actually populates: it needs
+    `api/review/activity/motion`, and on failure it silently falls back to review-item density
+    (logged at `warn` by `ReviewViewModel.loadMotionActivity`, so check logcat before assuming
+    the waveform is real motion data).
 - **Snapshot-only cameras don't fit the event-playback model.** A snapshot-only camera's live
   tile works fine, but event review assumes a clip/VOD exists. Look at how Frigate's own web UI
   handles this before building anything — may turn out to be a "what does done even mean"
@@ -49,9 +63,11 @@ issue write-ups for traceability; `memory/project_state.md` is the full session-
   cycles green (idle) → red (recording), but never turns blue for "motion happening now" — even
   though blue already means motion/active-event elsewhere in the app (the fullscreen
   focused-tile `LiveIndicatorDot`). The two need to share one source of state.
-- **Event playback player chrome is off-spec.** Controls are misaligned (reproduced on the
-  bird-feeder camera) and the skin reads as a generic/legacy player, not this app's Material 3
-  language. Cosmetic, but it's the second-most-used screen after the grid.
+- ~~**Event playback player chrome is off-spec.**~~ Fixed 2026-07-21: the control bar is now a
+  content-hugging rounded pill matching upstream's `w-auto rounded-lg bg-background/60 px-4 py-2`,
+  the full-width dark gradient is gone, and `navigationBarsPadding()` is fullscreen-only so the bar
+  sits on the frame edge instead of floating above it. Verified on ch1/ch2/wyze_1 in both
+  orientations. Re-open only if a specific camera still looks wrong.
 - **HA notification → event detail deep link doesn't work end-to-end.** The receiving half
   already exists: `AndroidManifest.xml` declares the `frigateviewer://` intent filter and
   `MainActivity.resolveDeepLink()` parses `frigateviewer://event?id=<id>&camera=<cam>` (plus an
@@ -72,6 +88,58 @@ issue write-ups for traceability; `memory/project_state.md` is the full session-
 
 ## Features in progress / next up
 
+- **Timelines are grab-the-handle, not tap-anywhere — everywhere.** Standing interaction rule,
+  stated 2026-07-21: *"instead of accidentally clicking anywhere on the timeline, you actually have
+  to grab the little red line and DRAG that. it should be like this whereever a timeline is
+  displayed."* **DONE in all three surfaces and verified on the emulator:**
+  `ReviewSeverityTimeline.kt`, `HorizontalTimeline.kt` (Event Detail), `TimelinePanel.kt` (Explore
+  sidebar). Pattern is `awaitEachGesture` + `awaitFirstDown` with the press ignored unless it lands
+  within a 24 dp grab radius of the scrub line. Two traps if you touch these again: the scrub time
+  must go through `rememberUpdatedState`, or the hit-test runs against a stale handle position and
+  the handle becomes ungrabbable after one drag; and on `HorizontalTimeline` a non-grabbing press
+  still *pans* the window — that was pre-existing, useful behaviour, only the tap-to-jump was
+  removed. Verified: tap mid-timeline leaves the scrubber alone, drag on the handle moves it.
+
+- **Event player: gradient + landscape — DONE 2026-07-21, verified on emulator.**
+  - The "weird gradient" was `Brush.verticalGradient(Transparent → Black 0.75f)` on a
+    `fillMaxWidth()` control container, smearing a dark band across the lower third of every frame.
+    Replaced with a content-hugging rounded bar. **Checked against upstream first** rather than
+    guessed: Frigate's `web/src/components/player/VideoControls.tsx` container is
+    `"z-50 flex w-auto select-none items-center justify-between gap-4 rounded-lg bg-background/60
+    px-4 py-2 text-primary"` — `w-auto`, `rounded-lg`, a *semi-transparent solid*, no gradient.
+  - `navigationBarsPadding()` was applied unconditionally, lifting the bar ~34 dp off the frame
+    even when the player is inline mid-screen. Now fullscreen-only.
+  - Landscape was structurally broken, not just styled wrong: the player was
+    `fillMaxWidth().aspectRatio(16f/9f)`, which on a 2400x1080 screen asks for a 1350 px-tall video
+    in 1080 px — the video ate the whole height and the timeline was crushed to a sliver at the
+    bottom (and the leftover Column background showed as the white strip on the left edge).
+    Landscape now uses a `Row`: video letterboxed on black with `weight(1f)`, timeline a 160 dp
+    vertical rail on the right, matching `pwa_landscape_event_player_and_timeline.png`. The two
+    panes are declared as `playerPane` / `viewPane` lambdas so portrait and landscape share bodies.
+  - Still open on this screen: the scrub thumbnail, the app-bar time capsule, and grab-to-drag —
+    see the next item.
+
+- **Event player scrub preview + app-bar clock — DONE 2026-07-21, verified on emulator.**
+  - The floating `PreviewThumbnailBubble` over the timeline is gone. The preview frame now replaces
+    the *main player image* while dragging (`playerPane` in `EventDetail.kt`), which is what the PWA
+    does and what was asked for — the bubble covered the timeline it was meant to help you read.
+    `PreviewThumbnailBubble.kt` is still used by Explore (`EventsScreen.kt:224`) — keep it. That
+    surface is a grid with no player to put the frame in, so the bubble is the only preview it can
+    show.
+  - The app-bar date pill becomes a live red clock while the handle is dragged
+    (`previewYFraction != null` is the "is scrubbing" signal), matching `pwa_timeline_scrubbing.png`.
+    Verified: pill read `10:17:32 AM` mid-drag and reverted to `Jul 21` on release.
+  - Landscape keeps the timeline rail **including in fullscreen** (the layout branches on
+    `isLandscape` alone, not `isLandscape && !fullScreen`), matching the reference screenshot of
+    fullscreen PWA playback where the rail is still present.
+
+- **Pinch-zoom on the event / VOD player.** Deferred deliberately on 2026-07-21 — the user asked
+  for it "after this stuff is done", i.e. after the live-tile zoom fix. The hard part is already
+  built and shared: `feature/cameras/ZoomPanState.kt` (clamped pan, centroid-anchored pinch) and
+  `ZoomIndicator.kt` (the minimap) have no live-stream dependency, so wiring them into
+  `EventDetail.kt`'s `ClipPlayer` is mostly a `graphicsLayer` + `onSizeChanged` + gesture hookup,
+  plus feeding the aspect ratio from ExoPlayer's `onVideoSizeChanged` the same way `RtspLiveTile`
+  now does. Also worth considering for `SnapshotLiveTile`, which still has no gestures at all.
 - **System Metrics screen** (Settings → Advanced, renamed from "Advanced"; content untouched so
   far): replace the percentage bar charts with line graphs (reuse `StreamStats.kt`'s
   `Sparkline` — area fill + dashed average line, don't reinvent it), expand Detectors to graph
@@ -164,6 +232,13 @@ this app doesn't want — reviewed for UI/feature ideas only, nothing adopted wh
   `CachedEvent.topScore` is already a persisted Room column. Nothing left to build here.
 
 ## Explicitly declined / not doing (so it doesn't get re-litigated)
+
+- **Cross-camera latency in the debug overlay.** Asked for and then withdrawn the same day
+  (2026-07-21). The motivation was a symptom seen in the *Frigate web app*, not this one: an
+  MSE-played stream whose latency climbed steadily until playback stopped. It reproduces in Brave
+  but not Firefox, so the user's read is a browser buffering/caching issue rather than anything
+  server-side or app-side. Don't rebuild this as a native feature off that evidence — if the
+  same drift ever shows up in *our* MSE/WebRTC path, that's a real bug to chase on its own terms.
 
 - **Full testTag sweep.** The motivation (AI-driven verification finding elements by tag instead
   of screenshot+tap-coordinate guessing) never materialized across many sessions of exactly that

@@ -33,7 +33,8 @@
       "Bash(./gradlew :app:compileDebugKotlin --console=plain)",
       "Bash(./gradlew ktlintCheck --console=plain)",
       "Bash(./gradlew :app:assembleDebug --console=plain)",
-      "Bash(./gradlew :app:installDebug)"
+      "Bash(./gradlew :app:installDebug)",
+      "PowerShell(Get-Process *)"
     ]
   },
   "hooks": {

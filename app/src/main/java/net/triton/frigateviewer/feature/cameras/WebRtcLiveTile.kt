@@ -34,10 +34,11 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.IntOffset
@@ -223,8 +224,8 @@ fun WebRtcLiveTile(
     val pendingCandidates = remember { mutableListOf<IceCandidate>() }
 
     var isMuted by remember { mutableStateOf(true) }
-    var scale by remember { mutableStateOf(1f) }
-    var zoomOffset by remember { mutableStateOf(Offset.Zero) }
+    // Pinch-zoom / pan, clamped so the picture always covers the viewport. See ZoomPanState.kt.
+    val zoomPan = rememberZoomPanState()
     var retryCount by remember { mutableStateOf(0) }
     // Native frame aspect ratio, so the renderer can be sized to fit-within its container
     // (letterboxed) at the Compose layout level — SurfaceViewRenderer.setScalingType alone
@@ -780,16 +781,16 @@ fun WebRtcLiveTile(
         modifier =
             (if (isFullScreen) Modifier.fillMaxSize() else modifier)
                 .background(Color.Black)
-                .pointerInput("zoom") {
-                    detectTransformGestures { _, pan, zoom, _ ->
-                        scale = (scale * zoom).coerceIn(1f, 5f)
-                        zoomOffset = if (scale > 1f) zoomOffset + pan else Offset.Zero
+                // The viewport is what the pan is clamped against, so it has to be measured, not
+                // assumed — it changes on rotation and when the tile enters/leaves fullscreen.
+                .onSizeChanged {
+                    zoomPan.onViewportChanged(Size(it.width.toFloat(), it.height.toFloat()))
+                }.pointerInput("zoom") {
+                    detectTransformGestures { centroid, pan, zoom, _ ->
+                        zoomPan.onTransform(centroid, pan, zoom)
                     }
                 }.pointerInput("tap") {
-                    detectTapGestures(onDoubleTap = {
-                        scale = 1f
-                        zoomOffset = Offset.Zero
-                    })
+                    detectTapGestures(onDoubleTap = { zoomPan.reset() })
                 },
         contentAlignment = Alignment.Center,
     ) {
@@ -818,10 +819,10 @@ fun WebRtcLiveTile(
             AndroidView(
                 modifier =
                     rendererModifier.graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        translationX = zoomOffset.x
-                        translationY = zoomOffset.y
+                        scaleX = zoomPan.scale
+                        scaleY = zoomPan.scale
+                        translationX = zoomPan.offset.x
+                        translationY = zoomPan.offset.y
                         clip = true
                     },
                 factory = { ctx ->
@@ -841,6 +842,9 @@ fun WebRtcLiveTile(
                                 ) {
                                     if (w > 0 && h > 0) {
                                         videoAspectRatio = w.toFloat() / h.toFloat()
+                                        // Pan is clamped against the picture, not the tile, so the
+                                        // clamp needs the real frame shape too.
+                                        zoomPan.onAspectRatioChanged(videoAspectRatio)
                                     }
                                 }
                             },
@@ -914,6 +918,15 @@ fun WebRtcLiveTile(
                     )
                 }
             }
+
+            // Bottom-left, above the mute button when there is one so the two never overlap.
+            ZoomIndicator(
+                state = zoomPan,
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(start = 12.dp, bottom = if (audioEnabled) 60.dp else 12.dp),
+            )
 
             IconButton(
                 onClick = onToggleFullScreen,
