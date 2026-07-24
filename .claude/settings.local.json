@@ -34,7 +34,8 @@
       "Bash(./gradlew ktlintCheck --console=plain)",
       "Bash(./gradlew :app:assembleDebug --console=plain)",
       "Bash(./gradlew :app:installDebug)",
-      "PowerShell(Get-Process *)"
+      "PowerShell(Get-Process *)",
+      "PowerShell($sdk = \"$env:LOCALAPPDATA\\\\Android\\\\Sdk\"; & \"$sdk\\\\emulator\\\\emulator.exe\" -list-avds)"
     ]
   },
   "hooks": {

@@ -1,5 +1,6 @@
 package net.triton.frigateviewer.feature.cameras
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -24,8 +25,17 @@ import net.triton.frigateviewer.core.network.ApiResult
 import net.triton.frigateviewer.core.network.WifiMonitor
 import javax.inject.Inject
 
-/** How often [CamerasViewModel.setFocusedCamera]'s poll re-checks the focused camera's most recent event. */
+private const val TAG = "CamerasViewModel"
+
+/** How often the active-event poll re-checks which cameras have an in-progress event. */
 private const val EVENT_POLL_INTERVAL_MS = 15_000L
+
+/**
+ * Events fetched per active-event poll. Only in-progress ones matter, but the endpoint returns
+ * newest-first across all cameras, so this has to be deep enough that a busy camera's finished
+ * events can't push another camera's in-progress event off the end.
+ */
+private const val ACTIVE_EVENT_POLL_LIMIT = 50
 
 data class CamerasUiState(
     val loading: Boolean = false,
@@ -119,6 +129,10 @@ class CamerasViewModel
         private var eventPollJob: Job? = null
 
         init {
+            // screenVisible starts true, so setScreenVisible(true) short-circuits and would never
+            // kick the poll off on first load. Start it here.
+            startOrStopEventPoll()
+
             // Load persisted camera-management prefs and last-known names on startup.
             viewModelScope.launch {
                 combine(
@@ -226,27 +240,39 @@ class CamerasViewModel
             if (screenVisible == visible) return
             screenVisible = visible
             startOrStopAutoRefresh()
+            startOrStopEventPoll()
         }
 
         /**
          * Called from CamerasScreen whenever the fullscreen-focused camera changes (including to
-         * null on exit) — drives [pollFocusedCameraEvent] below. Scoped to the one camera actually
-         * being viewed in detail, not every grid tile, to avoid repeating this app's past
-         * auto-refresh traffic-leak mistake (see project_state.md, 2026-07-10 session) by polling
-         * cameras nobody's looking at.
+         * null on exit). Kept so the ViewModel knows what's focused, but it no longer drives the
+         * active-event poll — see [startOrStopEventPoll], which now covers every visible camera so
+         * grid tiles get the same "motion now" state fullscreen already had.
          */
         fun setFocusedCamera(name: String?) {
             if (focusedCamera == name) return
             focusedCamera = name
+        }
+
+        /**
+         * Runs the active-event poll whenever the Cameras tab is on screen.
+         *
+         * Deliberately NOT per-camera. `api/events` without a `camera` filter returns recent events
+         * across every camera in **one** request, so covering the whole grid costs the same single
+         * call the old focused-only poll did. That keeps clear of this app's past auto-refresh
+         * traffic leak (project_state.md, 2026-07-10), which came from N-requests-per-interval, not
+         * from polling as such. Stops with the screen, same as [refreshJob].
+         */
+        private fun startOrStopEventPoll() {
             eventPollJob?.cancel()
-            if (name == null) {
+            if (!screenVisible) {
                 _state.value = _state.value.copy(activeEventCameraNames = emptySet())
                 return
             }
             eventPollJob =
                 viewModelScope.launch {
                     while (true) {
-                        pollFocusedCameraEvent(name)
+                        pollActiveEvents()
                         // TODO(#20 follow-up): expose this interval in Developer Options once a
                         // polling-rate control exists there, instead of the hardcoded constant
                         // below — same idea as autoRefreshInterval, but for this poll specifically.
@@ -255,18 +281,36 @@ class CamerasViewModel
                 }
         }
 
-        private suspend fun pollFocusedCameraEvent(cameraName: String) {
+        /**
+         * One request, every camera. An event with a null `end_time` is still in progress, which is
+         * exactly what "motion happening now" means — the same condition the fullscreen dot already
+         * used, no longer restricted to a single camera.
+         */
+        private suspend fun pollActiveEvents() {
             if (!screenVisible) return
-            when (val r = repo.events(camera = cameraName, limit = 1)) {
+            when (val r = repo.events(limit = ACTIVE_EVENT_POLL_LIMIT)) {
                 is ApiResult.Success -> {
-                    val open = r.data.firstOrNull()?.endTime == null && r.data.isNotEmpty()
                     _state.value =
                         _state.value.copy(
-                            activeEventCameraNames = if (open) setOf(cameraName) else emptySet(),
+                            activeEventCameraNames =
+                                r.data
+                                    .filter { it.endTime == null }
+                                    .map { it.camera }
+                                    .toSet(),
                         )
                 }
 
-                else -> {}
+                is ApiResult.HttpError -> {
+                    Log.w(TAG, "active-event poll failed: HTTP ${r.code}; motion dots go stale")
+                }
+
+                is ApiResult.NetworkError -> {
+                    Log.w(TAG, "active-event poll failed: network; motion dots go stale", r.cause)
+                }
+
+                is ApiResult.ParseError -> {
+                    Log.w(TAG, "active-event poll returned unreadable data", r.cause)
+                }
             }
         }
 

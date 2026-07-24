@@ -35,6 +35,27 @@ issue write-ups for traceability; `memory/project_state.md` is the full session-
 
 ## Bugs (open)
 
+- **No pull-to-refresh on Review or Explore.** Reported 2026-07-23. This violates the app's own
+  UI rule 4 ("All lists must support pull to refresh"), so it's a rule gap rather than a nicety.
+  Both are list surfaces whose ViewModels already expose `refresh()`, so the work is wrapping the
+  grid in `PullToRefreshBox` and wiring an `isRefreshing` flag — no new data plumbing.
+
+- **Review card images load noticeably slower than Explore's.** Reported 2026-07-23. Still open,
+  but two hypotheses are now **ruled out by measurement** against the live server — don't redo them:
+  - *Not the endpoint.* Both screens have used `snapshot.jpg` since the 2026-07-21 fix.
+  - *Not image size.* `snapshot.jpg` returns **640x360, ~55 KB**, and Frigate **ignores `?h=`** on
+    this endpoint — `?h=200` and `?h=480` both come back 640x360, byte-identical. (So the existing
+    `?h=360` / `?h=720` in `EventDetail.kt` are no-ops too; harmless, but they mislead.)
+  - Remaining suspects: Coil cache keys / `ImageLoader` config differing per screen, Review
+    rendering more images per screen than Explore, or Review's request being issued later in
+    composition. Measure with the Coil event listener before changing code.
+
+- **Cameras first-load flashes the hamburger menu, hides it, then brings it back.** Reported
+  2026-07-23: menu appears → disappears → skeleton loaders → menu reappears. Likely the top bar
+  rendering against the initial `loading = false` default before the first real `CamerasUiState`
+  emission flips it to loading. Look at that default and the first `refresh()` emission rather
+  than papering over it with a delay.
+
 - ~~**Review rail rework needs a live-device check.**~~ Checked on `emulator-5554` 2026-07-21:
   labels legible, minor ticks dense, activity strip populated with real motion data, mid-rail tap
   ignored, handle drag moved the scrubber and scrolled the grid in sync. Detail kept below because

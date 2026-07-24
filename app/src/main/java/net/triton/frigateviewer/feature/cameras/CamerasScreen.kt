@@ -373,6 +373,7 @@ fun CamerasScreen(
                                             onFetchRecentEvent = { vm.fetchRecentEvent(name) },
                                             onNavigateToEvents = onNavigateToEvents,
                                             recordingEnabled = state.cameras[name]?.record?.enabled == true,
+                                            activeEventNow = state.activeEventCameraNames.contains(name),
                                         )
                                     }
                                 }
@@ -431,6 +432,7 @@ private fun SwipeableCameraTile(
     onFetchRecentEvent: () -> Unit,
     onNavigateToEvents: (camera: String?, label: String?, zone: String?) -> Unit,
     recordingEnabled: Boolean = false,
+    activeEventNow: Boolean = false,
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -724,6 +726,7 @@ private fun SwipeableCameraTile(
                 refreshTimestamp = refreshTimestamp,
                 onSubStreamFallback = onSubStreamFallback,
                 recordingEnabled = recordingEnabled,
+                activeEventNow = activeEventNow,
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -1400,6 +1403,7 @@ private fun StreamContent(
     currentSsid: String?,
     baseUrl: String?,
     recordingEnabled: Boolean = false,
+    activeEventNow: Boolean = false,
     snapshotPath: String,
     liveCameraName: String,
     cameraName: String,
@@ -1569,6 +1573,7 @@ private fun StreamContent(
                 isOverridden = isStreamOptionOverridden,
                 globalDefaultStreamOption = globalDefaultStreamOption,
                 recordingEnabled = recordingEnabled,
+                activeEventNow = activeEventNow,
                 onSetStreamOverride = onSetStreamOverride,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -1607,6 +1612,7 @@ private fun LiveIndicatorDot(
 private fun StreamStatusBadge(
     state: CameraStreamState,
     recordingEnabled: Boolean = false,
+    activeEventNow: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val white70 = Color.White.copy(alpha = 0.70f)
@@ -1653,7 +1659,7 @@ private fun StreamStatusBadge(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                LiveIndicatorDot(recordingEnabled)
+                LiveIndicatorDot(recordingEnabled, activeEventNow)
                 Text("Live", style = MaterialTheme.typography.labelSmall, color = Color.White)
             }
         }
@@ -1672,6 +1678,7 @@ private fun StreamTileBadgeLayer(
     globalDefaultStreamOption: String,
     onSetStreamOverride: (String?) -> Unit,
     recordingEnabled: Boolean = false,
+    activeEventNow: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier) {
@@ -1689,7 +1696,11 @@ private fun StreamTileBadgeLayer(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 CameraPill(camera = cameraName)
-                StreamStatusBadge(state = streamState, recordingEnabled = recordingEnabled)
+                StreamStatusBadge(
+                    state = streamState,
+                    recordingEnabled = recordingEnabled,
+                    activeEventNow = activeEventNow,
+                )
             }
             StreamTypeBadge(
                 label = streamTypeLabel,

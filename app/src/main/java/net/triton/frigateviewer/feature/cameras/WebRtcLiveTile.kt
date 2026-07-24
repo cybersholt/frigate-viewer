@@ -226,6 +226,14 @@ fun WebRtcLiveTile(
     var isMuted by remember { mutableStateOf(true) }
     // Pinch-zoom / pan, clamped so the picture always covers the viewport. See ZoomPanState.kt.
     val zoomPan = rememberZoomPanState()
+
+    // A PiP window is a few hundred pixels wide and its chrome is suppressed, so a zoom carried in
+    // from the full-size tile shows a tiny crop with no way to adjust it. Snap back to the whole
+    // frame on entry; the zoom belongs to the full-size tile, not the thumbnail.
+    val isInPipForZoom = LocalIsInPip.current
+    LaunchedEffect(isInPipForZoom) {
+        if (isInPipForZoom) zoomPan.reset()
+    }
     var retryCount by remember { mutableStateOf(0) }
     // Native frame aspect ratio, so the renderer can be sized to fit-within its container
     // (letterboxed) at the Compose layout level — SurfaceViewRenderer.setScalingType alone

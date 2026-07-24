@@ -38,6 +38,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -160,23 +161,30 @@ fun ReviewScreen(
                     }
 
                     else -> {
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(1),
-                            state = gridState,
-                            contentPadding = PaddingValues(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        PullToRefreshBox(
+                            isRefreshing = state.loading,
+                            onRefresh = { vm.refresh() },
+                            modifier = Modifier.fillMaxSize(),
                         ) {
-                            items(state.segments, key = { it.id }) { segment ->
-                                ReviewCard(
-                                    segment = segment,
-                                    baseUrl = state.baseUrl,
-                                    imageLoader = imageLoader,
-                                    onClick = {
-                                        segment.data.detections
-                                            .firstOrNull()
-                                            ?.let(onOpenEvent)
-                                    },
-                                )
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(1),
+                                state = gridState,
+                                contentPadding = PaddingValues(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxSize(),
+                            ) {
+                                items(state.segments, key = { it.id }) { segment ->
+                                    ReviewCard(
+                                        segment = segment,
+                                        baseUrl = state.baseUrl,
+                                        imageLoader = imageLoader,
+                                        onClick = {
+                                            segment.data.detections
+                                                .firstOrNull()
+                                                ?.let(onOpenEvent)
+                                        },
+                                    )
+                                }
                             }
                         }
                     }
@@ -293,7 +301,10 @@ private fun FilterSection(
     )
     options.forEach { option ->
         SwitchRow(
-            label = option.replaceFirstChar { it.uppercase() },
+            // Frigate's zone/label/camera identifiers are snake_case on the wire ("front_yard"),
+            // and the raw underscores were showing through in this sheet. Same treatment
+            // EventDetail already gives zone chips — display prettified, filter on the raw value.
+            label = option.replace('_', ' ').replaceFirstChar { it.uppercase() },
             checked = option in selected,
         ) { onToggle(option) }
     }
@@ -368,6 +379,9 @@ private fun ReviewCard(
     ) {
         if (thumbId != null) {
             FrigateImage(
+                // No `?h=` — measured 2026-07-23 against the live server: snapshot.jpg returns
+                // 640x360 / ~55 KB regardless (h=200 and h=480 both come back 640x360), so the
+                // param is dead weight here. Don't re-add it thinking it resizes anything.
                 relativePath = "api/events/$thumbId/snapshot.jpg",
                 contentDescription = "${segment.camera} ${segment.severity}",
                 baseUrl = baseUrl,

@@ -159,6 +159,41 @@ dependency, and `ZoomPanStateTest.kt` covers it without an emulator.
 ./gradlew ktlintFormat                auto-fix style violations
 ```
 
+## Committing
+
+**Don't commit or push unless the user asked in their most recent message.** Approval is per-batch
+and expires once that commit lands — a previous "commit and push" doesn't cover the next batch.
+Uncommitted work is a fine place to end a turn: report the diff and stop.
+
+### Commits are GPG-signed — wait for the passphrase
+
+Once you *have* been asked: `git commit` triggers a pinentry dialog on the user's machine. The first
+attempt often returns `gpg: signing failed: Timeout` simply because nobody had typed the passphrase
+yet. **That is not an error to work around.** Do not disable signing, do not pass `--no-gpg-sign`,
+do not restart `gpg-agent`. Retry the same commit, tell the user to enter their passphrase, and give
+them time. If it times out repeatedly they're probably away from the machine — say so and stop
+retrying rather than burning minutes per attempt.
+
+## End of session: clean up what you started
+
+Before ending a session, shut down anything still running that this session started or woke up:
+
+    adb -s emulator-5554 shell settings put system accelerometer_rotation 1   # restore state first
+    adb -s emulator-5554 emu kill
+    ./gradlew --stop                       # Gradle daemons (they idle for 3h otherwise)
+
+**`adb emu kill` is not enough — verify.** It detaches the device (so `adb devices` looks clean)
+while leaving the `emulator` host process alive, which is exactly the "stuck on but not visible"
+state reported 2026-07-21: no window, no adb device, still holding GBs of RAM, only findable in Task
+Manager. Always confirm, and force-kill what survives:
+
+    Get-Process | Where-Object { $_.ProcessName -match "qemu|emulator" }
+    Get-Process -Name emulator -ErrorAction SilentlyContinue | Stop-Process -Force
+
+Restore any device state the session changed before killing it — sessions that test landscape set
+`user_rotation` / `accelerometer_rotation`, and leaving auto-rotate off makes the emulator look
+broken next time.
+
 ## Branches
 - `master` — preserved RN fork (do not touch)
 - `kotlin-rewrite` — active development trunk for the native rewrite
