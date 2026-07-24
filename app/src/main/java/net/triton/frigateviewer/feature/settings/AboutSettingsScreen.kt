@@ -36,7 +36,10 @@ fun AboutSettingsScreen(onBack: () -> Unit) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("Frigate Viewer", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Version ${BuildConfig.VERSION_NAME}${if (BuildConfig.DEBUG) " (debug)" else ""}",
+                        // The build type is already in VERSION_NAME via versionNameSuffix
+                        // ("0.2.1-debug"), so the parens were showing "debug" a second time. The
+                        // commit is the useful thing there — it identifies exactly what's installed.
+                        "Version ${BuildConfig.VERSION_NAME} (${BuildConfig.GIT_SHA})",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

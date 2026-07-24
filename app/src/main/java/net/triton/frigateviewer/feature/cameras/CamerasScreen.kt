@@ -250,6 +250,14 @@ fun CamerasScreen(
                 }
 
                 else -> {
+                    // Hoisted above the focused/grid branch on purpose. Declared inside the grid
+                    // branch, this state was destroyed the moment a camera went fullscreen (the
+                    // grid leaves composition entirely), so backing out always landed at the top
+                    // of the list instead of where you were.
+                    val gridState =
+                        androidx.compose.foundation.lazy.grid
+                            .rememberLazyGridState()
+
                     if (focused != null) {
                         BackHandler { focused = null }
                         FocusedTile(
@@ -304,9 +312,6 @@ fun CamerasScreen(
                                     Icon(Icons.Filled.Menu, contentDescription = "Edit cameras")
                                 }
                             }
-                            val gridState =
-                                androidx.compose.foundation.lazy.grid
-                                    .rememberLazyGridState()
                             PullToRefreshBox(
                                 isRefreshing = state.loading,
                                 onRefresh = { vm.refresh(forceCacheRefresh = true) },

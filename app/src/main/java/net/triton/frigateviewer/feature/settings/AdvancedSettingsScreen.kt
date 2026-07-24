@@ -31,6 +31,13 @@ fun AdvancedSettingsScreen(
     val state by vm.state.collectAsStateWithLifecycle()
     var autoRefresh by remember { mutableStateOf(true) }
 
+    // Chart history, sampled off the poll below. Screen-scoped by design: api/stats is a snapshot
+    // with no history endpoint, so this can only ever cover the time the page has been open.
+    var history by remember { mutableStateOf(SystemStatsHistory()) }
+    LaunchedEffect(stats) {
+        ((stats as? ApiResult.Success)?.data as? JsonObject)?.let { history = history.plus(it) }
+    }
+
     LaunchedEffect(Unit) { vm.fetchStats() }
 
     // Poll rate is user-configurable (Developer Options → Stats poll rate) rather than a hardcoded
@@ -49,7 +56,14 @@ fun AdvancedSettingsScreen(
 
         SwitchSetting(
             title = "Auto-refresh",
-            description = "Poll Frigate's stats endpoint every 3 seconds.",
+            // Reads the real configured rate — this was hardcoded to "3 seconds" and so lied
+            // whenever the rate was changed in Developer Options.
+            description =
+                if (statsPollSeconds == 1) {
+                    "Poll Frigate's stats endpoint every second."
+                } else {
+                    "Poll Frigate's stats endpoint every $statsPollSeconds seconds."
+                },
             icon = Icons.Filled.Sync,
             checked = autoRefresh,
             onCheckedChange = { autoRefresh = it },
@@ -74,7 +88,7 @@ fun AdvancedSettingsScreen(
             is ApiResult.Success -> {
                 val root = result.data as? JsonObject
                 if (root != null) {
-                    SystemStatsOverview(root)
+                    SystemStatsOverview(root, history)
                 }
             }
 

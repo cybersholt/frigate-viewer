@@ -42,6 +42,28 @@ val keystoreProps =
         if (f.exists()) load(FileInputStream(f))
     }
 
+/**
+ * Short commit hash for the About screen's version line. Falls back to "unknown" outside a git
+ * checkout (source zip, shallow CI clone) rather than failing the build, and appends "-dirty" when
+ * the tree has uncommitted changes so a hand-built APK can't be mistaken for that exact commit.
+ */
+val gitSha: String =
+    run {
+        fun git(vararg args: String): String =
+            providers
+                .exec {
+                    commandLine("git", *args)
+                    isIgnoreExitValue = true
+                }.standardOutput
+                .asText
+                .map { it.trim() }
+                .orElse("")
+                .get()
+
+        val sha = git("rev-parse", "--short", "HEAD").ifEmpty { return@run "unknown" }
+        if (git("status", "--porcelain").isNotEmpty()) "$sha-dirty" else sha
+    }
+
 android {
     namespace = "net.triton.frigateviewer"
     compileSdk = 36
@@ -52,6 +74,7 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.2.1"
+        buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }

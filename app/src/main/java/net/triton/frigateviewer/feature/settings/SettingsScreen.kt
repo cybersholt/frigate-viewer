@@ -7,14 +7,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -85,9 +81,11 @@ fun SettingsScreen(
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
 
-    val statusBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    val minHeaderHeight = 64.dp + statusBarHeight
-    val maxHeaderHeight = 120.dp + statusBarHeight
+    // Flat, with no status-bar term — see the header Box below. The 120.dp max is deliberately
+    // shorter than SettingsSubPageScaffold's 160.dp: this header has no back button to sit beside,
+    // so it doesn't need the extra room.
+    val minHeaderHeight = 64.dp
+    val maxHeaderHeight = 120.dp
     val minHeaderHeightPx = with(density) { minHeaderHeight.toPx() }
     val maxHeaderHeightPx = with(density) { maxHeaderHeight.toPx() }
 
@@ -282,7 +280,14 @@ fun SettingsScreen(
                 .background(MaterialTheme.colorScheme.background.copy(alpha = surfaceAlpha))
                 .zIndex(5f),
         ) {
-            Box(Modifier.fillMaxSize().statusBarsPadding()) {
+            // No statusBarsPadding(): MainActivity's Scaffold already insets the NavHost, so
+            // applying it here counted the status bar twice and pushed the title ~56dp down.
+            //
+            // The bias/scale below intentionally differ from SettingsSubPageScaffold's. That
+            // header bottom-aligns its title inside a fixed-height container so it can slide up
+            // beside a back button; this one has no back button and lets the Box wrap its content,
+            // so the same values would drop the title to the bottom of the header instead.
+            Box(Modifier.fillMaxSize()) {
                 val titlePaddingStart = 20.dp
                 val titleVerticalBias = lerp(0.3f, 0f, collapseFraction)
                 val titleScale = lerp(1.1f, 0.8f, collapseFraction)

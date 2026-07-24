@@ -9,14 +9,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -70,9 +66,11 @@ fun SettingsSubPageScaffold(
     val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
 
-    val statusBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    val minTopBarHeight = 64.dp + statusBarHeight
-    val maxTopBarHeight = 160.dp + statusBarHeight
+    // No status-bar inset here, and no statusBarsPadding() on the header below. MainActivity's
+    // Scaffold already pads the NavHost by its content insets, so every screen starts below the
+    // status bar — counting it again pushed the whole header ~56dp down the page.
+    val minTopBarHeight = 64.dp
+    val maxTopBarHeight = 160.dp
     val minTopBarHeightPx = with(density) { minTopBarHeight.toPx() }
     val maxTopBarHeightPx = with(density) { maxTopBarHeight.toPx() }
 
@@ -149,7 +147,7 @@ fun SettingsSubPageScaffold(
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = solidAlpha))
                 .zIndex(5f),
         ) {
-            Box(Modifier.fillMaxSize().statusBarsPadding()) {
+            Box(Modifier.fillMaxSize()) {
                 val titlePaddingStart = lerp(20.dp, 68.dp, collapseFraction)
                 val titleVerticalBias = lerp(1f, -1f, collapseFraction)
                 val titleScale = lerp(1.15f, 0.9f, collapseFraction)
